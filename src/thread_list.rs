@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use gpui::{
-    Bounds, Context, FocusHandle, IntoElement, ParentElement, Render, SharedString, Styled,
-    Window, div, prelude::*, px, rgb, size, svg,
+    Bounds, BoxShadow, Context, FocusHandle, Hsla, IntoElement, ParentElement, Render,
+    SharedString, Styled, Window, div, linear_color_stop, linear_gradient, point, prelude::*, px,
+    rgb, size, svg,
 };
 
 use crate::actions::CloseWindow;
@@ -163,15 +164,25 @@ impl Render for ThreadList {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .px_4()
-                            .py_2()
-                            .bg(rgb(0x3b82f6))
-                            .rounded_md()
+                            .px_8()
+                            .py_3()
+                            .bg(linear_gradient(
+                                180.0,
+                                linear_color_stop(rgb(0x818cf8), 0.),
+                                linear_color_stop(rgb(0x6366f1), 1.),
+                            ))
+                            .rounded_full()
                             .text_color(rgb(0xffffff))
                             .cursor_pointer()
-                            .text_sm()
+                            .text_base()
+                            .shadow(vec![BoxShadow {
+                                color: Into::<Hsla>::into(rgb(0x6366f1)).alpha(0.4),
+                                offset: point(px(0.), px(4.)),
+                                blur_radius: px(12.),
+                                spread_radius: px(0.),
+                            }])
                             .child("+ Create Thread")
-                            .hover(|style| style.bg(rgb(0x2563eb)))
+                            .hover(|style| style.bg(rgb(0x4f46e5)))
                             .on_click(|_, _, cx| {
                                 let store = cx.global::<AppStore>().0.clone();
                                 let _sessions_dir = store.sessions_dir().clone();

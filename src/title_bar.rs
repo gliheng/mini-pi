@@ -1,13 +1,14 @@
 use gpui::{
-    Context, Decorations, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels,
-    Render, SharedString, StatefulInteractiveElement, Styled, Window, WindowControlArea, div,
-    px, rgb, svg,
+    Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels,
+    Render, SharedString, StatefulInteractiveElement, Styled, Window,
+    WindowControlArea, div, px, rgb,
 };
 
 use gpui::prelude::FluentBuilder;
 
 const TRAFFIC_LIGHT_LEFT_PADDING: f32 = 78.0;
 const TITLE_BAR_MIN_HEIGHT: f32 = 34.0;
+const WINDOWS_ICON_SIZE: f32 = 10.0;
 
 pub struct TitleBar {
     pub title: SharedString,
@@ -38,9 +39,7 @@ impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let height = Self::height(window);
         let fullscreen = window.is_fullscreen();
-        let decorations = window.window_decorations();
         let controls = window.window_controls();
-        let client_side = matches!(decorations, Decorations::Client { .. });
 
         let left_padding = if fullscreen {
             px(8.0)
@@ -58,10 +57,13 @@ impl Render for TitleBar {
 
         if let Some(icon_path) = &self.icon {
             title_content = title_content.child(
-                svg()
-                    .path(icon_path.clone())
-                    .size(px(20.))
-                    .text_color(rgb(0xe0e0e0)),
+                div()
+                    .child(
+                        gpui::svg()
+                            .path(icon_path.clone())
+                            .size(px(20.))
+                            .text_color(rgb(0xe0e0e0)),
+                    )
             );
         }
 
@@ -74,18 +76,36 @@ impl Render for TitleBar {
                 .child(self.title.clone()),
         );
 
+        let drag_region = div()
+            .id("titlebar-drag-region")
+            .window_control_area(WindowControlArea::Drag)
+            .flex()
+            .items_center()
+            .justify_between()
+            .flex_shrink_0()
+            .flex_1()
+            .min_w(px(0.0))
+            .h_full()
+            .pl(left_padding)
+            .pr(if cfg!(target_os = "macos") {
+                px(12.0)
+            } else {
+                px(0.0)
+            })
+            .child(title_content);
+
         let mut bar = div()
             .id("titlebar")
-            .window_control_area(WindowControlArea::Drag)
             .w_full()
             .h(height)
+            .flex_shrink_0()
             .bg(rgb(0x1e1e1e))
             .border_b_1()
             .border_color(rgb(0x333333))
             .flex()
+            .flex_row()
             .items_center()
-            .pl(left_padding)
-            .pr(px(12.))
+            .justify_between()
             .on_mouse_down_out(cx.listener(|this: &mut Self, _, _, _| {
                 this.should_move = false;
             }))
@@ -103,44 +123,58 @@ impl Render for TitleBar {
             }))
             .on_click(|event: &gpui::ClickEvent, window, _| {
                 if event.click_count() == 2 {
-                    window.titlebar_double_click();
+                    if cfg!(target_os = "macos") {
+                        window.titlebar_double_click();
+                    } else {
+                        window.zoom_window();
+                    }
                 }
             })
-            .child(title_content);
+            .child(drag_region);
 
-        if client_side && !cfg!(target_os = "macos") {
+        // Add window controls for non-Mac platforms with client-side decorations
+        #[cfg(not(target_os = "macos"))]
+        {
+            let is_maximized = window.is_maximized();
+            
             bar = bar.child(
                 div()
                     .flex()
                     .flex_row()
-                    .flex_1()
-                    .justify_end()
                     .items_center()
-                    .when(controls.minimize, |el: gpui::Div| {
-                        el.child(window_caption_button(
-                            "─",
+                    .h_full()
+                    .flex_shrink_0()
+                    .map(|el| {
+                        if cfg!(target_os = "windows") {
+                            el.font_family("Segoe Fluent Icons")
+                        } else {
+                            el
+                        }
+                    })
+                    .when(controls.minimize, |el| {
+                        el.child(caption_button(
+                            "\u{e921}",
                             WindowControlArea::Min,
-                            rgb(0x999999),
                             height,
                         ))
                     })
-                    .when(controls.maximize, |el: gpui::Div| {
-                        let label = if window.is_maximized() { "⧉" } else { "□" };
-                        el.child(window_caption_button(
-                            label,
+                    .when(controls.maximize, |el| {
+                        let icon = if is_maximized {
+                            "\u{e923}"
+                        } else {
+                            "\u{e922}"
+                        };
+                        el.child(caption_button(
+                            icon,
                             WindowControlArea::Max,
-                            rgb(0x999999),
                             height,
                         ))
                     })
-                    .when(controls.fullscreen || controls.maximize, |el: gpui::Div| {
-                        el.child(window_caption_button(
-                            "✕",
-                            WindowControlArea::Close,
-                            rgb(0xcc4444),
-                            height,
-                        ))
-                    }),
+                    .child(caption_button(
+                        "\u{e8bb}",
+                        WindowControlArea::Close,
+                        height,
+                    )),
             );
         }
 
@@ -148,20 +182,42 @@ impl Render for TitleBar {
     }
 }
 
-fn window_caption_button(
-    label: &str,
+fn caption_button(
+    icon: &str,
     area: WindowControlArea,
-    text_color: gpui::Rgba,
     height: Pixels,
-) -> gpui::Div {
+) -> impl IntoElement {
+    let is_close = matches!(area, WindowControlArea::Close);
+    
     div()
+        .id(match area {
+            WindowControlArea::Close => "close",
+            WindowControlArea::Max => "maximize",
+            WindowControlArea::Min => "minimize",
+            _ => "caption-button",
+        })
         .window_control_area(area)
+        .occlude()
         .flex()
         .items_center()
         .justify_center()
-        .size(height)
-        .text_color(text_color)
-        .text_size(px(13.))
-        .hover(|s: gpui::StyleRefinement| s.bg(rgb(0x333333)).text_color(rgb(0xffffff)))
-        .child(label.to_string())
+        .w(px(46.))
+        .h(height)
+        .text_size(px(WINDOWS_ICON_SIZE))
+        .text_color(rgb(0x999999))
+        .hover(move |s: gpui::StyleRefinement| {
+            if is_close {
+                s.bg(rgb(0xe81123)).text_color(rgb(0xffffff))
+            } else {
+                s.bg(rgb(0x333333)).text_color(rgb(0xffffff))
+            }
+        })
+        .active(move |s: gpui::StyleRefinement| {
+            if is_close {
+                s.bg(rgb(0xf1707a)).text_color(rgb(0xffffff))
+            } else {
+                s.bg(rgb(0x444444)).text_color(rgb(0xffffff))
+            }
+        })
+        .child(icon.to_string())
 }

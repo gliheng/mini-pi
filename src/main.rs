@@ -36,6 +36,7 @@ fn main() {
 
             cx.on_action(quit);
             cx.bind_keys([
+                KeyBinding::new("ctrl-w", actions::CloseWindow, None),
                 KeyBinding::new("cmd-w", actions::CloseWindow, None),
                 KeyBinding::new("cmd-q", Quit, None),
                 KeyBinding::new("enter", actions::SendMessage, None),

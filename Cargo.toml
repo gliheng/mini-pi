@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-gpui = "0.2"
+gpui = "0.2.2"
 unicode-segmentation = "1.12"
 smol = "2"
 futures = "0.3"

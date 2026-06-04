@@ -40,13 +40,28 @@ impl PiRpc {
     pub fn spawn(
         session_path: &PathBuf,
     ) -> Result<(Self, futures::channel::mpsc::UnboundedReceiver<BridgeEvent>), PiRpcError> {
-        let mut cmd = Command::new("pi");
-        cmd.arg("--mode").arg("rpc");
-        cmd.arg("--session").arg(session_path);
+        #[cfg(windows)]
+        let mut cmd = {
+            let mut cmd = Command::new("cmd");
+            cmd.arg("/c").arg("pi");
+            cmd.arg("--mode").arg("rpc");
+            cmd.arg("--session").arg(session_path);
+            cmd.stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit());
+            cmd
+        };
 
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
+        #[cfg(not(windows))]
+        let mut cmd = {
+            let mut cmd = Command::new("pi");
+            cmd.arg("--mode").arg("rpc");
+            cmd.arg("--session").arg(session_path);
+            cmd.stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit());
+            cmd
+        };
 
         log!("spawning: {:?}", cmd);
         let mut child = cmd.spawn().map_err(|e| {

@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use gpui::{Bounds, Global, TitlebarOptions, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowOptions, point, px};
+use gpui::{
+    Bounds, Global, TitlebarOptions, WindowBackgroundAppearance, WindowBounds,
+    WindowDecorations, WindowOptions, point, px,
+};
 
 use crate::store::Store;
 
@@ -16,7 +19,11 @@ pub fn custom_window_options(bounds: Option<Bounds<gpui::Pixels>>) -> WindowOpti
             appears_transparent: true,
             traffic_light_position: Some(point(px(9.0), px(9.0))),
         }),
-        window_decorations: Some(WindowDecorations::Client),
+        window_decorations: if cfg!(target_os = "linux") {
+            Some(WindowDecorations::Client)
+        } else {
+            None
+        },
         window_background: WindowBackgroundAppearance::Transparent,
         ..Default::default()
     }
