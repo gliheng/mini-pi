@@ -320,6 +320,8 @@ impl Render for ChatWindow {
         };
         let is_error = matches!(self.state, ChatState::Error(_));
         let is_streaming = matches!(self.state, ChatState::Streaming);
+        let input_empty = self.input.read(cx).content().is_empty();
+        let is_disabled = is_streaming || input_empty;
 
         div()
             .track_focus(&self.focus_handle)
@@ -474,21 +476,23 @@ impl Render for ChatWindow {
                             .items_center()
                             .justify_center()
                             .size(px(28.))
-                            .bg(if is_streaming { rgb(0x666666) } else { rgb(0x3b82f6) })
+                            .bg(if is_disabled { rgb(0x666666) } else { rgb(0x3b82f6) })
                             .rounded_md()
                             .text_color(rgb(0xffffff))
-                            .cursor_pointer()
+                            .when(!is_disabled, |this| this.cursor_pointer())
                             .child("➤")
                             .hover(|style| {
-                                if !is_streaming {
+                                if !is_disabled {
                                     style.bg(rgb(0x2563eb))
                                 } else {
                                     style
                                 }
                             })
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                this.send_message(&SendMessage, _window, cx);
-                            })),
+                            .when(!is_disabled, |this| {
+                                this.on_click(cx.listener(|this, _, _window, cx| {
+                                    this.send_message(&SendMessage, _window, cx);
+                                }))
+                            }),
                     ),
             )
     }

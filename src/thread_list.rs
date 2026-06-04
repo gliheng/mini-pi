@@ -181,7 +181,14 @@ impl Render for ThreadList {
                                 blur_radius: px(12.),
                                 spread_radius: px(0.),
                             }])
-                            .child("+ Create Thread")
+                            .gap(px(8.))
+                            .child(
+                                svg()
+                                    .path("logo.svg")
+                                    .text_color(rgb(0xffffff))
+                                    .size(px(20.)),
+                            )
+                            .child("Create Thread")
                             .hover(|style| style.bg(rgb(0x4f46e5)))
                             .on_click(|_, _, cx| {
                                 let store = cx.global::<AppStore>().0.clone();
