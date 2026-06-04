@@ -125,12 +125,10 @@ impl ChatWindow {
             }
             BridgeEvent::ThinkingDelta { content } => {
                 if let Some(msg) = self.messages.iter_mut().find(|m| m.streaming && matches!(m.role, Role::Agent)) {
-                    if let MessageContent::Text(ref mut text) = msg.content {
-                        if !text.ends_with("...\n") && !text.is_empty() {
-                            *text = format!("{}\n", text).into();
-                        }
-                        let new_text = format!("{}💭 {}...", text, content);
-                        *text = new_text.into();
+                    if let Some(ref mut thinking) = msg.thinking {
+                        thinking.push_str(&content);
+                    } else {
+                        msg.thinking = Some(content);
                     }
                 }
             }
@@ -149,6 +147,7 @@ impl ChatWindow {
                             .into(),
                     },
                     streaming: true,
+                    thinking: None,
                 });
             }
             BridgeEvent::ToolOutput { name, output } => {
@@ -162,6 +161,7 @@ impl ChatWindow {
                         output: truncate_str(&output, 500).into(),
                     },
                     streaming: false,
+                    thinking: None,
                 });
             }
             BridgeEvent::Error { message } => {
@@ -180,14 +180,16 @@ impl ChatWindow {
                                     msg.content_text.into()
                                 }),
                                 streaming: false,
+                                thinking: None,
                             });
                         }
                         "assistant" => {
-                            if !msg.content_text.is_empty() {
+                            if !msg.content_text.is_empty() || msg.thinking.is_some() {
                                 self.messages.push(Message {
                                     role: Role::Agent,
                                     content: MessageContent::Text(msg.content_text.into()),
                                     streaming: false,
+                                    thinking: msg.thinking,
                                 });
                             }
                         }
@@ -200,6 +202,7 @@ impl ChatWindow {
                                         args: msg.tool_args.clone().unwrap_or_default().into(),
                                     },
                                     streaming: false,
+                                    thinking: None,
                                 });
                             }
                             if let Some(output) = &msg.tool_output {
@@ -210,6 +213,7 @@ impl ChatWindow {
                                         output: output.clone().into(),
                                     },
                                     streaming: false,
+                                    thinking: None,
                                 });
                             }
                         }
@@ -238,6 +242,7 @@ impl ChatWindow {
             role: Role::User,
             content: MessageContent::Text(content.clone()),
             streaming: false,
+            thinking: None,
         });
         self.input.update(cx, |input, _| input.reset());
 
@@ -290,6 +295,7 @@ impl ChatWindow {
             role: Role::Agent,
             content: MessageContent::Text(SharedString::from("")),
             streaming: true,
+            thinking: None,
         });
         self.state = ChatState::Streaming;
 
@@ -338,7 +344,7 @@ impl Render for ChatWindow {
                     .children(self.messages.iter().map(|msg| match &msg.content {
                         MessageContent::Text(text) => {
                             let is_user = matches!(msg.role, Role::User);
-                            let display = if msg.streaming && text.is_empty() {
+                            let display = if msg.streaming && text.is_empty() && msg.thinking.is_none() {
                                 SharedString::from("...")
                             } else {
                                 text.clone()
@@ -349,18 +355,37 @@ impl Render for ChatWindow {
                                 .when(!is_user, |this| this.justify_start())
                                 .child(
                                     div()
-                                        .px_3()
-                                        .py_2()
-                                        .rounded_md()
-                                        .when(is_user, |this| {
-                                            this.bg(rgb(0x3b82f6)).text_color(rgb(0xffffff))
+                                        .flex()
+                                        .flex_col()
+                                        .gap_1()
+                                        .when(msg.thinking.is_some(), |this| {
+                                            this.child(
+                                                div()
+                                                    .px_3()
+                                                    .py_1()
+                                                    .rounded_md()
+                                                    .bg(rgb(0x2a2a2a))
+                                                    .text_color(rgb(0x888888))
+                                                    .text_xs()
+                                                    .max_w(px(400.))
+                                                    .child(format!("💭 {}", msg.thinking.as_ref().unwrap()))
+                                            )
                                         })
-                                        .when(matches!(msg.role, Role::Agent), |this| {
-                                            this.bg(rgb(0x1e3a2f)).text_color(rgb(0x86efac))
-                                        })
-                                        .text_sm()
-                                        .max_w(px(400.))
-                                        .child(display),
+                                        .child(
+                                            div()
+                                                .px_3()
+                                                .py_2()
+                                                .rounded_md()
+                                                .when(is_user, |this| {
+                                                    this.bg(rgb(0x3b82f6)).text_color(rgb(0xffffff))
+                                                })
+                                                .when(matches!(msg.role, Role::Agent), |this| {
+                                                    this.text_color(rgb(0xe5e5e5))
+                                                })
+                                                .text_sm()
+                                                .max_w(px(400.))
+                                                .child(display),
+                                        )
                                 )
                         }
                         MessageContent::ToolCall { name, args } => {

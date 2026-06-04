@@ -19,6 +19,7 @@ pub struct Message {
     pub role: Role,
     pub content: MessageContent,
     pub streaming: bool,
+    pub thinking: Option<String>,
 }
 
 #[derive(Clone, PartialEq)]

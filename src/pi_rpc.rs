@@ -25,6 +25,7 @@ pub enum BridgeEvent {
 pub struct LoadedMessage {
     pub role: String,
     pub content_text: String,
+    pub thinking: Option<String>,
     pub tool_name: Option<String>,
     pub tool_args: Option<String>,
     pub tool_output: Option<String>,
@@ -264,6 +265,7 @@ fn parse_messages(messages_val: &serde_json::Value) -> Option<BridgeEvent> {
                 loaded.push(LoadedMessage {
                     role: "user".to_string(),
                     content_text: text,
+                    thinking: None,
                     tool_name: None,
                     tool_args: None,
                     tool_output: None,
@@ -272,6 +274,7 @@ fn parse_messages(messages_val: &serde_json::Value) -> Option<BridgeEvent> {
             "assistant" => {
                 let content = msg.get("content");
                 let mut text = String::new();
+                let mut thinking = String::new();
                 if let Some(content_arr) = content.and_then(|c| c.as_array()) {
                     for block in content_arr {
                         let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
@@ -282,9 +285,8 @@ fn parse_messages(messages_val: &serde_json::Value) -> Option<BridgeEvent> {
                             }
                         } else if block_type == "thinking" {
                             if let Some(t) = block.get("thinking").and_then(|t| t.as_str()) {
-                                if !text.is_empty() { text.push('\n'); }
-                                text.push_str("💭 ");
-                                text.push_str(t);
+                                if !thinking.is_empty() { thinking.push('\n'); }
+                                thinking.push_str(t);
                             }
                         } else if block_type == "toolCall" {
                             let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
@@ -294,14 +296,17 @@ fn parse_messages(messages_val: &serde_json::Value) -> Option<BridgeEvent> {
                             loaded.push(LoadedMessage {
                                 role: "assistant".to_string(),
                                 content_text: text.clone(),
+                                thinking: if thinking.is_empty() { None } else { Some(thinking.clone()) },
                                 tool_name: None,
                                 tool_args: None,
                                 tool_output: None,
                             });
                             text.clear();
+                            thinking.clear();
                             loaded.push(LoadedMessage {
                                 role: "tool".to_string(),
                                 content_text: String::new(),
+                                thinking: None,
                                 tool_name: Some(name.to_string()),
                                 tool_args: Some(truncate_str(&args_str, 200)),
                                 tool_output: None,
@@ -311,10 +316,11 @@ fn parse_messages(messages_val: &serde_json::Value) -> Option<BridgeEvent> {
                 } else if let Some(content_str) = content.and_then(|c| c.as_str()) {
                     text = content_str.to_string();
                 }
-                if !text.is_empty() {
+                if !text.is_empty() || !thinking.is_empty() {
                     loaded.push(LoadedMessage {
                         role: "assistant".to_string(),
                         content_text: text,
+                        thinking: if thinking.is_empty() { None } else { Some(thinking) },
                         tool_name: None,
                         tool_args: None,
                         tool_output: None,
@@ -330,6 +336,7 @@ fn parse_messages(messages_val: &serde_json::Value) -> Option<BridgeEvent> {
                 loaded.push(LoadedMessage {
                     role: "tool".to_string(),
                     content_text: String::new(),
+                    thinking: None,
                     tool_name: None,
                     tool_args: None,
                     tool_output: Some(format!("{}: {}", tool_name, truncate_str(&output, 500))),
