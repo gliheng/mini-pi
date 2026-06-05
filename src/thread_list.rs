@@ -152,11 +152,15 @@ impl Render for ThreadList {
                         cx.open_window(
                             custom_window_options(Some(Bounds::centered(
                                 None,
-                                size(px(600.0), px(400.0)),
+                                size(px(800.0), px(600.0)),
                                 cx,
                             ))),
-                            move |_, cx| {
-                                cx.new(|cx| ChatWindow::new(cx, Some(&thread_meta), store.clone()))
+                            move |window, cx| {
+                                cx.new(|cx| {
+                                    let chat = ChatWindow::new(cx, Some(&thread_meta), store.clone());
+                                    chat.focus_handle.focus(window);
+                                    chat
+                                })
                             },
                         )
                         .unwrap();
@@ -403,11 +407,15 @@ impl Render for ThreadList {
                                 cx.open_window(
                                     custom_window_options(Some(Bounds::centered(
                                         None,
-                                        size(px(600.0), px(400.0)),
+                                        size(px(800.0), px(600.0)),
                                         cx,
                                     ))),
-                                    |_, cx| {
-                                        cx.new(|cx| ChatWindow::new(cx, None, store.clone()))
+                                    |window, cx| {
+                                        cx.new(|cx| {
+                                            let chat = ChatWindow::new(cx, None, store.clone());
+                                            chat.focus_handle.focus(window);
+                                            chat
+                                        })
                                     },
                                 )
                                 .unwrap();

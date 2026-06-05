@@ -3,7 +3,7 @@ use std::{sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 use futures::StreamExt;
 use gpui::{
     Context, FocusHandle, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render, SharedString, Styled, Task,
-    Window, div, prelude::*, px, rgb,
+    Window, div, prelude::*, px, rgb, svg,
 };
 
 use crate::actions::{CloseWindow, SendMessage};
@@ -327,38 +327,6 @@ impl ChatWindow {
             let _ = pi.send_prompt(&content);
         }
 
-        cx.notify();
-    }
-
-    fn respawn_pi(&mut self, cx: &mut Context<Self>) {
-        let session_path = self.store.sessions_dir().join(&self.session_file);
-        let model = self.selected_model.as_deref();
-        match PiRpc::spawn(&session_path, model) {
-            Ok((mut rpc, rx)) => {
-                eprintln!("[mini-pi] respawned pi with model {:?}", model);
-                if let Err(e) = rpc.send_get_messages() {
-                    eprintln!("[mini-pi] failed to send get_messages on respawn: {}", e);
-                }
-                let weak = cx.entity().downgrade();
-                let task = cx.spawn(async move |_, cx: &mut gpui::AsyncApp| {
-                    let mut rx = rx;
-                    while let Some(event) = rx.next().await {
-                        if weak.update(cx, |window, cx| {
-                            window.handle_bridge_event(event, cx);
-                        }).is_err() {
-                            break;
-                        }
-                    }
-                    eprintln!("[mini-pi] event loop ended (respawn)");
-                });
-                self.pi = Some(rpc);
-                self._pi_task = Some(task);
-            }
-            Err(e) => {
-                eprintln!("[mini-pi] failed to respawn pi: {}", e);
-                self.state = ChatState::Error(format!("Failed to start pi with model: {}", e).into());
-            }
-        }
         cx.notify();
     }
 
@@ -688,8 +656,18 @@ impl Render for ChatWindow {
                                                             .flex()
                                                             .flex_row()
                                                             .gap_1()
+                                                            .items_center()
                                                             .cursor_pointer()
-                                                            .child(format!("💭 Thinking {}", if thinking_collapsed { "▶" } else { "▼" }))
+                                                            .child(
+                                                                svg()
+                                                                    .path("thinking.svg")
+                                                                    .size(px(12.))
+                                                                    .text_color(rgb(0x888888)),
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .child(format!("Thinking {}", if thinking_collapsed { "▶" } else { "▼" }))
+                                                            )
                                                             .on_click(cx.listener(move |this, _, _window, cx| {
                                                                 if let Some(msg) = this.messages.get_mut(idx) {
                                                                     msg.thinking_collapsed = !msg.thinking_collapsed;
