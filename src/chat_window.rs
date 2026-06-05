@@ -37,7 +37,7 @@ impl ChatWindow {
             .map(|t| if t.title.is_empty() { "New Thread".into() } else { t.title.clone().into() })
             .unwrap_or_else(|| "New Thread".into());
         let input = cx.new(|cx| TextInput::new(cx, "Type a message..."));
-        let title_bar = cx.new(|_| TitleBar::new(title.clone()).icon("logo.svg"));
+        let title_bar = cx.new(|_| TitleBar::new(title.clone()));
 
         let session_file: String = thread
             .and_then(|t| t.session_file.clone())
@@ -148,6 +148,7 @@ impl ChatWindow {
                     },
                     streaming: true,
                     thinking: None,
+                    thinking_collapsed: false,
                 });
             }
             BridgeEvent::ToolOutput { name, output } => {
@@ -162,6 +163,7 @@ impl ChatWindow {
                     },
                     streaming: false,
                     thinking: None,
+                    thinking_collapsed: false,
                 });
             }
             BridgeEvent::Error { message } => {
@@ -181,6 +183,7 @@ impl ChatWindow {
                                 }),
                                 streaming: false,
                                 thinking: None,
+                                thinking_collapsed: false,
                             });
                         }
                         "assistant" => {
@@ -188,8 +191,9 @@ impl ChatWindow {
                                 self.messages.push(Message {
                                     role: Role::Agent,
                                     content: MessageContent::Text(msg.content_text.into()),
-                                    streaming: false,
-                                    thinking: msg.thinking,
+                                streaming: false,
+                                thinking: msg.thinking,
+                                thinking_collapsed: false,
                                 });
                             }
                         }
@@ -203,6 +207,7 @@ impl ChatWindow {
                                     },
                                     streaming: false,
                                     thinking: None,
+                                    thinking_collapsed: false,
                                 });
                             }
                             if let Some(output) = &msg.tool_output {
@@ -214,6 +219,7 @@ impl ChatWindow {
                                     },
                                     streaming: false,
                                     thinking: None,
+                                    thinking_collapsed: false,
                                 });
                             }
                         }
@@ -243,6 +249,7 @@ impl ChatWindow {
             content: MessageContent::Text(content.clone()),
             streaming: false,
             thinking: None,
+            thinking_collapsed: false,
         });
         self.input.update(cx, |input, _| input.reset());
 
@@ -296,6 +303,7 @@ impl ChatWindow {
             content: MessageContent::Text(SharedString::from("")),
             streaming: true,
             thinking: None,
+            thinking_collapsed: false,
         });
         self.state = ChatState::Streaming;
 
@@ -343,7 +351,7 @@ impl Render for ChatWindow {
                     .flex_col()
                     .p_3()
                     .gap_2()
-                    .children(self.messages.iter().map(|msg| match &msg.content {
+                    .children(self.messages.iter().enumerate().map(|(idx, msg)| match &msg.content {
                         MessageContent::Text(text) => {
                             let is_user = matches!(msg.role, Role::User);
                             let display = if msg.streaming && text.is_empty() && msg.thinking.is_none() {
@@ -351,16 +359,21 @@ impl Render for ChatWindow {
                             } else {
                                 text.clone()
                             };
+                            let thinking = msg.thinking.clone();
+                            let thinking_collapsed = msg.thinking_collapsed;
                             div()
                                 .flex()
+                                .w_full()
                                 .when(is_user, |this| this.justify_end())
                                 .when(!is_user, |this| this.justify_start())
                                 .child(
                                     div()
                                         .flex()
                                         .flex_col()
+                                        .w_full()
+                                        .when(is_user, |this| this.items_end())
                                         .gap_1()
-                                        .when(msg.thinking.is_some(), |this| {
+                                        .when(thinking.is_some(), |this| {
                                             this.child(
                                                 div()
                                                     .px_3()
@@ -369,8 +382,28 @@ impl Render for ChatWindow {
                                                     .bg(rgb(0x2a2a2a))
                                                     .text_color(rgb(0x888888))
                                                     .text_xs()
-                                                    .max_w(px(400.))
-                                                    .child(format!("💭 {}", msg.thinking.as_ref().unwrap()))
+                                                    .child(
+                                                        div()
+                                                            .id(("thinking-toggle", idx))
+                                                            .flex()
+                                                            .flex_row()
+                                                            .gap_1()
+                                                            .cursor_pointer()
+                                                            .child(format!("💭 Thinking {}", if thinking_collapsed { "▶" } else { "▼" }))
+                                                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                                                if let Some(msg) = this.messages.get_mut(idx) {
+                                                                    msg.thinking_collapsed = !msg.thinking_collapsed;
+                                                                    cx.notify();
+                                                                }
+                                                            }))
+                                                    )
+                                                    .when(!thinking_collapsed, |this| {
+                                                        this.child(
+                                                            div()
+                                                                .mt_1()
+                                                                .child(thinking.as_ref().unwrap().clone())
+                                                        )
+                                                    })
                                             )
                                         })
                                         .child(
@@ -385,7 +418,6 @@ impl Render for ChatWindow {
                                                     this.text_color(rgb(0xe5e5e5))
                                                 })
                                                 .text_sm()
-                                                .max_w(px(400.))
                                                 .child(display),
                                         )
                                 )
@@ -393,6 +425,7 @@ impl Render for ChatWindow {
                         MessageContent::ToolCall { name, args } => {
                             div()
                                 .flex()
+                                .w_full()
                                 .justify_start()
                                 .child(
                                     div()
@@ -402,13 +435,14 @@ impl Render for ChatWindow {
                                         .bg(rgb(0x3b2818))
                                         .text_color(rgb(0xfbbf24))
                                         .text_xs()
-                                        .max_w(px(400.))
+                                        .w_full()
                                         .child(format!("⚙ {} {}", name, args)),
                                 )
                         }
                         MessageContent::ToolResult { name, output } => {
                             div()
                                 .flex()
+                                .w_full()
                                 .justify_start()
                                 .child(
                                     div()
@@ -418,7 +452,7 @@ impl Render for ChatWindow {
                                         .bg(rgb(0x1a1a2e))
                                         .text_color(rgb(0xa5b4fc))
                                         .text_xs()
-                                        .max_w(px(400.))
+                                        .w_full()
                                         .child(format!("↳ {}: {}", name, output)),
                                 )
                         }
