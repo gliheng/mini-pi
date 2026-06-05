@@ -10,6 +10,7 @@ mod store;
 mod thread_list;
 mod title_bar;
 mod user_panel;
+mod utils;
 
 use std::{path::PathBuf, sync::Arc};
 
