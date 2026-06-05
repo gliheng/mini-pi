@@ -40,11 +40,15 @@ macro_rules! log {
 impl PiRpc {
     pub fn spawn(
         session_path: &PathBuf,
+        model: Option<&str>,
     ) -> Result<(Self, futures::channel::mpsc::UnboundedReceiver<BridgeEvent>), PiRpcError> {
         #[cfg(windows)]
         let mut cmd = {
             let mut cmd = Command::new("cmd");
             cmd.arg("/c").arg("pi");
+            if let Some(model_id) = model {
+                cmd.arg("--model").arg(model_id);
+            }
             cmd.arg("--mode").arg("rpc");
             cmd.arg("--session").arg(session_path);
             cmd.stdin(Stdio::piped())
@@ -56,6 +60,9 @@ impl PiRpc {
         #[cfg(not(windows))]
         let mut cmd = {
             let mut cmd = Command::new("pi");
+            if let Some(model_id) = model {
+                cmd.arg("--model").arg(model_id);
+            }
             cmd.arg("--mode").arg("rpc");
             cmd.arg("--session").arg(session_path);
             cmd.stdin(Stdio::piped())
@@ -137,6 +144,23 @@ impl PiRpc {
     pub fn send_get_messages(&mut self) -> Result<(), PiRpcError> {
         log!("sending get_messages");
         self.write_json(&serde_json::json!({ "type": "get_messages" }))
+    }
+
+    pub fn send_set_model(&mut self, provider: &str, model_id: &str) -> Result<(), PiRpcError> {
+        log!("sending set_model provider={} modelId={}", provider, model_id);
+        self.write_json(&serde_json::json!({
+            "type": "set_model",
+            "provider": provider,
+            "modelId": model_id,
+        }))
+    }
+
+    pub fn send_set_thinking_level(&mut self, level: &str) -> Result<(), PiRpcError> {
+        log!("sending set_thinking_level level={}", level);
+        self.write_json(&serde_json::json!({
+            "type": "set_thinking_level",
+            "level": level,
+        }))
     }
 
     fn write_json(&mut self, json: &serde_json::Value) -> Result<(), PiRpcError> {

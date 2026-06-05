@@ -10,15 +10,20 @@ use crate::actions::CloseWindow;
 use crate::app::{AppStore, custom_window_options};
 use crate::chat_window::ChatWindow;
 use crate::store::{Store, ThreadMeta};
-use crate::title_bar::TitleBar;
+use crate::title_bar::{TitleBar, TitleBarEvent};
+use crate::user_panel::{UserPanel, UserPanelEvent};
 
 pub struct ThreadList {
     pub title_bar: gpui::Entity<TitleBar>,
+    pub user_panel: gpui::Entity<UserPanel>,
     pub focus_handle: FocusHandle,
     pub threads: Vec<ThreadMeta>,
     pub store: Arc<Store>,
     pub confirm_delete_id: Option<i64>,
+    pub show_user_panel: bool,
     pub _subscription: gpui::Subscription,
+    pub _titlebar_subscription: gpui::Subscription,
+    pub _user_panel_subscription: gpui::Subscription,
 }
 
 impl ThreadList {
@@ -29,13 +34,36 @@ impl ThreadList {
             this.threads = this.store.list_threads().unwrap_or_default();
             cx.notify();
         });
+
+        let user_panel = cx.new(|_| UserPanel::new());
+
+        let titlebar_subscription = cx.subscribe(
+            &title_bar,
+            move |this, _, _event: &TitleBarEvent, cx| {
+                this.show_user_panel = !this.show_user_panel;
+                cx.notify();
+            },
+        );
+
+        let user_panel_subscription = cx.subscribe(
+            &user_panel,
+            move |this, _, _event: &UserPanelEvent, cx| {
+                this.show_user_panel = false;
+                cx.notify();
+            },
+        );
+
         Self {
             title_bar,
+            user_panel,
             focus_handle: cx.focus_handle(),
             threads,
             store,
             confirm_delete_id: None,
+            show_user_panel: false,
             _subscription: subscription,
+            _titlebar_subscription: titlebar_subscription,
+            _user_panel_subscription: user_panel_subscription,
         }
     }
 
@@ -65,6 +93,25 @@ impl Render for ThreadList {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        // Update titlebar avatar state
+        self.title_bar.update(cx, |title_bar, _cx| {
+            title_bar.avatar_active = self.show_user_panel;
+        });
+
+        if self.show_user_panel {
+            return div()
+                .track_focus(&self.focus_handle)
+                .on_action(|_: &CloseWindow, window, _| {
+                    window.remove_window();
+                })
+                .flex()
+                .flex_col()
+                .size_full()
+                .bg(rgb(0x1a1a1a))
+                .child(self.title_bar.clone())
+                .child(self.user_panel.clone());
+        }
+
         let (pinned_threads, unpinned_threads): (Vec<_>, Vec<_>) = self
             .threads
             .iter()
@@ -127,14 +174,6 @@ impl Render for ThreadList {
                                 .flex_row()
                                 .items_center()
                                 .gap_1()
-                                .when(pinned, |el| {
-                                    el.child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(rgb(0xfbbf24))
-                                            .child("📌"),
-                                    )
-                                })
                                 .child(
                                     div()
                                         .text_sm()
@@ -166,9 +205,13 @@ impl Render for ThreadList {
                                     .justify_center()
                                     .size(px(24.))
                                     .rounded_md()
-                                    .text_color(if pinned { rgb(0xfbbf24) } else { rgb(0x666666) })
                                     .cursor_pointer()
-                                    .child("📌")
+                                    .child(
+                                        svg()
+                                            .path(if pinned { "unpin.svg" } else { "pin.svg" })
+                                            .size(px(14.))
+                                            .text_color(rgb(0x666666)),
+                                    )
                                     .hover(|style| style.bg(rgb(0x333333)))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         cx.stop_propagation();
@@ -185,7 +228,12 @@ impl Render for ThreadList {
                                     .rounded_md()
                                     .text_color(rgb(0x666666))
                                     .cursor_pointer()
-                                    .child("✕")
+                                    .child(
+                                        svg()
+                                            .path("close.svg")
+                                            .size(px(14.))
+                                            .text_color(rgb(0x666666)),
+                                    )
                                     .hover(|style| style.bg(rgb(0x7f1d1d)).text_color(rgb(0xfca5a5)))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         cx.stop_propagation();

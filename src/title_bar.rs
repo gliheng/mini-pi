@@ -1,18 +1,23 @@
 use gpui::{
-    Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels,
+    Context, EventEmitter, Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels,
     Render, SharedString, StatefulInteractiveElement, Styled, Window,
     WindowControlArea, div, px, rgb,
 };
-
-use gpui::prelude::FluentBuilder;
 
 const TRAFFIC_LIGHT_LEFT_PADDING: f32 = 78.0;
 const TITLE_BAR_MIN_HEIGHT: f32 = 34.0;
 const WINDOWS_ICON_SIZE: f32 = 10.0;
 
+#[derive(Clone)]
+pub enum TitleBarEvent {
+    ToggleUserPanel,
+}
+
 pub struct TitleBar {
     pub title: SharedString,
     pub icon: Option<SharedString>,
+    pub show_avatar: bool,
+    pub avatar_active: bool,
     should_move: bool,
 }
 
@@ -21,6 +26,8 @@ impl TitleBar {
         Self {
             title: title.into(),
             icon: None,
+            show_avatar: true,
+            avatar_active: false,
             should_move: false,
         }
     }
@@ -34,6 +41,8 @@ impl TitleBar {
         (1.75 * window.rem_size()).max(px(TITLE_BAR_MIN_HEIGHT))
     }
 }
+
+impl EventEmitter<TitleBarEvent> for TitleBar {}
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -131,6 +140,42 @@ impl Render for TitleBar {
                 }
             })
             .child(drag_region);
+
+        // Avatar button on the right side
+        if self.show_avatar {
+            let avatar_active = self.avatar_active;
+            bar = bar.child(
+                div()
+                    .id("titlebar-avatar")
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .h_full()
+                    .flex_shrink_0()
+                    .pr(if cfg!(target_os = "macos") { px(12.0) } else { px(4.0) })
+                    .child(
+                        div()
+                            .id("avatar-button")
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(26.))
+                            .rounded_full()
+                            .bg(if avatar_active { rgb(0x4f46e5) } else { rgb(0x6366f1) })
+                            .border_2()
+                            .border_color(if avatar_active { Into::<Hsla>::into(rgb(0x818cf8)) } else { Into::<Hsla>::into(rgb(0x6366f1)).alpha(0.0) })
+                            .cursor_pointer()
+                            .text_color(rgb(0xffffff))
+                            .text_size(px(11.))
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child("JD")
+                            .hover(|style| style.bg(rgb(0x4f46e5)).border_color(rgb(0x818cf8)))
+                            .on_click(cx.listener(|this: &mut Self, _, _, cx| {
+                                cx.emit(TitleBarEvent::ToggleUserPanel);
+                            })),
+                    ),
+            );
+        }
 
         // Add window controls for non-Mac platforms with client-side decorations
         #[cfg(not(target_os = "macos"))]
