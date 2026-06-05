@@ -2,84 +2,59 @@ use gpui::SharedString;
 
 #[derive(Clone, Debug)]
 pub struct ModelInfo {
-    pub provider: &'static str,
     pub name: &'static str,
     pub id: &'static str,
 }
 
 const MODELS: &[ModelInfo] = &[
     ModelInfo {
-        provider: "anthropic",
         name: "Claude Sonnet 4",
-        id: "anthropic/claude-sonnet-4",
+        id: "claude-sonnet-4",
     },
     ModelInfo {
-        provider: "anthropic",
         name: "Claude Opus 4",
-        id: "anthropic/claude-opus-4",
+        id: "claude-opus-4",
     },
     ModelInfo {
-        provider: "anthropic",
         name: "Claude Opus 4.5",
-        id: "anthropic/claude-opus-4-5",
+        id: "claude-opus-4-5",
     },
     ModelInfo {
-        provider: "openai",
         name: "GPT-4o",
-        id: "openai/gpt-4o",
+        id: "gpt-4o",
     },
     ModelInfo {
-        provider: "openai",
         name: "GPT-4o Mini",
-        id: "openai/gpt-4o-mini",
+        id: "gpt-4o-mini",
     },
     ModelInfo {
-        provider: "openai",
         name: "GPT-5.1",
-        id: "openai/gpt-5.1",
+        id: "gpt-5.1",
     },
     ModelInfo {
-        provider: "openai",
         name: "o4-mini",
-        id: "openai/o4-mini",
+        id: "o4-mini",
     },
     ModelInfo {
-        provider: "google",
         name: "Gemini 2.5 Pro",
-        id: "google/gemini-2.5-pro",
+        id: "gemini-2.5-pro",
     },
     ModelInfo {
-        provider: "deepseek",
         name: "DeepSeek V4",
-        id: "deepseek/deepseek-v4",
+        id: "deepseek-v4",
     },
     ModelInfo {
-        provider: "deepseek",
         name: "DeepSeek V4 Flash",
-        id: "deepseek/deepseek-v4-flash",
+        id: "deepseek-v4-flash",
     },
     ModelInfo {
-        provider: "xai",
         name: "Grok 3",
-        id: "xai/grok-3",
+        id: "grok-3",
     },
 ];
 
-pub fn list_models() -> Vec<(&'static str, Vec<&'static ModelInfo>)> {
-    let mut providers: Vec<&str> = MODELS.iter().map(|m| m.provider).collect();
-    providers.sort();
-    providers.dedup();
-
-    providers
-        .into_iter()
-        .map(|provider| {
-            let models: Vec<&ModelInfo> = MODELS
-                .iter()
-                .filter(|m| m.provider == provider)
-                .collect();
-            (provider, models)
-        })
-        .collect()
+pub fn list_models() -> &'static [ModelInfo] {
+    MODELS
 }
 
 pub fn get_model_name(id: &str) -> Option<&'static str> {

@@ -49,6 +49,7 @@ impl PiRpc {
             if let Some(model_id) = model {
                 cmd.arg("--model").arg(model_id);
             }
+            cmd.arg("--provider").arg("cloudflare-ai-gateway");
             cmd.arg("--mode").arg("rpc");
             cmd.arg("--session").arg(session_path);
             cmd.stdin(Stdio::piped())
@@ -63,6 +64,7 @@ impl PiRpc {
             if let Some(model_id) = model {
                 cmd.arg("--model").arg(model_id);
             }
+            cmd.arg("--provider").arg("cloudflare-ai-gateway");
             cmd.arg("--mode").arg("rpc");
             cmd.arg("--session").arg(session_path);
             cmd.stdin(Stdio::piped())
@@ -146,11 +148,11 @@ impl PiRpc {
         self.write_json(&serde_json::json!({ "type": "get_messages" }))
     }
 
-    pub fn send_set_model(&mut self, provider: &str, model_id: &str) -> Result<(), PiRpcError> {
-        log!("sending set_model provider={} modelId={}", provider, model_id);
+    pub fn send_set_model(&mut self, model_id: &str) -> Result<(), PiRpcError> {
+        log!("sending set_model modelId={}", model_id);
         self.write_json(&serde_json::json!({
             "type": "set_model",
-            "provider": provider,
+            "provider": "cloudflare-ai-gateway",
             "modelId": model_id,
         }))
     }

@@ -2,14 +2,15 @@ use std::{sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 
 use futures::StreamExt;
 use gpui::{
-    Context, FocusHandle, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render, SharedString, Styled, Task,
+    Context, FocusHandle, IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Styled, Task,
     Window, div, prelude::*, px, rgb, svg,
 };
 
 use crate::actions::{CloseWindow, SendMessage};
 use crate::app::{AppStore, truncate_str};
+use crate::dropdown::{Direction, Dropdown, DropdownEvent, DropdownItem};
 use crate::input::TextInput;
-use crate::model_config::{list_models, model_display_name, all_models};
+use crate::model_config::{model_display_name, all_models};
 use crate::models::{ChatState, Message, MessageContent, Role};
 use crate::pi_rpc::{BridgeEvent, PiRpc};
 use crate::store::{Store, ThreadMeta};
@@ -21,17 +22,15 @@ pub struct ChatWindow {
     pub title_bar: gpui::Entity<TitleBar>,
     pub messages: Vec<Message>,
     pub input: gpui::Entity<TextInput>,
-    pub model_search: gpui::Entity<TextInput>,
     pub focus_handle: FocusHandle,
     pub state: ChatState,
     pub store: Arc<Store>,
     pub pi: Option<PiRpc>,
     pub _pi_task: Option<Task<()>>,
     pub selected_model: Option<String>,
-    pub show_model_selector: bool,
-    pub highlighted_model_index: Option<usize>,
     pub thinking_level: Option<String>,
-    pub show_thinking_selector: bool,
+    pub model_dropdown: gpui::Entity<Dropdown>,
+    pub thinking_dropdown: gpui::Entity<Dropdown>,
 }
 
 impl ChatWindow {
@@ -44,7 +43,6 @@ impl ChatWindow {
             .map(|t| if t.title.is_empty() { "New Thread".into() } else { t.title.clone().into() })
             .unwrap_or_else(|| "New Thread".into());
         let input = cx.new(|cx| TextInput::new(cx, "Type a message..."));
-        let model_search = cx.new(|cx| TextInput::new(cx, "Search models..."));
         let title_bar = cx.new(|_| TitleBar::new(title.clone()));
 
         let session_file: String = thread
@@ -95,24 +93,87 @@ impl ChatWindow {
             ChatState::Error("Failed to start pi agent. Is bun installed?".into())
         };
 
-        Self {
+        // Build model dropdown items
+        let model_items: Vec<DropdownItem> = all_models()
+            .iter()
+            .map(|m| DropdownItem::new(m.id, m.name))
+            .collect();
+
+        let model_dropdown = cx.new(|cx| {
+            Dropdown::new(cx, model_display_name(selected_model.as_deref()), model_items)
+                .with_selected(selected_model.clone())
+                .with_searchable(true)
+                .with_width(px(280.))
+                .with_max_height(px(400.))
+                .with_direction(Direction::Up)
+        });
+
+        // Build thinking level dropdown items
+        let thinking_items = vec![
+            DropdownItem::new("off", "Off"),
+            DropdownItem::new("minimal", "Minimal"),
+            DropdownItem::new("low", "Low"),
+            DropdownItem::new("medium", "Medium"),
+            DropdownItem::new("high", "High"),
+            DropdownItem::new("xhigh", "Extra High"),
+        ];
+        let thinking_dropdown = cx.new(|cx| {
+            Dropdown::new(cx, "Default", thinking_items)
+                .with_width(px(160.))
+                .with_max_height(px(300.))
+                .with_direction(Direction::Up)
+        });
+
+        let window = Self {
             thread_id: thread.map(|t| t.id),
             session_file,
             title_bar,
             messages: vec![],
             input,
-            model_search,
             focus_handle: cx.focus_handle(),
             state: initial_state,
-            store,
+            store: store.clone(),
             pi,
             _pi_task: pi_task,
             selected_model,
-            show_model_selector: false,
-            highlighted_model_index: None,
             thinking_level: None,
-            show_thinking_selector: false,
-        }
+            model_dropdown: model_dropdown.clone(),
+            thinking_dropdown: thinking_dropdown.clone(),
+        };
+
+        // Subscribe to model dropdown selection events
+        cx.subscribe(&model_dropdown, |this, _dropdown, event: &DropdownEvent, _cx| {
+            let DropdownEvent::Selected { id } = event;
+            this.selected_model = Some(id.clone());
+            if let Some(thread_id) = this.thread_id {
+                let _ = this.store.update_thread(
+                    thread_id,
+                    None,
+                    None,
+                    None,
+                    Some(Some(id)),
+                    None,
+                );
+            }
+            if let Some(ref mut pi) = this.pi {
+                if let Err(e) = pi.send_set_model(id) {
+                    eprintln!("[mini-pi] send_set_model failed: {}", e);
+                }
+            }
+        }).detach();
+
+        // Subscribe to thinking dropdown selection events
+        cx.subscribe(&thinking_dropdown, |this, _dropdown, event: &DropdownEvent, _cx| {
+            let DropdownEvent::Selected { id } = event;
+            this.thinking_level = Some(id.clone());
+            if let Some(ref mut pi) = this.pi {
+                if let Err(e) = pi.send_set_thinking_level(id) {
+                    eprintln!("[mini-pi] send_set_thinking_level failed: {}", e);
+                }
+            }
+        }).detach();
+
+        window
     }
 
     pub fn handle_bridge_event(&mut self,
@@ -329,19 +390,6 @@ impl ChatWindow {
 
         cx.notify();
     }
-
-    fn flattened_filtered_models(&self, cx: &Context<Self>) -> Vec<crate::model_config::ModelInfo> {
-        let search_query = self.model_search.read(cx).content().to_string().to_lowercase();
-        all_models()
-            .iter()
-            .filter(|model| {
-                search_query.is_empty()
-                    || model.name.to_lowercase().contains(&search_query)
-                    || model.provider.to_lowercase().contains(&search_query)
-            })
-            .cloned()
-            .collect()
-    }
 }
 
 impl Render for ChatWindow {
@@ -360,174 +408,29 @@ impl Render for ChatWindow {
         let input_empty = self.input.read(cx).content().is_empty();
         let is_disabled = is_streaming || input_empty;
 
-        let current_model = self.selected_model.clone();
-        let models = self.flattened_filtered_models(cx);
-        let highlighted = self.highlighted_model_index;
-        let mut dropdown_items: Vec<gpui::AnyElement> = Vec::new();
-        let mut thinking_dropdown_items: Vec<gpui::AnyElement> = Vec::new();
+        // Sync dropdown labels with current state
+        let model_label = model_display_name(self.selected_model.as_deref());
+        self.model_dropdown.update(cx, |dropdown, _cx| {
+            dropdown.label = model_label;
+            dropdown.selected_id = self.selected_model.clone();
+        });
 
-        let thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"];
-        if self.show_thinking_selector {
-            for (idx, level) in thinking_levels.iter().enumerate() {
-                let is_selected = self.thinking_level.as_deref() == Some(level);
-                let level_owned = level.to_string();
-                let display = match *level {
-                    "off" => "Off",
-                    "minimal" => "Minimal",
-                    "low" => "Low",
-                    "medium" => "Medium",
-                    "high" => "High",
-                    "xhigh" => "Extra High",
-                    _ => level,
-                };
-                let item = div()
-                    .id(("thinking-item", idx))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .px_3()
-                    .py_1p5()
-                    .cursor_pointer()
-                    .hover(|style| style.bg(rgb(0x2a2a2a)))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(if is_selected { rgb(0xffffff) } else { rgb(0xcccccc) })
-                            .child(display),
-                    )
-                    .child(
-                        div()
-                            .text_color(rgb(0x3b82f6))
-                            .child(if is_selected { "✓" } else { "" }),
-                    )
-                    .on_click(cx.listener(move |this, _, _window, cx| {
-                        this.thinking_level = Some(level_owned.clone());
-                        this.show_thinking_selector = false;
-                        if let Some(ref mut pi) = this.pi {
-                            if let Err(e) = pi.send_set_thinking_level(&level_owned) {
-                                eprintln!("[mini-pi] send_set_thinking_level failed: {}", e);
-                            }
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element();
-                thinking_dropdown_items.push(item);
-            }
-        }
-
-        if self.show_model_selector {
-            dropdown_items.push(
-                div()
-                    .px_2()
-                    .py_1p5()
-                    .border_b_1()
-                    .border_color(rgb(0x333333))
-                    .child(self.model_search.clone())
-                    .into_any_element(),
-            );
-
-            let mut last_provider: Option<&'static str> = None;
-            for (idx, model) in models.iter().enumerate() {
-                if last_provider != Some(model.provider) {
-                    last_provider = Some(model.provider);
-                    dropdown_items.push(
-                        div()
-                            .px_3()
-                            .py_1()
-                            .text_color(rgb(0x666666))
-                            .text_xs()
-                            .child(model.provider.to_uppercase())
-                            .into_any_element(),
-                    );
-                }
-
-                let is_selected = current_model.as_deref() == Some(model.id);
-                let is_highlighted = highlighted == Some(idx);
-                let model_id = model.id.to_string();
-                let model_name = model.name;
-                let provider_color = match model.provider {
-                    "anthropic" => rgb(0xd97757),
-                    "openai" => rgb(0x10a37f),
-                    "google" => rgb(0x4285f4),
-                    "deepseek" => rgb(0x4d6bfa),
-                    "xai" => rgb(0xff6b35),
-                    _ => rgb(0x888888),
-                };
-                let item = div()
-                    .id(("model-item", idx))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .px_3()
-                    .py_1p5()
-                    .cursor_pointer()
-                    .hover(|style| style.bg(rgb(0x2a2a2a)))
-                    .when(is_highlighted, |s| s.bg(rgb(0x2a2a2a)))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap_2()
-                            .items_center()
-                            .child(
-                                div()
-                                    .size(px(8.))
-                                    .rounded_full()
-                                    .bg(provider_color),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(if is_selected { rgb(0xffffff) } else { rgb(0xcccccc) })
-                                    .child(model_name),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .text_color(rgb(0x3b82f6))
-                            .child(if is_selected { "✓" } else { "" }),
-                    )
-                    .on_click(cx.listener(move |this, _, _window, cx| {
-                        this.selected_model = Some(model_id.clone());
-                        this.show_model_selector = false;
-                        this.highlighted_model_index = None;
-                        this.model_search.update(cx, |search, _cx| search.reset());
-                        if let Some(thread_id) = this.thread_id {
-                            let _ = this.store.update_thread(
-                                thread_id,
-                                None,
-                                None,
-                                None,
-                                Some(Some(&model_id)),
-                                None,
-                            );
-                        }
-                        if let Some(ref mut pi) = this.pi {
-                            let (provider, model) = model_id.split_once('/').unwrap_or(("anthropic", &model_id));
-                            if let Err(e) = pi.send_set_model(provider, model) {
-                                eprintln!("[mini-pi] send_set_model failed: {}", e);
-                            }
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element();
-                dropdown_items.push(item);
-            }
-
-            if models.is_empty() && !self.model_search.read(cx).content().is_empty() {
-                dropdown_items.push(
-                    div()
-                        .px_3()
-                        .py_3()
-                        .text_color(rgb(0x666666))
-                        .text_sm()
-                        .child("No models found")
-                        .into_any_element(),
-                );
-            }
-        }
+        let thinking_label: SharedString = self.thinking_level
+            .as_ref()
+            .map(|l| match l.as_str() {
+                "off" => "Off".into(),
+                "minimal" => "Minimal".into(),
+                "low" => "Low".into(),
+                "medium" => "Medium".into(),
+                "high" => "High".into(),
+                "xhigh" => "Extra High".into(),
+                _ => l.clone().into(),
+            })
+            .unwrap_or_else(|| "Default".into());
+        self.thinking_dropdown.update(cx, |dropdown, _cx| {
+            dropdown.label = thinking_label;
+            dropdown.selected_id = self.thinking_level.clone();
+        });
 
         div()
             .relative()
@@ -537,72 +440,11 @@ impl Render for ChatWindow {
             })
             .on_action(cx.listener(Self::send_message))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
-                if this.show_model_selector {
-                    match event.keystroke.key.as_str() {
-                        "escape" => {
-                            this.show_model_selector = false;
-                            this.highlighted_model_index = None;
-                            this.model_search.update(cx, |search, _| search.reset());
-                            cx.notify();
-                        }
-                        "down" => {
-                            let models = this.flattened_filtered_models(cx);
-                            let count = models.len();
-                            if count > 0 {
-                                let next = this.highlighted_model_index
-                                    .map(|i| (i + 1) % count)
-                                    .unwrap_or(0);
-                                this.highlighted_model_index = Some(next);
-                            }
-                            cx.notify();
-                        }
-                        "up" => {
-                            let models = this.flattened_filtered_models(cx);
-                            let count = models.len();
-                            if count > 0 {
-                                let prev = this.highlighted_model_index
-                                    .map(|i| if i == 0 { count - 1 } else { i - 1 })
-                                    .unwrap_or(count - 1);
-                                this.highlighted_model_index = Some(prev);
-                            }
-                            cx.notify();
-                        }
-                        "enter" => {
-                            if let Some(idx) = this.highlighted_model_index {
-                                let models = this.flattened_filtered_models(cx);
-                                if let Some(model) = models.get(idx) {
-                                    this.selected_model = Some(model.id.to_string());
-                                    this.show_model_selector = false;
-                                    this.highlighted_model_index = None;
-                                    this.model_search.update(cx, |search, _| search.reset());
-                                    if let Some(thread_id) = this.thread_id {
-                                        let model_id = model.id.to_string();
-                                        let _ = this.store.update_thread(
-                                            thread_id,
-                                            None,
-                                            None,
-                                            None,
-                                            Some(Some(&model_id)),
-                                            None,
-                                        );
-                                    }
-                                    if let Some(ref mut pi) = this.pi {
-                                        let (provider, model_name) = model.id.split_once('/').unwrap_or(("anthropic", model.id));
-                                        let _ = pi.send_set_model(provider, model_name);
-                                    }
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                } else if this.show_thinking_selector {
-                    match event.keystroke.key.as_str() {
-                        "escape" => {
-                            this.show_thinking_selector = false;
-                            cx.notify();
-                        }
-                        _ => {}
-                    }
+                // Close any open dropdowns on escape if neither dropdown consumed it
+                let model_open = this.model_dropdown.read(cx).is_open;
+                let thinking_open = this.thinking_dropdown.read(cx).is_open;
+                if event.keystroke.key == "escape" && (model_open || thinking_open) {
+                    // Dropdowns handle their own escape; this is a fallback
                 }
             }))
             .flex()
@@ -781,72 +623,8 @@ impl Render for ChatWindow {
                     .flex_row()
                     .gap_2()
                     .items_center()
-                    .child(
-                        div()
-                            .id("model-selector-btn")
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .bg(rgb(0x252525))
-                            .text_color(rgb(0xaaaaaa))
-                            .text_sm()
-                            .cursor_pointer()
-                            .hover(|s| s.bg(rgb(0x333333)))
-                            .child(model_display_name(self.selected_model.as_deref()))
-                            .child(if self.show_model_selector { "▲" } else { "▼" })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.show_model_selector = !this.show_model_selector;
-                                this.highlighted_model_index = None;
-                                if this.show_model_selector {
-                                    use gpui::Focusable;
-                                    let focus_handle = this.model_search.read(cx).focus_handle(cx);
-                                    window.focus(&focus_handle);
-                                } else {
-                                    this.model_search.update(cx, |search, _| search.reset());
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        div()
-                            .id("thinking-level-selector-btn")
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .bg(rgb(0x252525))
-                            .text_color(rgb(0xaaaaaa))
-                            .text_sm()
-                            .cursor_pointer()
-                            .hover(|s| s.bg(rgb(0x333333)))
-                            .child(
-                                self.thinking_level
-                                    .as_ref()
-                                    .map(|l| match l.as_str() {
-                                        "off" => "Off".to_string(),
-                                        "minimal" => "Minimal".to_string(),
-                                        "low" => "Low".to_string(),
-                                        "medium" => "Medium".to_string(),
-                                        "high" => "High".to_string(),
-                                        "xhigh" => "Extra High".to_string(),
-                                        _ => l.clone(),
-                                    })
-                                    .unwrap_or_else(|| "Default".to_string()),
-                            )
-                            .child(if self.show_thinking_selector { "▲" } else { "▼" })
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                this.show_thinking_selector = !this.show_thinking_selector;
-                                this.show_model_selector = false;
-                                this.highlighted_model_index = None;
-                                this.model_search.update(cx, |search, _| search.reset());
-                                cx.notify();
-                            })),
-                    )
+                    .child(self.model_dropdown.clone())
+                    .child(self.thinking_dropdown.clone())
                     .child(div().flex_1().child(self.input.clone()))
                     .child(
                         div()
@@ -874,77 +652,5 @@ impl Render for ChatWindow {
                             }),
                     )
             )
-            .when(self.show_model_selector || self.show_thinking_selector, |this| {
-                this.child(
-                    div()
-                        .id("dropdown-overlay")
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .right_0()
-                        .bottom_0()
-                        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                            this.show_model_selector = false;
-                            this.show_thinking_selector = false;
-                            this.highlighted_model_index = None;
-                            this.model_search.update(cx, |search, _| search.reset());
-                            cx.notify();
-                        })),
-                )
-            })
-            .when(self.show_model_selector, |this| {
-                this.child(
-                    div()
-                        .id("model-dropdown")
-                        .absolute()
-                        .bottom(px(56.))
-                        .left(px(12.))
-                        .w(px(280.))
-                        .max_h(px(400.))
-                        .overflow_y_scroll()
-                        .bg(rgb(0x1e1e1e))
-                        .border_1()
-                        .border_color(rgb(0x333333))
-                        .rounded_md()
-                        .py_1()
-                        .shadow(vec![gpui::BoxShadow {
-                            color: gpui::rgba(0x000000aa).into(),
-                            offset: gpui::point(px(0.), px(4.)),
-                            blur_radius: px(12.),
-                            spread_radius: px(0.),
-                        }])
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                            cx.stop_propagation();
-                        })
-                        .children(dropdown_items),
-                )
-            })
-            .when(self.show_thinking_selector, |this| {
-                this.child(
-                    div()
-                        .id("thinking-dropdown")
-                        .absolute()
-                        .bottom(px(56.))
-                        .left(px(12.))
-                        .w(px(160.))
-                        .max_h(px(300.))
-                        .overflow_y_scroll()
-                        .bg(rgb(0x1e1e1e))
-                        .border_1()
-                        .border_color(rgb(0x333333))
-                        .rounded_md()
-                        .py_1()
-                        .shadow(vec![gpui::BoxShadow {
-                            color: gpui::rgba(0x000000aa).into(),
-                            offset: gpui::point(px(0.), px(4.)),
-                            blur_radius: px(12.),
-                            spread_radius: px(0.),
-                        }])
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                            cx.stop_propagation();
-                        })
-                        .children(thinking_dropdown_items),
-                )
-            })
     }
 }

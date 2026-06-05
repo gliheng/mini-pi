@@ -2,6 +2,7 @@ mod actions;
 mod app;
 mod assets;
 mod chat_window;
+mod dropdown;
 mod input;
 mod model_config;
 mod models;
