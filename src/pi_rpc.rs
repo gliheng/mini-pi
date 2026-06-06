@@ -22,13 +22,17 @@ pub enum BridgeEvent {
 }
 
 #[derive(Debug, Clone)]
+pub enum LoadedPart {
+    Text { text: String },
+    Thinking { text: String },
+    ToolCall { name: String, args: String },
+    ToolResult { name: String, output: String },
+}
+
+#[derive(Debug, Clone)]
 pub struct LoadedMessage {
     pub role: String,
-    pub content_text: String,
-    pub thinking: Option<String>,
-    pub tool_name: Option<String>,
-    pub tool_args: Option<String>,
-    pub tool_output: Option<String>,
+    pub parts: Vec<LoadedPart>,
 }
 
 macro_rules! log {
@@ -290,82 +294,56 @@ fn parse_messages(messages_val: &serde_json::Value) -> Option<BridgeEvent> {
                 }
                 loaded.push(LoadedMessage {
                     role: "user".to_string(),
-                    content_text: text,
-                    thinking: None,
-                    tool_name: None,
-                    tool_args: None,
-                    tool_output: None,
+                    parts: vec![LoadedPart::Text { text }],
                 });
             }
             "assistant" => {
                 let content = msg.get("content");
-                let mut text = String::new();
-                let mut thinking = String::new();
+                let mut parts: Vec<LoadedPart> = vec![];
                 if let Some(content_arr) = content.and_then(|c| c.as_array()) {
                     for block in content_arr {
                         let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
                         if block_type == "text" {
                             if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
-                                if !text.is_empty() { text.push('\n'); }
-                                text.push_str(t);
+                                parts.push(LoadedPart::Text { text: t.to_string() });
                             }
                         } else if block_type == "thinking" {
                             if let Some(t) = block.get("thinking").and_then(|t| t.as_str()) {
-                                if !thinking.is_empty() { thinking.push('\n'); }
-                                thinking.push_str(t);
+                                parts.push(LoadedPart::Thinking { text: t.to_string() });
                             }
                         } else if block_type == "toolCall" {
                             let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
                             let args_str = block.get("arguments")
                                 .and_then(|a| serde_json::to_string(a).ok())
                                 .unwrap_or_default();
-                            loaded.push(LoadedMessage {
-                                role: "assistant".to_string(),
-                                content_text: text.clone(),
-                                thinking: if thinking.is_empty() { None } else { Some(thinking.clone()) },
-                                tool_name: None,
-                                tool_args: None,
-                                tool_output: None,
-                            });
-                            text.clear();
-                            thinking.clear();
-                            loaded.push(LoadedMessage {
-                                role: "tool".to_string(),
-                                content_text: String::new(),
-                                thinking: None,
-                                tool_name: Some(name.to_string()),
-                                tool_args: Some(truncate_str(&args_str, 200)),
-                                tool_output: None,
+                            parts.push(LoadedPart::ToolCall {
+                                name: name.to_string(),
+                                args: truncate_str(&args_str, 200),
                             });
                         }
                     }
                 } else if let Some(content_str) = content.and_then(|c| c.as_str()) {
-                    text = content_str.to_string();
+                    parts.push(LoadedPart::Text { text: content_str.to_string() });
                 }
-                if !text.is_empty() || !thinking.is_empty() {
+                if !parts.is_empty() {
                     loaded.push(LoadedMessage {
                         role: "assistant".to_string(),
-                        content_text: text,
-                        thinking: if thinking.is_empty() { None } else { Some(thinking) },
-                        tool_name: None,
-                        tool_args: None,
-                        tool_output: None,
+                        parts,
                     });
                 }
             }
             "toolResult" => {
                 let tool_name = msg.get("toolName").and_then(|n| n.as_str()).unwrap_or("unknown");
                 let mut output = String::new();
-                if let Some(content_arr) = msg.get("content").and_then(|c| c.as_array()) {
+                if let Some(_content_arr) = msg.get("content").and_then(|c| c.as_array()) {
                     extract_text_parts(msg.get("content").unwrap(), &mut output);
                 }
                 loaded.push(LoadedMessage {
                     role: "tool".to_string(),
-                    content_text: String::new(),
-                    thinking: None,
-                    tool_name: None,
-                    tool_args: None,
-                    tool_output: Some(format!("{}: {}", tool_name, truncate_str(&output, 500))),
+                    parts: vec![LoadedPart::ToolResult {
+                        name: tool_name.to_string(),
+                        output: format!("{}: {}", tool_name, truncate_str(&output, 500)),
+                    }],
                 });
             }
             _ => {

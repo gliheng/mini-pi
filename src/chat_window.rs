@@ -3,16 +3,18 @@ use std::{sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 use futures::StreamExt;
 use gpui::{
     Context, FocusHandle, IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Styled, Task,
-    Window, div, prelude::*, px, rgb, svg,
+    Window, div, prelude::*, px, rgb,
 };
+use uuid::Uuid;
 
 use crate::actions::{CloseWindow, SendMessage};
 use crate::app::{AppStore, truncate_str};
 use crate::dropdown::{Direction, Dropdown, DropdownEvent, DropdownItem};
 use crate::input::TextInput;
 use crate::model_config::{model_display_name, all_models};
-use crate::models::{ChatState, Message, MessageContent, Role};
+use crate::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::pi_rpc::{BridgeEvent, PiRpc};
+use crate::reasoning::Reasoning;
 use crate::store::{Store, ThreadMeta};
 use crate::title_bar::TitleBar;
 
@@ -31,6 +33,7 @@ pub struct ChatWindow {
     pub thinking_level: Option<String>,
     pub model_dropdown: gpui::Entity<Dropdown>,
     pub thinking_dropdown: gpui::Entity<Dropdown>,
+    pub reasoning_displays: Vec<Vec<Option<gpui::Entity<Reasoning>>>>,
 }
 
 impl ChatWindow {
@@ -139,6 +142,7 @@ impl ChatWindow {
             thinking_level: None,
             model_dropdown: model_dropdown.clone(),
             thinking_dropdown: thinking_dropdown.clone(),
+            reasoning_displays: vec![],
         };
 
         // Subscribe to model dropdown selection events
@@ -187,60 +191,87 @@ impl ChatWindow {
             }
             BridgeEvent::AgentEnd => {
                 for msg in self.messages.iter_mut() {
-                    msg.streaming = false;
+                    for part in msg.parts.iter_mut() {
+                        match part {
+                            MessagePart::Text { state, .. }
+                            | MessagePart::Reasoning { state, .. }
+                            | MessagePart::ToolCall { state, .. }
+                            | MessagePart::ToolResult { state, .. } => {
+                                if let Some(s) = state {
+                                    *s = PartState::Done;
+                                }
+                            }
+                        }
+                    }
                 }
                 self.state = ChatState::Idle;
             }
             BridgeEvent::TextDelta { content } => {
-                if let Some(msg) = self.messages.iter_mut().find(|m| m.streaming && matches!(m.role, Role::Agent)) {
-                    if let MessageContent::Text(ref mut text) = msg.content {
-                        let new_text = format!("{}{}", text, content);
-                        *text = new_text.into();
+                if let Some(msg) = self.messages.iter_mut().find(|m| {
+                    matches!(m.role, Role::Assistant)
+                        && m.parts.iter().any(|p| matches!(p, MessagePart::Text { state: Some(PartState::Streaming), .. }))
+                }) {
+                    if let Some(part) = msg.parts.iter_mut().find(|p| matches!(p, MessagePart::Text { state: Some(PartState::Streaming), .. })) {
+                        if let MessagePart::Text { text, .. } = part {
+                            let new_text = format!("{}{}", text, content);
+                            *text = new_text.into();
+                        }
                     }
                 }
             }
             BridgeEvent::ThinkingDelta { content } => {
-                if let Some(msg) = self.messages.iter_mut().find(|m| m.streaming && matches!(m.role, Role::Agent)) {
-                    if let Some(ref mut thinking) = msg.thinking {
-                        thinking.push_str(&content);
+                if let Some(msg) = self.messages.iter_mut().find(|m| {
+                    matches!(m.role, Role::Assistant)
+                }) {
+                    if let Some(part) = msg.parts.iter_mut().find(|p| matches!(p, MessagePart::Reasoning { state: Some(PartState::Streaming), .. })) {
+                        if let MessagePart::Reasoning { text, .. } = part {
+                            let new_text = format!("{}{}", text, content);
+                            *text = new_text.into();
+                        }
                     } else {
-                        msg.thinking = Some(content);
+                        msg.parts.push(MessagePart::Reasoning {
+                            text: content.into(),
+                            state: Some(PartState::Streaming),
+                            provider_metadata: None,
+                        });
                     }
                 }
             }
             BridgeEvent::ToolStart { name, args } => {
-                for msg in self.messages.iter_mut() {
-                    msg.streaming = false;
+                if let Some(msg) = self.messages.last_mut() {
+                    if matches!(msg.role, Role::Assistant) {
+                        msg.parts.push(MessagePart::ToolCall {
+                            tool_call_id: SharedString::from(""),
+                            name: name.into(),
+                            args: args
+                                .as_ref()
+                                .map(|v| serde_json::to_string(v).unwrap_or_default())
+                                .unwrap_or_default()
+                                .into(),
+                            state: Some(PartState::Streaming),
+                        });
+                    }
                 }
-                self.messages.push(Message {
-                    role: Role::Tool,
-                    content: MessageContent::ToolCall {
-                        name: name.into(),
-                        args: args
-                            .as_ref()
-                            .map(|v| serde_json::to_string(v).unwrap_or_default())
-                            .unwrap_or_default()
-                            .into(),
-                    },
-                    streaming: true,
-                    thinking: None,
-                    thinking_collapsed: false,
-                });
             }
             BridgeEvent::ToolOutput { name, output } => {
-                if let Some(msg) = self.messages.iter_mut().find(|m| m.streaming && matches!(m.role, Role::Tool)) {
-                    msg.streaming = false;
+                if let Some(msg) = self.messages.last_mut() {
+                    if matches!(msg.role, Role::Assistant) {
+                        // Mark any existing streaming tool call as done
+                        for part in msg.parts.iter_mut() {
+                            if let MessagePart::ToolCall { state, .. } = part {
+                                if let Some(s) = state {
+                                    *s = PartState::Done;
+                                }
+                            }
+                        }
+                        msg.parts.push(MessagePart::ToolResult {
+                            tool_call_id: SharedString::from(""),
+                            name: name.into(),
+                            output: truncate_str(&output, 500).into(),
+                            state: Some(PartState::Done),
+                        });
+                    }
                 }
-                self.messages.push(Message {
-                    role: Role::Tool,
-                    content: MessageContent::ToolResult {
-                        name: name.into(),
-                        output: truncate_str(&output, 500).into(),
-                    },
-                    streaming: false,
-                    thinking: None,
-                    thinking_collapsed: false,
-                });
             }
             BridgeEvent::Error { message } => {
                 self.state = ChatState::Error(message.into());
@@ -250,53 +281,87 @@ impl ChatWindow {
                 for msg in messages {
                     match msg.role.as_str() {
                         "user" => {
-                            self.messages.push(Message {
-                                role: Role::User,
-                                content: MessageContent::Text(if msg.content_text.is_empty() {
-                                    SharedString::from("(empty)")
-                                } else {
-                                    msg.content_text.into()
-                                }),
-                                streaming: false,
-                                thinking: None,
-                                thinking_collapsed: false,
-                            });
+                            let mut parts = vec![];
+                            for part in msg.parts {
+                                match part {
+                                    crate::pi_rpc::LoadedPart::Text { text } => {
+                                        parts.push(MessagePart::Text {
+                                            text: if text.is_empty() {
+                                                SharedString::from("(empty)")
+                                            } else {
+                                                text.into()
+                                            },
+                                            state: Some(PartState::Done),
+                                        });
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            if !parts.is_empty() {
+                                self.messages.push(Message {
+                                    id: Uuid::new_v4().to_string(),
+                                    role: Role::User,
+                                    parts,
+                                });
+                            }
                         }
                         "assistant" => {
-                            if !msg.content_text.is_empty() || msg.thinking.is_some() {
+                            let mut parts = vec![];
+                            for part in msg.parts {
+                                match part {
+                                    crate::pi_rpc::LoadedPart::Text { text } => {
+                                        parts.push(MessagePart::Text {
+                                            text: text.into(),
+                                            state: Some(PartState::Done),
+                                        });
+                                    }
+                                    crate::pi_rpc::LoadedPart::Thinking { text } => {
+                                        parts.push(MessagePart::Reasoning {
+                                            text: text.into(),
+                                            state: Some(PartState::Done),
+                                            provider_metadata: None,
+                                        });
+                                    }
+                                    crate::pi_rpc::LoadedPart::ToolCall { name, args } => {
+                                        parts.push(MessagePart::ToolCall {
+                                            tool_call_id: SharedString::from(""),
+                                            name: name.into(),
+                                            args: args.into(),
+                                            state: Some(PartState::Done),
+                                        });
+                                    }
+                                    crate::pi_rpc::LoadedPart::ToolResult { name, output } => {
+                                        parts.push(MessagePart::ToolResult {
+                                            tool_call_id: SharedString::from(""),
+                                            name: name.into(),
+                                            output: output.into(),
+                                            state: Some(PartState::Done),
+                                        });
+                                    }
+                                }
+                            }
+                            if !parts.is_empty() {
                                 self.messages.push(Message {
-                                    role: Role::Agent,
-                                    content: MessageContent::Text(msg.content_text.into()),
-                                streaming: false,
-                                thinking: msg.thinking,
-                                thinking_collapsed: false,
+                                    id: Uuid::new_v4().to_string(),
+                                    role: Role::Assistant,
+                                    parts,
                                 });
                             }
                         }
                         "tool" => {
-                            if let Some(name) = &msg.tool_name {
-                                self.messages.push(Message {
-                                    role: Role::Tool,
-                                    content: MessageContent::ToolCall {
-                                        name: name.clone().into(),
-                                        args: msg.tool_args.clone().unwrap_or_default().into(),
-                                    },
-                                    streaming: false,
-                                    thinking: None,
-                                    thinking_collapsed: false,
-                                });
-                            }
-                            if let Some(output) = &msg.tool_output {
-                                self.messages.push(Message {
-                                    role: Role::Tool,
-                                    content: MessageContent::ToolResult {
-                                        name: SharedString::from(""),
-                                        output: output.clone().into(),
-                                    },
-                                    streaming: false,
-                                    thinking: None,
-                                    thinking_collapsed: false,
-                                });
+                            for part in msg.parts {
+                                if let crate::pi_rpc::LoadedPart::ToolResult { name, output } = part {
+                                    if let Some(last_msg) = self.messages.last_mut() {
+                                        if matches!(last_msg.role, Role::Assistant) {
+                                            last_msg.parts.push(MessagePart::ToolResult {
+                                                tool_call_id: SharedString::from(""),
+                                                name: name.into(),
+                                                output: output.into(),
+                                                state: Some(PartState::Done),
+                                            });
+                                        }
+                                    }
+                                }
                             }
                         }
                         _ => {}
@@ -321,11 +386,12 @@ impl ChatWindow {
         }
 
         self.messages.push(Message {
+            id: Uuid::new_v4().to_string(),
             role: Role::User,
-            content: MessageContent::Text(content.clone()),
-            streaming: false,
-            thinking: None,
-            thinking_collapsed: false,
+            parts: vec![MessagePart::Text {
+                text: content.clone(),
+                state: Some(PartState::Done),
+            }],
         });
         self.input.update(cx, |input, _| input.reset());
 
@@ -376,11 +442,12 @@ impl ChatWindow {
         }
 
         self.messages.push(Message {
-            role: Role::Agent,
-            content: MessageContent::Text(SharedString::from("")),
-            streaming: true,
-            thinking: None,
-            thinking_collapsed: false,
+            id: Uuid::new_v4().to_string(),
+            role: Role::Assistant,
+            parts: vec![MessagePart::Text {
+                text: SharedString::from(""),
+                state: Some(PartState::Streaming),
+            }],
         });
         self.state = ChatState::Streaming;
 
@@ -432,6 +499,37 @@ impl Render for ChatWindow {
             dropdown.selected_id = self.thinking_level.clone();
         });
 
+        // Ensure reasoning displays exist for reasoning parts
+        let mut reasoning_entities: Vec<Vec<Option<gpui::Entity<Reasoning>>>> = Vec::new();
+        for (msg_idx, msg) in self.messages.iter().enumerate() {
+            let mut msg_reasoning: Vec<Option<gpui::Entity<Reasoning>>> = Vec::new();
+            for (part_idx, part) in msg.parts.iter().enumerate() {
+                if let MessagePart::Reasoning { text, .. } = part {
+                    if msg_idx >= self.reasoning_displays.len() {
+                        self.reasoning_displays.resize_with(msg_idx + 1, || vec![]);
+                    }
+                    let row = &mut self.reasoning_displays[msg_idx];
+                    if part_idx >= row.len() {
+                        row.resize_with(part_idx + 1, || None);
+                    }
+                    let entity = if let Some(Some(existing)) = row.get(part_idx) {
+                        existing.update(cx, |display, _cx| {
+                            display.set_content(text);
+                        });
+                        existing.clone()
+                    } else {
+                        let new = cx.new(|_cx| Reasoning::new(text));
+                        row[part_idx] = Some(new.clone());
+                        new
+                    };
+                    msg_reasoning.push(Some(entity));
+                } else {
+                    msg_reasoning.push(None);
+                }
+            }
+            reasoning_entities.push(msg_reasoning);
+        }
+
         div()
             .relative()
             .track_focus(&self.focus_handle)
@@ -461,16 +559,10 @@ impl Render for ChatWindow {
                     .flex_col()
                     .p_3()
                     .gap_2()
-                    .children(self.messages.iter().enumerate().map(|(idx, msg)| match &msg.content {
-                        MessageContent::Text(text) => {
+                    .children(
+                        self.messages.iter().enumerate().map(|(msg_idx, msg)| {
                             let is_user = matches!(msg.role, Role::User);
-                            let display = if msg.streaming && text.is_empty() && msg.thinking.is_none() {
-                                SharedString::from("...")
-                            } else {
-                                text.clone()
-                            };
-                            let thinking = msg.thinking.clone();
-                            let thinking_collapsed = msg.thinking_collapsed;
+                            let msg_reasoning = reasoning_entities.get(msg_idx).cloned().unwrap_or_default();
                             div()
                                 .flex()
                                 .w_full()
@@ -483,100 +575,76 @@ impl Render for ChatWindow {
                                         .w_full()
                                         .when(is_user, |this| this.items_end())
                                         .gap_1()
-                                        .when(thinking.is_some(), |this| {
-                                            this.child(
-                                                div()
-                                                    .px_3()
-                                                    .py_1()
-                                                    .rounded_md()
-                                                    .bg(rgb(0x2a2a2a))
-                                                    .text_color(rgb(0x888888))
-                                                    .text_xs()
-                                                    .child(
-                                                        div()
-                                                            .id(("thinking-toggle", idx))
-                                                            .flex()
-                                                            .flex_row()
-                                                            .gap_1()
-                                                            .items_center()
-                                                            .cursor_pointer()
-                                                            .child(
-                                                                svg()
-                                                                    .path("thinking.svg")
-                                                                    .size(px(12.))
-                                                                    .text_color(rgb(0x888888)),
-                                                            )
-                                                            .child(
-                                                                div()
-                                                                    .child(format!("Thinking {}", if thinking_collapsed { "▶" } else { "▼" }))
-                                                            )
-                                                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                                                if let Some(msg) = this.messages.get_mut(idx) {
-                                                                    msg.thinking_collapsed = !msg.thinking_collapsed;
-                                                                    cx.notify();
-                                                                }
-                                                            }))
-                                                    )
-                                                    .when(!thinking_collapsed, |this| {
-                                                        this.child(
+                                        .children(msg.parts.iter().enumerate().map(|(part_idx, part)| {
+                                            match part {
+                                                MessagePart::Text { text, state } => {
+                                                    let display = if *state == Some(PartState::Streaming) && text.is_empty() {
+                                                        SharedString::from("...")
+                                                    } else {
+                                                        text.clone()
+                                                    };
+                                                    div()
+                                                        .px_3()
+                                                        .py_2()
+                                                        .rounded_md()
+                                                        .when(is_user, |this| {
+                                                            this.bg(rgb(0x3b82f6)).text_color(rgb(0xffffff))
+                                                        })
+                                                        .when(matches!(msg.role, Role::Assistant), |this| {
+                                                            this.text_color(rgb(0xe5e5e5))
+                                                        })
+                                                        .text_sm()
+                                                        .child(display)
+                                                }
+                                                MessagePart::Reasoning { .. } => {
+                                                    let reasoning_entity = msg_reasoning.get(part_idx).and_then(|e| e.clone());
+                                                    div()
+                                                        .flex()
+                                                        .flex_col()
+                                                        .w_full()
+                                                        .when(reasoning_entity.is_some(), |this| {
+                                                            this.child(reasoning_entity.unwrap())
+                                                        })
+                                                }
+                                                MessagePart::ToolCall { name, args, .. } => {
+                                                    div()
+                                                        .flex()
+                                                        .w_full()
+                                                        .justify_start()
+                                                        .child(
                                                             div()
-                                                                .mt_1()
-                                                                .child(thinking.as_ref().unwrap().clone())
+                                                                .px_3()
+                                                                .py_1()
+                                                                .rounded_md()
+                                                                .bg(rgb(0x3b2818))
+                                                                .text_color(rgb(0xfbbf24))
+                                                                .text_xs()
+                                                                .w_full()
+                                                                .child(format!("⚙ {} {}", name, args)),
                                                         )
-                                                    })
-                                            )
-                                        })
-                                        .child(
-                                            div()
-                                                .px_3()
-                                                .py_2()
-                                                .rounded_md()
-                                                .when(is_user, |this| {
-                                                    this.bg(rgb(0x3b82f6)).text_color(rgb(0xffffff))
-                                                })
-                                                .when(matches!(msg.role, Role::Agent), |this| {
-                                                    this.text_color(rgb(0xe5e5e5))
-                                                })
-                                                .text_sm()
-                                                .child(display),
-                                        )
+                                                }
+                                                MessagePart::ToolResult { name, output, .. } => {
+                                                    div()
+                                                        .flex()
+                                                        .w_full()
+                                                        .justify_start()
+                                                        .child(
+                                                            div()
+                                                                .px_3()
+                                                                .py_1()
+                                                                .rounded_md()
+                                                                .bg(rgb(0x1a1a2e))
+                                                                .text_color(rgb(0xa5b4fc))
+                                                                .text_xs()
+                                                                .w_full()
+                                                                .child(format!("↳ {}: {}", name, output)),
+                                                        )
+                                                }
+                                            }
+                                        }))
                                 )
-                        }
-                        MessageContent::ToolCall { name, args } => {
-                            div()
-                                .flex()
-                                .w_full()
-                                .justify_start()
-                                .child(
-                                    div()
-                                        .px_3()
-                                        .py_1()
-                                        .rounded_md()
-                                        .bg(rgb(0x3b2818))
-                                        .text_color(rgb(0xfbbf24))
-                                        .text_xs()
-                                        .w_full()
-                                        .child(format!("⚙ {} {}", name, args)),
-                                )
-                        }
-                        MessageContent::ToolResult { name, output } => {
-                            div()
-                                .flex()
-                                .w_full()
-                                .justify_start()
-                                .child(
-                                    div()
-                                        .px_3()
-                                        .py_1()
-                                        .rounded_md()
-                                        .bg(rgb(0x1a1a2e))
-                                        .text_color(rgb(0xa5b4fc))
-                                        .text_xs()
-                                        .w_full()
-                                        .child(format!("↳ {}: {}", name, output)),
-                                )
-                        }
-                    }))
+                        })
+                    )
                     .when(is_streaming, |el| {
                         el.child(
                             div()

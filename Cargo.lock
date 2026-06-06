@@ -3178,6 +3178,7 @@ dependencies = [
  "serde_json",
  "smol",
  "unicode-segmentation",
+ "uuid",
 ]
 
 [[package]]

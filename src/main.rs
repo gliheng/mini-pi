@@ -7,6 +7,7 @@ mod input;
 mod model_config;
 mod models;
 mod pi_rpc;
+mod reasoning;
 mod store;
 mod thread_list;
 mod title_bar;

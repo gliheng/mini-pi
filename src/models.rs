@@ -1,26 +1,48 @@
 use gpui::SharedString;
+use serde_json::Value;
 
 #[derive(Clone, PartialEq)]
 pub enum Role {
     User,
-    Agent,
-    Tool,
+    Assistant,
 }
 
-#[derive(Clone)]
-pub enum MessageContent {
-    Text(SharedString),
-    ToolCall { name: SharedString, args: SharedString },
-    ToolResult { name: SharedString, output: SharedString },
+#[derive(Clone, PartialEq)]
+pub enum PartState {
+    Streaming,
+    Done,
+}
+
+#[derive(Clone, PartialEq)]
+pub enum MessagePart {
+    Text {
+        text: SharedString,
+        state: Option<PartState>,
+    },
+    Reasoning {
+        text: SharedString,
+        state: Option<PartState>,
+        provider_metadata: Option<Value>,
+    },
+    ToolCall {
+        tool_call_id: SharedString,
+        name: SharedString,
+        args: SharedString,
+        state: Option<PartState>,
+    },
+    ToolResult {
+        tool_call_id: SharedString,
+        name: SharedString,
+        output: SharedString,
+        state: Option<PartState>,
+    },
 }
 
 #[derive(Clone)]
 pub struct Message {
+    pub id: String,
     pub role: Role,
-    pub content: MessageContent,
-    pub streaming: bool,
-    pub thinking: Option<String>,
-    pub thinking_collapsed: bool,
+    pub parts: Vec<MessagePart>,
 }
 
 #[derive(Clone, PartialEq)]
