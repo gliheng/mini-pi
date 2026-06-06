@@ -7,16 +7,18 @@ use gpui::{
 };
 use uuid::Uuid;
 
-use crate::actions::{CloseWindow, SendMessage};
-use crate::app::{AppStore, truncate_str};
-use crate::dropdown::{Direction, Dropdown, DropdownEvent, DropdownItem};
-use crate::input::TextInput;
-use crate::model_config::{model_display_name, all_models};
-use crate::models::{ChatState, Message, MessagePart, PartState, Role};
-use crate::pi_rpc::{BridgeEvent, PiRpc};
-use crate::reasoning::Reasoning;
-use crate::store::{Store, ThreadMeta};
-use crate::title_bar::TitleBar;
+use crate::core::actions::{CloseWindow, SendMessage};
+use crate::core::app::{AppStore, custom_window_options};
+use crate::ui::dropdown::{Direction, Dropdown, DropdownEvent, DropdownItem};
+use crate::ui::input::TextInput;
+use crate::ui::loader::loader;
+use crate::config::model_config::{model_display_name, all_models};
+use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
+use crate::rpc::pi_rpc::{BridgeEvent, PiRpc};
+use crate::views::reasoning::Reasoning;
+use crate::data::store::{Store, ThreadMeta};
+use crate::views::title_bar::TitleBar;
+use crate::utils::format::truncate_str;
 
 pub struct ChatWindow {
     pub thread_id: Option<i64>,
@@ -91,7 +93,7 @@ impl ChatWindow {
         };
 
         let initial_state = if pi.is_some() {
-            if is_restoring { ChatState::Streaming } else { ChatState::Idle }
+            if is_restoring { ChatState::Loading } else { ChatState::Idle }
         } else {
             ChatState::Error("Failed to start pi agent. Is bun installed?".into())
         };
@@ -284,7 +286,7 @@ impl ChatWindow {
                             let mut parts = vec![];
                             for part in msg.parts {
                                 match part {
-                                    crate::pi_rpc::LoadedPart::Text { text } => {
+                                    crate::rpc::pi_rpc::LoadedPart::Text { text } => {
                                         parts.push(MessagePart::Text {
                                             text: if text.is_empty() {
                                                 SharedString::from("(empty)")
@@ -309,20 +311,20 @@ impl ChatWindow {
                             let mut parts = vec![];
                             for part in msg.parts {
                                 match part {
-                                    crate::pi_rpc::LoadedPart::Text { text } => {
+                                    crate::rpc::pi_rpc::LoadedPart::Text { text } => {
                                         parts.push(MessagePart::Text {
                                             text: text.into(),
                                             state: Some(PartState::Done),
                                         });
                                     }
-                                    crate::pi_rpc::LoadedPart::Thinking { text } => {
+                                    crate::rpc::pi_rpc::LoadedPart::Thinking { text } => {
                                         parts.push(MessagePart::Reasoning {
                                             text: text.into(),
                                             state: Some(PartState::Done),
                                             provider_metadata: None,
                                         });
                                     }
-                                    crate::pi_rpc::LoadedPart::ToolCall { name, args } => {
+                                    crate::rpc::pi_rpc::LoadedPart::ToolCall { name, args } => {
                                         parts.push(MessagePart::ToolCall {
                                             tool_call_id: SharedString::from(""),
                                             name: name.into(),
@@ -330,7 +332,7 @@ impl ChatWindow {
                                             state: Some(PartState::Done),
                                         });
                                     }
-                                    crate::pi_rpc::LoadedPart::ToolResult { name, output } => {
+                                    crate::rpc::pi_rpc::LoadedPart::ToolResult { name, output } => {
                                         parts.push(MessagePart::ToolResult {
                                             tool_call_id: SharedString::from(""),
                                             name: name.into(),
@@ -350,7 +352,7 @@ impl ChatWindow {
                         }
                         "tool" => {
                             for part in msg.parts {
-                                if let crate::pi_rpc::LoadedPart::ToolResult { name, output } = part {
+                                if let crate::rpc::pi_rpc::LoadedPart::ToolResult { name, output } = part {
                                     if let Some(last_msg) = self.messages.last_mut() {
                                         if matches!(last_msg.role, Role::Assistant) {
                                             last_msg.parts.push(MessagePart::ToolResult {
@@ -467,13 +469,15 @@ impl Render for ChatWindow {
     ) -> impl IntoElement {
         let status = match &self.state {
             ChatState::Idle => None,
+            ChatState::Loading => Some(SharedString::from("Loading...")),
             ChatState::Streaming => Some(SharedString::from("Thinking...")),
             ChatState::Error(msg) => Some(msg.clone()),
         };
         let is_error = matches!(self.state, ChatState::Error(_));
+        let is_loading = matches!(self.state, ChatState::Loading);
         let is_streaming = matches!(self.state, ChatState::Streaming);
         let input_empty = self.input.read(cx).content().is_empty();
-        let is_disabled = is_streaming || input_empty;
+        let is_disabled = is_streaming || is_loading || input_empty;
 
         // Sync dropdown labels with current state
         let model_label = model_display_name(self.selected_model.as_deref());
@@ -645,6 +649,23 @@ impl Render for ChatWindow {
                                 )
                         })
                     )
+                    .when(is_loading, |el| {
+                        el.child(
+                            div()
+                                .flex()
+                                .justify_center()
+                                .child(
+                                    div()
+                                        .px_3()
+                                        .py_1()
+                                        .rounded_md()
+                                        .bg(rgb(0x252525))
+                                        .text_color(rgb(0x888888))
+                                        .text_xs()
+                                        .child(loader()),
+                                ),
+                        )
+                    })
                     .when(is_streaming, |el| {
                         el.child(
                             div()

@@ -4,6 +4,8 @@ use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
+use crate::utils::format::truncate_str;
+
 pub struct PiRpc {
     stdin: std::process::ChildStdin,
     _child: Child,
@@ -362,16 +364,6 @@ fn extract_text_parts(val: &serde_json::Value, out: &mut String) {
                 out.push_str(text);
             }
         }
-    }
-}
-
-fn truncate_str(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        let mut truncated = s[..s.floor_char_boundary(max)].to_string();
-        truncated.push_str("...");
-        truncated
     }
 }
 

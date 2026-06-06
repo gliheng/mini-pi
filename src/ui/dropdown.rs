@@ -3,7 +3,7 @@ use gpui::{
     ParentElement, Render, SharedString, Styled, Window, div, prelude::*, px, rgb,
 };
 
-use crate::input::TextInput;
+use crate::ui::input::TextInput;
 
 /// An item in the dropdown list.
 #[derive(Clone)]

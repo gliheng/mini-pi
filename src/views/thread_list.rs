@@ -6,12 +6,13 @@ use gpui::{
     rgb, size, svg,
 };
 
-use crate::actions::CloseWindow;
-use crate::app::{AppStore, custom_window_options};
-use crate::chat_window::ChatWindow;
-use crate::store::{Store, ThreadMeta};
-use crate::title_bar::{TitleBar, TitleBarEvent};
-use crate::user_panel::{UserPanel, UserPanelEvent};
+use crate::core::actions::CloseWindow;
+use crate::core::app::{AppStore, custom_window_options};
+use crate::views::chat_window::ChatWindow;
+use crate::data::store::{Store, ThreadMeta};
+use crate::views::title_bar::{TitleBar, TitleBarEvent};
+use crate::views::user_panel::{UserPanel, UserPanelEvent};
+use crate::utils::format::format_relative_time;
 
 pub struct ThreadItem {
     thread: Arc<ThreadMeta>,
@@ -47,7 +48,7 @@ impl Render for ThreadItem {
         let time_label: SharedString = if self.thread.updated_at.is_empty() {
             "".into()
         } else {
-            crate::utils::format_relative_time(&self.thread.updated_at).into()
+            format_relative_time(&self.thread.updated_at).into()
         };
         let pinned = self.thread.pinned;
         let confirming = self.confirming;

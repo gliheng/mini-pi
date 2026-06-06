@@ -5,7 +5,7 @@ use gpui::{
     WindowDecorations, WindowOptions, point, px,
 };
 
-use crate::store::Store;
+use crate::data::store::Store;
 
 pub struct AppStore(pub Arc<Store>);
 
@@ -26,15 +26,5 @@ pub fn custom_window_options(bounds: Option<Bounds<gpui::Pixels>>) -> WindowOpti
         },
         window_background: WindowBackgroundAppearance::Transparent,
         ..Default::default()
-    }
-}
-
-pub fn truncate_str(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        let mut truncated = s[..s.floor_char_boundary(max)].to_string();
-        truncated.push_str("...");
-        truncated
     }
 }

@@ -48,6 +48,7 @@ pub struct Message {
 #[derive(Clone, PartialEq)]
 pub enum ChatState {
     Idle,
+    Loading,
     Streaming,
     Error(SharedString),
 }

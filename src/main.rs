@@ -1,17 +1,9 @@
-mod actions;
-mod app;
-mod assets;
-mod chat_window;
-mod dropdown;
-mod input;
-mod model_config;
-mod models;
-mod pi_rpc;
-mod reasoning;
-mod store;
-mod thread_list;
-mod title_bar;
-mod user_panel;
+mod core;
+mod data;
+mod rpc;
+mod config;
+mod ui;
+mod views;
 mod utils;
 
 use std::{path::PathBuf, sync::Arc};
@@ -20,11 +12,11 @@ use gpui::{
     App, AppContext, Application, Bounds, KeyBinding, px, size,
 };
 
-use crate::actions::Quit;
-use crate::app::{AppStore, custom_window_options};
-use crate::assets::Assets;
-use crate::store::Store;
-use crate::thread_list::ThreadList;
+use crate::core::actions::Quit;
+use crate::core::app::{AppStore, custom_window_options};
+use crate::core::assets::Assets;
+use crate::data::store::Store;
+use crate::views::thread_list::ThreadList;
 
 fn quit(_: &Quit, cx: &mut App) {
     cx.quit();
@@ -41,24 +33,24 @@ fn main() {
 
             cx.on_action(quit);
             cx.bind_keys([
-                KeyBinding::new("ctrl-w", actions::CloseWindow, None),
-                KeyBinding::new("cmd-w", actions::CloseWindow, None),
+                KeyBinding::new("ctrl-w", core::actions::CloseWindow, None),
+                KeyBinding::new("cmd-w", core::actions::CloseWindow, None),
                 KeyBinding::new("cmd-q", Quit, None),
-                KeyBinding::new("enter", actions::SendMessage, None),
-                KeyBinding::new("backspace", input::Backspace, None),
-                KeyBinding::new("delete", input::Delete, None),
-                KeyBinding::new("left", input::Left, None),
-                KeyBinding::new("right", input::Right, None),
-                KeyBinding::new("shift-left", input::SelectLeft, None),
-                KeyBinding::new("shift-right", input::SelectRight, None),
-                KeyBinding::new("ctrl-f", input::Forward, None),
-                KeyBinding::new("ctrl-b", input::Backward, None),
-                KeyBinding::new("cmd-a", input::SelectAll, None),
-                KeyBinding::new("cmd-v", input::Paste, None),
-                KeyBinding::new("cmd-c", input::CopyText, None),
-                KeyBinding::new("cmd-x", input::Cut, None),
-                KeyBinding::new("home", input::Home, None),
-                KeyBinding::new("end", input::End, None),
+                KeyBinding::new("enter", core::actions::SendMessage, None),
+                KeyBinding::new("backspace", ui::input::Backspace, None),
+                KeyBinding::new("delete", ui::input::Delete, None),
+                KeyBinding::new("left", ui::input::Left, None),
+                KeyBinding::new("right", ui::input::Right, None),
+                KeyBinding::new("shift-left", ui::input::SelectLeft, None),
+                KeyBinding::new("shift-right", ui::input::SelectRight, None),
+                KeyBinding::new("ctrl-f", ui::input::Forward, None),
+                KeyBinding::new("ctrl-b", ui::input::Backward, None),
+                KeyBinding::new("cmd-a", ui::input::SelectAll, None),
+                KeyBinding::new("cmd-v", ui::input::Paste, None),
+                KeyBinding::new("cmd-c", ui::input::CopyText, None),
+                KeyBinding::new("cmd-x", ui::input::Cut, None),
+                KeyBinding::new("home", ui::input::Home, None),
+                KeyBinding::new("end", ui::input::End, None),
             ]);
 
             cx.on_window_closed(|cx| {

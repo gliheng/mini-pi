@@ -35,3 +35,13 @@ pub fn format_relative_time(datetime_str: &str) -> String {
         return dt.format("%b %d").to_string();
     }
 }
+
+pub fn truncate_str(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        let mut truncated = s[..s.floor_char_boundary(max)].to_string();
+        truncated.push_str("...");
+        truncated
+    }
+}
