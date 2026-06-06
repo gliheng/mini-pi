@@ -893,42 +893,60 @@ impl Render for ChatWindow {
             )
             .child(
                 div()
-                    .relative()
                     .px_3()
-                    .py_3()
-                    .border_t_1()
-                    .border_color(rgb(0x333333))
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .items_center()
-                    .child(self.model_dropdown.clone())
-                    .child(self.thinking_dropdown.clone())
-                    .child(div().flex_1().child(self.input.clone()))
+                    .pb_3()
                     .child(
                         div()
-                            .id("send-btn")
+                            .bg(rgb(0x252525))
+                            .rounded_xl()
+                            .border_1()
+                            .border_color(rgb(0x333333))
+                            .px_3()
+                            .py_3()
                             .flex()
-                            .items_center()
-                            .justify_center()
-                            .size(px(28.))
-                            .bg(if is_disabled { rgb(0x666666) } else { rgb(0x3b82f6) })
-                            .rounded_md()
-                            .text_color(rgb(0xffffff))
-                            .when(!is_disabled, |this| this.cursor_pointer())
-                            .child("➤")
-                            .hover(|style| {
-                                if !is_disabled {
-                                    style.bg(rgb(0x2563eb))
-                                } else {
-                                    style
-                                }
-                            })
-                            .when(!is_disabled, |this| {
-                                this.on_click(cx.listener(|this, _, _window, cx| {
-                                    this.send_message(&SendMessage, _window, cx);
-                                }))
-                            }),
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_1()
+                                    .child(self.input.clone())
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(self.model_dropdown.clone())
+                                    .child(self.thinking_dropdown.clone())
+                                    .child(div().flex_1())
+                                    .child(
+                                        div()
+                                            .id("send-btn")
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .size(px(28.))
+                                            .bg(if is_disabled { rgb(0x666666) } else { rgb(0x3b82f6) })
+                                            .rounded_md()
+                                            .text_color(rgb(0xffffff))
+                                            .when(!is_disabled, |this| this.cursor_pointer())
+                                            .child("➤")
+                                            .hover(|style| {
+                                                if !is_disabled {
+                                                    style.bg(rgb(0x2563eb))
+                                                } else {
+                                                    style
+                                                }
+                                            })
+                                            .when(!is_disabled, |this| {
+                                                this.on_click(cx.listener(|this, _, _window, cx| {
+                                                    this.send_message(&SendMessage, _window, cx);
+                                                }))
+                                            }),
+                                    )
+                            )
                     )
             )
     }
