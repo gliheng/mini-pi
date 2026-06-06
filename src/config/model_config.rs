@@ -8,48 +8,32 @@ pub struct ModelInfo {
 
 const MODELS: &[ModelInfo] = &[
     ModelInfo {
-        name: "Claude Sonnet 4",
-        id: "claude-sonnet-4",
+        name: "OpenAI GPT-5.4 Nano",
+        id: "openai/gpt-5.4-nano",
     },
     ModelInfo {
-        name: "Claude Opus 4",
-        id: "claude-opus-4",
+        name: "OpenAI GPT-5.5 Pro",
+        id: "openai/gpt-5.5-pro",
     },
     ModelInfo {
-        name: "Claude Opus 4.5",
-        id: "claude-opus-4-5",
+        name: "Moonshot Kimi K2.6",
+        id: "workers-ai/@cf/moonshotai/kimi-k2.6",
     },
     ModelInfo {
-        name: "GPT-4o",
-        id: "gpt-4o",
+        name: "MiniMax M3",
+        id: "minimax/m3",
     },
     ModelInfo {
-        name: "GPT-4o Mini",
+        name: "OpenAI GPT-4o Mini",
         id: "gpt-4o-mini",
     },
     ModelInfo {
-        name: "GPT-5.1",
-        id: "gpt-5.1",
-    },
-    ModelInfo {
-        name: "o4-mini",
-        id: "o4-mini",
-    },
-    ModelInfo {
-        name: "Gemini 2.5 Pro",
-        id: "gemini-2.5-pro",
-    },
-    ModelInfo {
-        name: "DeepSeek V4",
-        id: "deepseek-v4",
-    },
-    ModelInfo {
         name: "DeepSeek V4 Flash",
-        id: "deepseek-v4-flash",
+        id: "deepseek/deepseek-v4-flash",
     },
     ModelInfo {
-        name: "Grok 3",
-        id: "grok-3",
+        name: "DeepSeek V4 Pro",
+        id: "deepseek/deepseek-v4-pro",
     },
 ];
 

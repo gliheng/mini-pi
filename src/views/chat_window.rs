@@ -11,7 +11,7 @@ use crate::core::actions::{CloseWindow, SendMessage};
 use crate::core::app::{AppStore, custom_window_options};
 use crate::ui::dropdown::{Direction, Dropdown, DropdownEvent, DropdownItem};
 use crate::ui::input::TextInput;
-use crate::ui::loader::loader;
+use crate::ui::loader::{loader, text_loader};
 use crate::config::model_config::{model_display_name, all_models};
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::rpc::pi_rpc::{BridgeEvent, PiRpc};
@@ -68,7 +68,7 @@ impl ChatWindow {
                 eprintln!("[mini-pi] pi spawned with session {}", session_file);
                 if is_restoring {
                     eprintln!("[mini-pi] restoring session, requesting message history");
-                    if let Err(e) = rpc.send_get_messages() {
+                    if let Err(e) = rpc.send_get_messages(None) {
                         eprintln!("[mini-pi] failed to send get_messages: {}", e);
                     }
                 }
@@ -162,7 +162,7 @@ impl ChatWindow {
                 );
             }
             if let Some(ref mut pi) = this.pi {
-                if let Err(e) = pi.send_set_model(id) {
+                if let Err(e) = pi.send_set_model("cloudflare-ai-gateway", id, None) {
                     eprintln!("[mini-pi] send_set_model failed: {}", e);
                 }
             }
@@ -173,7 +173,7 @@ impl ChatWindow {
             let DropdownEvent::Selected { id } = event;
             this.thinking_level = Some(id.clone());
             if let Some(ref mut pi) = this.pi {
-                if let Err(e) = pi.send_set_thinking_level(id) {
+                if let Err(e) = pi.send_set_thinking_level(id, None) {
                     eprintln!("[mini-pi] send_set_thinking_level failed: {}", e);
                 }
             }
@@ -190,6 +190,13 @@ impl ChatWindow {
         match event {
             BridgeEvent::AgentStart => {
                 self.state = ChatState::Streaming;
+            }
+            BridgeEvent::MessageStart { .. } => {
+                self.messages.push(Message {
+                    id: Uuid::new_v4().to_string(),
+                    role: Role::Assistant,
+                    parts: vec![],
+                });
             }
             BridgeEvent::AgentEnd => {
                 for msg in self.messages.iter_mut() {
@@ -219,18 +226,28 @@ impl ChatWindow {
                             *text = new_text.into();
                         }
                     }
+                } else if let Some(msg) = self.messages.last_mut() {
+                    if matches!(msg.role, Role::Assistant) {
+                        msg.parts.push(MessagePart::Text {
+                            text: content.into(),
+                            state: Some(PartState::Streaming),
+                        });
+                    }
                 }
             }
             BridgeEvent::ThinkingDelta { content } => {
                 if let Some(msg) = self.messages.iter_mut().find(|m| {
                     matches!(m.role, Role::Assistant)
+                        && m.parts.iter().any(|p| matches!(p, MessagePart::Reasoning { state: Some(PartState::Streaming), .. }))
                 }) {
                     if let Some(part) = msg.parts.iter_mut().find(|p| matches!(p, MessagePart::Reasoning { state: Some(PartState::Streaming), .. })) {
                         if let MessagePart::Reasoning { text, .. } = part {
                             let new_text = format!("{}{}", text, content);
                             *text = new_text.into();
                         }
-                    } else {
+                    }
+                } else if let Some(msg) = self.messages.last_mut() {
+                    if matches!(msg.role, Role::Assistant) {
                         msg.parts.push(MessagePart::Reasoning {
                             text: content.into(),
                             state: Some(PartState::Streaming),
@@ -239,7 +256,7 @@ impl ChatWindow {
                     }
                 }
             }
-            BridgeEvent::ToolStart { name, args } => {
+            BridgeEvent::ToolStart { name, args, .. } => {
                 if let Some(msg) = self.messages.last_mut() {
                     if matches!(msg.role, Role::Assistant) {
                         msg.parts.push(MessagePart::ToolCall {
@@ -255,7 +272,7 @@ impl ChatWindow {
                     }
                 }
             }
-            BridgeEvent::ToolOutput { name, output } => {
+            BridgeEvent::ToolEnd { tool_name, output, is_error, .. } => {
                 if let Some(msg) = self.messages.last_mut() {
                     if matches!(msg.role, Role::Assistant) {
                         // Mark any existing streaming tool call as done
@@ -268,8 +285,12 @@ impl ChatWindow {
                         }
                         msg.parts.push(MessagePart::ToolResult {
                             tool_call_id: SharedString::from(""),
-                            name: name.into(),
-                            output: truncate_str(&output, 500).into(),
+                            name: tool_name.into(),
+                            output: if is_error {
+                                format!("ERROR: {}", truncate_str(&output, 500))
+                            } else {
+                                truncate_str(&output, 500)
+                            }.into(),
                             state: Some(PartState::Done),
                         });
                     }
@@ -278,6 +299,126 @@ impl ChatWindow {
             BridgeEvent::Error { message } => {
                 self.state = ChatState::Error(message.into());
             }
+            BridgeEvent::TextStart => {
+                if let Some(msg) = self.messages.last_mut() {
+                    if matches!(msg.role, Role::Assistant) {
+                        msg.parts.push(MessagePart::Text {
+                            text: SharedString::from(""),
+                            state: Some(PartState::Streaming),
+                        });
+                    }
+                }
+            }
+            BridgeEvent::TextEnd { .. } => {
+                if let Some(msg) = self.messages.last_mut() {
+                    if matches!(msg.role, Role::Assistant) {
+                        if let Some(part) = msg.parts.iter_mut().rev().find(|p| matches!(p, MessagePart::Text { state: Some(PartState::Streaming), .. })) {
+                            if let MessagePart::Text { state, .. } = part {
+                                *state = Some(PartState::Done);
+                            }
+                        }
+                    }
+                }
+            }
+            BridgeEvent::ThinkingStart => {
+                if let Some(msg) = self.messages.last_mut() {
+                    if matches!(msg.role, Role::Assistant) {
+                        msg.parts.push(MessagePart::Reasoning {
+                            text: SharedString::from(""),
+                            state: Some(PartState::Streaming),
+                            provider_metadata: None,
+                        });
+                    }
+                }
+            }
+            BridgeEvent::ThinkingEnd { .. } => {
+                if let Some(msg) = self.messages.last_mut() {
+                    if matches!(msg.role, Role::Assistant) {
+                        if let Some(part) = msg.parts.iter_mut().rev().find(|p| matches!(p, MessagePart::Reasoning { state: Some(PartState::Streaming), .. })) {
+                            if let MessagePart::Reasoning { state, .. } = part {
+                                *state = Some(PartState::Done);
+                            }
+                        }
+                    }
+                }
+            }
+            BridgeEvent::ToolCallStart { name, call_id } => {
+                if let Some(msg) = self.messages.last_mut() {
+                    if matches!(msg.role, Role::Assistant) {
+                        msg.parts.push(MessagePart::ToolCall {
+                            tool_call_id: call_id.into(),
+                            name: name.into(),
+                            args: SharedString::from(""),
+                            state: Some(PartState::Streaming),
+                        });
+                    }
+                }
+            }
+            BridgeEvent::ToolCallDelta { call_id, delta } => {
+                if let Some(msg) = self.messages.last_mut() {
+                    if matches!(msg.role, Role::Assistant) {
+                        if let Some(part) = msg.parts.iter_mut().find(|p| matches!(p, MessagePart::ToolCall { tool_call_id: id, .. } if id == &SharedString::from(call_id.clone()))) {
+                            if let MessagePart::ToolCall { args, .. } = part {
+                                let new_args = format!("{}{}", args, delta);
+                                *args = new_args.into();
+                            }
+                        }
+                    }
+                }
+            }
+            BridgeEvent::ToolCallEnd { call_id, name, args } => {
+                if let Some(msg) = self.messages.last_mut() {
+                    if matches!(msg.role, Role::Assistant) {
+                        if let Some(part) = msg.parts.iter_mut().find(|p| matches!(p, MessagePart::ToolCall { tool_call_id: id, .. } if id == &SharedString::from(call_id.clone()))) {
+                            if let MessagePart::ToolCall { name: part_name, args: part_args, state, .. } = part {
+                                if *part_name == SharedString::from("") || *part_name == SharedString::from(name.clone()) {
+                                    *part_name = name.into();
+                                }
+                                let args_str = serde_json::to_string(&args).unwrap_or_default();
+                                *part_args = args_str.into();
+                                *state = Some(PartState::Done);
+                            }
+                        }
+                    }
+                }
+            }
+            BridgeEvent::ToolUpdate { .. } => {}
+            BridgeEvent::TurnStart | BridgeEvent::TurnEnd => {}
+            BridgeEvent::MessageEnd => {
+                if let Some(msg) = self.messages.last_mut() {
+                    if matches!(msg.role, Role::Assistant) {
+                        for part in msg.parts.iter_mut() {
+                            match part {
+                                MessagePart::Text { state, .. }
+                                | MessagePart::Reasoning { state, .. }
+                                | MessagePart::ToolCall { state, .. }
+                                | MessagePart::ToolResult { state, .. } => {
+                                    if let Some(s) = state {
+                                        *s = PartState::Done;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            BridgeEvent::ExtensionUiRequest { id, method, .. } => {
+                eprintln!("[mini-pi] extension_ui_request method={}, id={}, auto-cancelling", method, id);
+                if let Some(ref mut pi) = self.pi {
+                    let _ = pi.send_extension_ui_response(
+                        &id,
+                        &serde_json::json!({ "cancelled": true }),
+                    );
+                }
+            }
+            BridgeEvent::ExtensionError { extension_path, event, error } => {
+                eprintln!("[mini-pi] extension error in {} (event: {}): {}", extension_path, event, error);
+            }
+            BridgeEvent::Disconnected => {
+                eprintln!("[mini-pi] pi process disconnected");
+                self.state = ChatState::Error("Pi agent process disconnected".into());
+            }
+            BridgeEvent::Response { .. } => {}
             BridgeEvent::MessagesLoaded { messages } => {
                 eprintln!("[mini-pi] loaded {} messages from history", messages.len());
                 for msg in messages {
@@ -443,14 +584,6 @@ impl ChatWindow {
             cx.update_global(|_: &mut AppStore, _| {});
         }
 
-        self.messages.push(Message {
-            id: Uuid::new_v4().to_string(),
-            role: Role::Assistant,
-            parts: vec![MessagePart::Text {
-                text: SharedString::from(""),
-                state: Some(PartState::Streaming),
-            }],
-        });
         self.state = ChatState::Streaming;
 
         if let Some(ref mut pi) = self.pi {
@@ -582,11 +715,7 @@ impl Render for ChatWindow {
                                         .children(msg.parts.iter().enumerate().map(|(part_idx, part)| {
                                             match part {
                                                 MessagePart::Text { text, state } => {
-                                                    let display = if *state == Some(PartState::Streaming) && text.is_empty() {
-                                                        SharedString::from("...")
-                                                    } else {
-                                                        text.clone()
-                                                    };
+                                                    let is_streaming_empty = *state == Some(PartState::Streaming) && text.is_empty();
                                                     div()
                                                         .px_3()
                                                         .py_2()
@@ -598,7 +727,12 @@ impl Render for ChatWindow {
                                                             this.text_color(rgb(0xe5e5e5))
                                                         })
                                                         .text_sm()
-                                                        .child(display)
+                                                        .when(is_streaming_empty, |this| {
+                                                            this.child(text_loader())
+                                                        })
+                                                        .when(!is_streaming_empty, |this| {
+                                                            this.child(text.clone())
+                                                        })
                                                 }
                                                 MessagePart::Reasoning { .. } => {
                                                     let reasoning_entity = msg_reasoning.get(part_idx).and_then(|e| e.clone());

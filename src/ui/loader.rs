@@ -1,4 +1,4 @@
-use gpui::{Animation, AnimationExt, IntoElement, ParentElement, Styled, div, prelude::*, px, rgb};
+use gpui::{Animation, AnimationExt, IntoElement, ParentElement, SharedString, Styled, div, prelude::*, px, rgb};
 use std::time::Duration;
 
 /// Create a reusable animated loader / spinner.
@@ -52,6 +52,32 @@ fn animated_dot(
                 // Smooth sine wave: 0.3 -> 1.0 -> 0.3
                 let opacity = 0.3 + 0.7 * (phased * std::f32::consts::PI * 2.0).sin().abs();
                 this.opacity(opacity)
+            },
+        )
+}
+
+/// Create an inline text loader that animates by alternating dot characters.
+///
+/// Cycles through `.` → `..` → `...` every 500 ms.
+/// Useful as a placeholder inside message bubbles while content is streaming.
+///
+/// # Example
+/// ```rust
+/// .child(text_loader())
+/// ```
+pub fn text_loader() -> impl IntoElement {
+    div()
+        .id("text-loader")
+        .with_animation(
+            "text-loader-anim",
+            Animation::new(Duration::from_millis(1500)).repeat(),
+            move |this, progress| {
+                let dots = match (progress * 3.0) as usize {
+                    0 => ".",
+                    1 => "..",
+                    _ => "...",
+                };
+                this.child(SharedString::from(dots))
             },
         )
 }
