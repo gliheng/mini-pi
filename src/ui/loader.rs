@@ -1,9 +1,11 @@
-use gpui::{IntoElement, ParentElement, Styled, div, prelude::*, px, rgb};
+use gpui::{Animation, AnimationExt, IntoElement, ParentElement, Styled, div, prelude::*, px, rgb};
+use std::time::Duration;
 
 /// Create a reusable animated loader / spinner.
 ///
-/// Shows a small centered row of three dots. Use it anywhere you need
-/// to indicate that something is happening in the background.
+/// Shows a small centered row of three dots that pulse in sequence.
+/// Use it anywhere you need to indicate that something is happening
+/// in the background.
 ///
 /// # Example
 /// ```rust
@@ -25,15 +27,31 @@ pub fn loader_with(size: f32, color: u32) -> impl IntoElement {
         .items_center()
         .justify_center()
         .gap(gap)
-        .child(dot(dot_size, color, "loader-dot-1"))
-        .child(dot(dot_size, color, "loader-dot-2"))
-        .child(dot(dot_size, color, "loader-dot-3"))
+        .child(animated_dot(dot_size, color, "loader-dot-1", 0.0))
+        .child(animated_dot(dot_size, color, "loader-dot-2", 0.33))
+        .child(animated_dot(dot_size, color, "loader-dot-3", 0.66))
 }
 
-fn dot(size: gpui::Pixels, color: gpui::Rgba, id: &'static str) -> impl IntoElement {
+fn animated_dot(
+    size: gpui::Pixels,
+    color: gpui::Rgba,
+    id: &'static str,
+    phase_offset: f32,
+) -> impl IntoElement {
     div()
         .id(id)
         .size(size)
         .rounded_full()
         .bg(color)
+        .with_animation(
+            id,
+            Animation::new(Duration::from_millis(1200)).repeat(),
+            move |this, progress| {
+                // Offset progress so dots pulse in sequence
+                let phased = (progress + phase_offset) % 1.0;
+                // Smooth sine wave: 0.3 -> 1.0 -> 0.3
+                let opacity = 0.3 + 0.7 * (phased * std::f32::consts::PI * 2.0).sin().abs();
+                this.opacity(opacity)
+            },
+        )
 }
