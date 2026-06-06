@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 
 use gpui::{
-    Context, FontWeight, IntoElement, ParentElement, Render, SharedString, Styled, Window,
-    div, px, prelude::*, rgb,
+    AlignItems, Context, FontWeight, IntoElement, ParentElement, Render, SharedString, Styled,
+    Window, div, px, prelude::*, rgb,
 };
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
@@ -496,7 +496,9 @@ fn render_inline_node(inline: &InlineNode) -> Vec<gpui::AnyElement> {
                 .collect()
         }
         InlineNode::Code { code } => {
-            let el = div()
+            let mut el = div();
+            el.style().align_self = Some(AlignItems::Center);
+            let el = el
                 .px_1()
                 .rounded_sm()
                 .bg(rgb(0x333333))
@@ -738,7 +740,6 @@ fn render_block(block: &BlockNode) -> gpui::AnyElement {
                 .into_any_element()
         }
         BlockNode::BlockQuote { children } => div()
-            .pl_4()
             .border_l_4()
             .border_color(rgb(0x444444))
             .text_color(rgb(0xaaaaaa))
@@ -754,7 +755,6 @@ fn render_block(block: &BlockNode) -> gpui::AnyElement {
         } => div()
             .flex()
             .flex_col()
-            .pl_4()
             .gap_1()
             .children(items.iter().enumerate().map(|(i, item_blocks)| {
                 let marker = if *ordered {

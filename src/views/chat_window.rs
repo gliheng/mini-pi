@@ -2,8 +2,8 @@ use std::{sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 
 use futures::StreamExt;
 use gpui::{
-    Context, FocusHandle, IntoElement, KeyDownEvent, ParentElement, Render, ScrollHandle, SharedString, Styled, Task,
-    Window, div, prelude::*, px, rgb,
+    ClipboardItem, Context, FocusHandle, IntoElement, KeyDownEvent, ParentElement, Render, ScrollHandle, SharedString, Styled, Task,
+    Window, div, prelude::*, px, rgb, svg,
 };
 use uuid::Uuid;
 
@@ -773,26 +773,52 @@ impl Render for ChatWindow {
                                                 MessagePart::Text { text, state } => {
                                                     let is_streaming_empty = *state == Some(PartState::Streaming) && text.is_empty();
                                                     let markdown_entity = msg_markdown.get(part_idx).and_then(|e| e.clone());
+                                                    let text_to_copy: SharedString = text.clone();
                                                     div()
-                                                        .px_3()
-                                                        .py_2()
-                                                        .rounded_md()
-                                                        .when(is_user, |this| {
-                                                            this.bg(rgb(0x3b82f6)).text_color(rgb(0xffffff))
-                                                        })
-                                                        .when(matches!(msg.role, Role::Assistant), |this| {
-                                                            this.text_color(rgb(0xe5e5e5))
-                                                        })
-                                                        .text_sm()
-                                                        .when(is_streaming_empty, |this| {
-                                                            this.child(text_loader())
-                                                        })
-                                                        .when(!is_streaming_empty, |this| {
-                                                            if let Some(md) = markdown_entity {
-                                                                this.child(md)
-                                                            } else {
-                                                                this.child(text.clone())
-                                                            }
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap_1()
+                                                        .child(
+                                                            div()
+                                                                .px_3()
+                                                                .py_2()
+                                                                .rounded_md()
+                                                                .when(is_user, |this| {
+                                                                    this.bg(rgb(0x3b82f6)).text_color(rgb(0xffffff))
+                                                                })
+                                                                .when(matches!(msg.role, Role::Assistant), |this| {
+                                                                    this.text_color(rgb(0xe5e5e5))
+                                                                })
+                                                                .text_sm()
+                                                                .when(is_streaming_empty, |this| {
+                                                                    this.child(text_loader())
+                                                                })
+                                                                .when(!is_streaming_empty, |this| {
+                                                                    if let Some(md) = markdown_entity {
+                                                                        this.child(md)
+                                                                    } else {
+                                                                        this.child(text.clone())
+                                                                    }
+                                                                })
+                                                        )
+                                                        .when(!is_user && !is_streaming_empty, |this| {
+                                                            this.child(
+                                                                div()
+                                                                    .id(("copy-btn", msg_idx as u64))
+                                                                    .flex()
+                                                                    .items_center()
+                                                                    .cursor_pointer()
+                                                                    .child(
+                                                                        svg()
+                                                                            .path("clipboard.svg")
+                                                                            .size(px(12.))
+                                                                            .text_color(rgb(0x888888))
+                                                                            .hover(|style| style.text_color(rgb(0xcccccc))),
+                                                                    )
+                                                                    .on_click(cx.listener(move |_this, _, _window, cx| {
+                                                                        cx.write_to_clipboard(ClipboardItem::new_string(text_to_copy.to_string()));
+                                                                    }))
+                                                            )
                                                         })
                                                 }
                                                 MessagePart::Reasoning { .. } => {
