@@ -8,7 +8,7 @@ use gpui::{
 use uuid::Uuid;
 
 use crate::core::actions::{CloseWindow, SendMessage};
-use crate::core::app::{AppStore, custom_window_options};
+use crate::core::app::AppStore;
 use crate::ui::dropdown::{Direction, Dropdown, DropdownEvent, DropdownItem};
 use crate::ui::input::TextInput;
 use crate::ui::loader::{loader, text_loader};
@@ -19,6 +19,7 @@ use crate::views::reasoning::Reasoning;
 use crate::data::store::{Store, ThreadMeta};
 use crate::views::title_bar::TitleBar;
 use crate::utils::format::truncate_str;
+use crate::ui::markdown::MarkdownRenderer;
 
 pub struct ChatWindow {
     pub thread_id: Option<i64>,
@@ -36,6 +37,7 @@ pub struct ChatWindow {
     pub model_dropdown: gpui::Entity<Dropdown>,
     pub thinking_dropdown: gpui::Entity<Dropdown>,
     pub reasoning_displays: Vec<Vec<Option<gpui::Entity<Reasoning>>>>,
+    pub markdown_displays: Vec<Vec<Option<gpui::Entity<MarkdownRenderer>>>>,
 }
 
 impl ChatWindow {
@@ -48,7 +50,7 @@ impl ChatWindow {
             .map(|t| if t.title.is_empty() { "New Thread".into() } else { t.title.clone().into() })
             .unwrap_or_else(|| "New Thread".into());
         let input = cx.new(|cx| TextInput::new(cx, "Type a message..."));
-        let title_bar = cx.new(|_| TitleBar::new(title.clone()));
+        let title_bar = cx.new(|_| TitleBar::new(title.clone()).show_avatar(false));
 
         let session_file: String = thread
             .and_then(|t| t.session_file.clone())
@@ -145,6 +147,7 @@ impl ChatWindow {
             model_dropdown: model_dropdown.clone(),
             thinking_dropdown: thinking_dropdown.clone(),
             reasoning_displays: vec![],
+            markdown_displays: vec![],
         };
 
         // Subscribe to model dropdown selection events
@@ -667,6 +670,42 @@ impl Render for ChatWindow {
             reasoning_entities.push(msg_reasoning);
         }
 
+        // Ensure markdown displays exist for assistant text parts only
+        let mut markdown_entities: Vec<Vec<Option<gpui::Entity<MarkdownRenderer>>>> = Vec::new();
+        for (msg_idx, msg) in self.messages.iter().enumerate() {
+            let mut msg_markdown: Vec<Option<gpui::Entity<MarkdownRenderer>>> = Vec::new();
+            let is_assistant = matches!(msg.role, Role::Assistant);
+            for (part_idx, part) in msg.parts.iter().enumerate() {
+                if is_assistant && matches!(part, MessagePart::Text { .. }) {
+                    if let MessagePart::Text { text, .. } = part {
+                        if msg_idx >= self.markdown_displays.len() {
+                            self.markdown_displays.resize_with(msg_idx + 1, || vec![]);
+                        }
+                        let row = &mut self.markdown_displays[msg_idx];
+                        if part_idx >= row.len() {
+                            row.resize_with(part_idx + 1, || None);
+                        }
+                        let entity = if let Some(Some(existing)) = row.get(part_idx) {
+                            existing.update(cx, |display, _cx| {
+                                display.set_content(text);
+                            });
+                            existing.clone()
+                        } else {
+                            let new = cx.new(|_cx| MarkdownRenderer::new(text));
+                            row[part_idx] = Some(new.clone());
+                            new
+                        };
+                        msg_markdown.push(Some(entity));
+                    } else {
+                        msg_markdown.push(None);
+                    }
+                } else {
+                    msg_markdown.push(None);
+                }
+            }
+            markdown_entities.push(msg_markdown);
+        }
+
         div()
             .relative()
             .track_focus(&self.focus_handle)
@@ -700,6 +739,7 @@ impl Render for ChatWindow {
                         self.messages.iter().enumerate().map(|(msg_idx, msg)| {
                             let is_user = matches!(msg.role, Role::User);
                             let msg_reasoning = reasoning_entities.get(msg_idx).cloned().unwrap_or_default();
+                            let msg_markdown = markdown_entities.get(msg_idx).cloned().unwrap_or_default();
                             div()
                                 .flex()
                                 .w_full()
@@ -716,6 +756,7 @@ impl Render for ChatWindow {
                                             match part {
                                                 MessagePart::Text { text, state } => {
                                                     let is_streaming_empty = *state == Some(PartState::Streaming) && text.is_empty();
+                                                    let markdown_entity = msg_markdown.get(part_idx).and_then(|e| e.clone());
                                                     div()
                                                         .px_3()
                                                         .py_2()
@@ -731,7 +772,11 @@ impl Render for ChatWindow {
                                                             this.child(text_loader())
                                                         })
                                                         .when(!is_streaming_empty, |this| {
-                                                            this.child(text.clone())
+                                                            if let Some(md) = markdown_entity {
+                                                                this.child(md)
+                                                            } else {
+                                                                this.child(text.clone())
+                                                            }
                                                         })
                                                 }
                                                 MessagePart::Reasoning { .. } => {
@@ -804,7 +849,7 @@ impl Render for ChatWindow {
                         el.child(
                             div()
                                 .flex()
-                                .justify_center()
+                                .w_full()
                                 .child(
                                     div()
                                         .px_3()
@@ -813,7 +858,7 @@ impl Render for ChatWindow {
                                         .bg(rgb(0x252525))
                                         .text_color(rgb(0x888888))
                                         .text_xs()
-                                        .child("Thinking..."),
+                                        .child(text_loader()),
                                 ),
                         )
                     })

@@ -37,6 +37,11 @@ impl TitleBar {
         self
     }
 
+    pub fn show_avatar(mut self, show: bool) -> Self {
+        self.show_avatar = show;
+        self
+    }
+
     pub fn height(window: &Window) -> Pixels {
         (1.75 * window.rem_size()).max(px(TITLE_BAR_MIN_HEIGHT))
     }

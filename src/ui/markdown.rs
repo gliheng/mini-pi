@@ -1,0 +1,875 @@
+use std::collections::VecDeque;
+
+use gpui::{
+    Context, FontWeight, IntoElement, ParentElement, Render, SharedString, Styled, Window,
+    div, px, prelude::*, rgb,
+};
+use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+
+static OPTIONS: Options = Options::from_bits_truncate(
+    Options::ENABLE_TABLES.bits()
+        | Options::ENABLE_STRIKETHROUGH.bits()
+        | Options::ENABLE_TASKLISTS.bits()
+        | Options::ENABLE_SMART_PUNCTUATION.bits()
+        | Options::ENABLE_FOOTNOTES.bits()
+        | Options::ENABLE_GFM.bits(),
+);
+
+pub struct MarkdownRenderer {
+    content: SharedString,
+}
+
+impl MarkdownRenderer {
+    pub fn new(content: impl Into<SharedString>) -> Self {
+        Self {
+            content: content.into(),
+        }
+    }
+
+    pub fn set_content(&mut self, content: impl Into<SharedString>) {
+        self.content = content.into();
+    }
+}
+
+// ---- AST types ----
+
+#[derive(Debug, Clone)]
+enum InlineNode {
+    Text { text: SharedString },
+    Code { code: SharedString },
+    Emphasis { children: Vec<InlineNode> },
+    Strong { children: Vec<InlineNode> },
+    Strikethrough { children: Vec<InlineNode> },
+    Link { children: Vec<InlineNode> },
+    Image { alt: SharedString },
+    SoftBreak,
+    HardBreak,
+    InlineHtml { html: SharedString },
+    TaskMarker { checked: bool },
+}
+
+#[derive(Debug, Clone)]
+enum BlockNode {
+    Paragraph {
+        inlines: Vec<InlineNode>,
+    },
+    Heading {
+        level: HeadingLevel,
+        inlines: Vec<InlineNode>,
+    },
+    CodeBlock {
+        language: Option<SharedString>,
+        code: SharedString,
+    },
+    BlockQuote {
+        children: Vec<BlockNode>,
+    },
+    List {
+        ordered: bool,
+        start: Option<u64>,
+        items: Vec<Vec<BlockNode>>,
+    },
+    Table {
+        alignments: Vec<pulldown_cmark::Alignment>,
+        headers: Vec<Vec<InlineNode>>,
+        rows: Vec<Vec<Vec<InlineNode>>>,
+    },
+    Rule,
+}
+
+// ---- Parser ----
+
+fn parse_markdown(source: &str) -> Vec<BlockNode> {
+    let parser = Parser::new_ext(source, OPTIONS);
+
+    let mut root_blocks: Vec<BlockNode> = Vec::new();
+    let mut block_stack: VecDeque<BlockContext> = VecDeque::new();
+    let mut inline_buffer: Vec<InlineNode> = Vec::new();
+
+    let mut table_headers: Vec<Vec<InlineNode>> = Vec::new();
+    let mut table_rows: Vec<Vec<Vec<InlineNode>>> = Vec::new();
+    let mut table_alignments: Vec<pulldown_cmark::Alignment> = Vec::new();
+    let mut current_row: Vec<Vec<InlineNode>> = Vec::new();
+    let mut in_table_head = false;
+    let mut code_lang: Option<SharedString> = None;
+    let mut code_text = String::new();
+    let mut in_code_block = false;
+
+    for event in parser {
+        match event {
+            Event::Start(tag) => {
+                flush_inlines(&mut inline_buffer, &mut block_stack, &mut root_blocks);
+
+                match tag {
+                    Tag::Paragraph => {
+                        block_stack.push_back(BlockContext::Paragraph {
+                            inlines: Vec::new(),
+                        });
+                    }
+                    Tag::Heading { level, .. } => {
+                        block_stack.push_back(BlockContext::Heading {
+                            level,
+                            inlines: Vec::new(),
+                        });
+                    }
+                    Tag::CodeBlock(kind) => {
+                        in_code_block = true;
+                        code_text.clear();
+                        code_lang = match kind {
+                            CodeBlockKind::Fenced(lang) => {
+                                if lang.is_empty() {
+                                    None
+                                } else {
+                                    Some(lang.to_string().into())
+                                }
+                            }
+                            CodeBlockKind::Indented => None,
+                        };
+                    }
+                    Tag::BlockQuote(_) => {
+                        block_stack.push_back(BlockContext::BlockQuote {
+                            children: Vec::new(),
+                        });
+                    }
+                    Tag::List(order) => {
+                        block_stack.push_back(BlockContext::List {
+                            ordered: order.is_some(),
+                            start: order,
+                            items: Vec::new(),
+                        });
+                    }
+                    Tag::Item => {
+                        block_stack.push_back(BlockContext::ListItem {
+                            blocks: Vec::new(),
+                        });
+                    }
+                    Tag::Table(alignments) => {
+                        table_alignments = alignments;
+                        table_headers.clear();
+                        table_rows.clear();
+                        block_stack.push_back(BlockContext::Table);
+                    }
+                    Tag::TableHead => {
+                        in_table_head = true;
+                    }
+                    Tag::TableRow => {
+                        current_row.clear();
+                    }
+                    Tag::TableCell => {
+                        block_stack.push_back(BlockContext::InlineContainer {
+                            inlines: Vec::new(),
+                        });
+                    }
+                    Tag::Emphasis => {
+                        block_stack.push_back(BlockContext::Emphasis {
+                            children: Vec::new(),
+                        });
+                    }
+                    Tag::Strong => {
+                        block_stack.push_back(BlockContext::Strong {
+                            children: Vec::new(),
+                        });
+                    }
+                    Tag::Strikethrough => {
+                        block_stack.push_back(BlockContext::Strikethrough {
+                            children: Vec::new(),
+                        });
+                    }
+                    Tag::Link { dest_url, .. } => {
+                        block_stack.push_back(BlockContext::Link {
+                            url: dest_url.to_string().into(),
+                            children: Vec::new(),
+                        });
+                    }
+                    Tag::Image { dest_url, .. } => {
+                        let img_node = InlineNode::Image {
+                            alt: dest_url.to_string().into(),
+                        };
+                        push_inline(&mut inline_buffer, &mut block_stack, img_node);
+                    }
+                    _ => {}
+                }
+            }
+            Event::End(end_tag) => match end_tag {
+                TagEnd::Paragraph => {
+                    if let Some(ctx) = block_stack.pop_back() {
+                        if let BlockContext::Paragraph { inlines } = ctx {
+                            let block = BlockNode::Paragraph { inlines };
+                            add_block(&mut block_stack, &mut root_blocks, block);
+                        }
+                    }
+                }
+                TagEnd::Heading(level) => {
+                    if let Some(ctx) = block_stack.pop_back() {
+                        if let BlockContext::Heading { inlines, .. } = ctx {
+                            let block = BlockNode::Heading { level, inlines };
+                            add_block(&mut block_stack, &mut root_blocks, block);
+                        }
+                    }
+                }
+                TagEnd::CodeBlock => {
+                    in_code_block = false;
+                    let block = BlockNode::CodeBlock {
+                        language: code_lang.take(),
+                        code: SharedString::from(std::mem::take(&mut code_text)),
+                    };
+                    add_block(&mut block_stack, &mut root_blocks, block);
+                }
+                TagEnd::BlockQuote(_) => {
+                    if let Some(ctx) = block_stack.pop_back() {
+                        if let BlockContext::BlockQuote { children } = ctx {
+                            let block = BlockNode::BlockQuote { children };
+                            add_block(&mut block_stack, &mut root_blocks, block);
+                        }
+                    }
+                }
+                TagEnd::List(is_ordered) => {
+                    if let Some(ctx) = block_stack.pop_back() {
+                        if let BlockContext::List { items, .. } = ctx {
+                            let block = BlockNode::List {
+                                ordered: is_ordered,
+                                start: None,
+                                items,
+                            };
+                            add_block(&mut block_stack, &mut root_blocks, block);
+                        }
+                    }
+                }
+                TagEnd::Item => {
+                    if let Some(ctx) = block_stack.pop_back() {
+                        if let BlockContext::ListItem { blocks } = ctx {
+                            if let Some(parent) = block_stack.back_mut() {
+                                if let BlockContext::List { items, .. } = parent {
+                                    items.push(blocks);
+                                }
+                            }
+                        }
+                    }
+                }
+                TagEnd::Table => {
+                    if block_stack.pop_back().is_some() {
+                        let block = BlockNode::Table {
+                            alignments: std::mem::take(&mut table_alignments),
+                            headers: std::mem::take(&mut table_headers),
+                            rows: std::mem::take(&mut table_rows),
+                        };
+                        add_block(&mut block_stack, &mut root_blocks, block);
+                    }
+                }
+                TagEnd::TableHead => {
+                    in_table_head = false;
+                }
+                TagEnd::TableRow => {
+                    if in_table_head {
+                        table_headers = std::mem::take(&mut current_row);
+                    } else {
+                        table_rows.push(std::mem::take(&mut current_row));
+                    }
+                }
+                TagEnd::TableCell => {
+                    if let Some(ctx) = block_stack.pop_back() {
+                        if let BlockContext::InlineContainer { inlines } = ctx {
+                            current_row.push(inlines);
+                        }
+                    }
+                }
+                TagEnd::Emphasis => {
+                    if let Some(ctx) = block_stack.pop_back() {
+                        if let BlockContext::Emphasis { children } = ctx {
+                            push_inline(
+                                &mut inline_buffer,
+                                &mut block_stack,
+                                InlineNode::Emphasis { children },
+                            );
+                        }
+                    }
+                }
+                TagEnd::Strong => {
+                    if let Some(ctx) = block_stack.pop_back() {
+                        if let BlockContext::Strong { children } = ctx {
+                            push_inline(
+                                &mut inline_buffer,
+                                &mut block_stack,
+                                InlineNode::Strong { children },
+                            );
+                        }
+                    }
+                }
+                TagEnd::Strikethrough => {
+                    if let Some(ctx) = block_stack.pop_back() {
+                        if let BlockContext::Strikethrough { children } = ctx {
+                            push_inline(
+                                &mut inline_buffer,
+                                &mut block_stack,
+                                InlineNode::Strikethrough { children },
+                            );
+                        }
+                    }
+                }
+                TagEnd::Link => {
+                    if let Some(ctx) = block_stack.pop_back() {
+                        if let BlockContext::Link { children, .. } = ctx {
+                            push_inline(
+                                &mut inline_buffer,
+                                &mut block_stack,
+                                InlineNode::Link { children },
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            },
+            Event::Text(text) => {
+                if in_code_block {
+                    code_text.push_str(&text);
+                } else {
+                    push_inline(
+                        &mut inline_buffer,
+                        &mut block_stack,
+                        InlineNode::Text {
+                            text: text.to_string().into(),
+                        },
+                    );
+                }
+            }
+            Event::Code(code) => {
+                push_inline(
+                    &mut inline_buffer,
+                    &mut block_stack,
+                    InlineNode::Code {
+                        code: code.to_string().into(),
+                    },
+                );
+            }
+            Event::SoftBreak => {
+                push_inline(&mut inline_buffer, &mut block_stack, InlineNode::SoftBreak);
+            }
+            Event::HardBreak => {
+                push_inline(&mut inline_buffer, &mut block_stack, InlineNode::HardBreak);
+            }
+            Event::Rule => {
+                flush_inlines(&mut inline_buffer, &mut block_stack, &mut root_blocks);
+                root_blocks.push(BlockNode::Rule);
+            }
+            Event::TaskListMarker(checked) => {
+                push_inline(
+                    &mut inline_buffer,
+                    &mut block_stack,
+                    InlineNode::TaskMarker { checked },
+                );
+            }
+            Event::InlineHtml(html) | Event::Html(html) => {
+                let stripped = strip_html_tags(&html);
+                if !stripped.is_empty() {
+                    push_inline(
+                        &mut inline_buffer,
+                        &mut block_stack,
+                        InlineNode::InlineHtml {
+                            html: stripped.into(),
+                        },
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    flush_inlines(&mut inline_buffer, &mut block_stack, &mut root_blocks);
+
+    root_blocks
+}
+
+fn push_inline(
+    inline_buffer: &mut Vec<InlineNode>,
+    block_stack: &mut VecDeque<BlockContext>,
+    node: InlineNode,
+) {
+    for ctx in block_stack.iter_mut().rev() {
+        match ctx {
+            BlockContext::InlineContainer { inlines } => {
+                inlines.push(node);
+                return;
+            }
+            BlockContext::Emphasis { children }
+            | BlockContext::Strong { children }
+            | BlockContext::Strikethrough { children }
+            | BlockContext::Link { children, .. } => {
+                children.push(node);
+                return;
+            }
+            _ => continue,
+        }
+    }
+    inline_buffer.push(node);
+}
+
+fn flush_inlines(
+    inline_buffer: &mut Vec<InlineNode>,
+    block_stack: &mut VecDeque<BlockContext>,
+    root_blocks: &mut Vec<BlockNode>,
+) {
+    if inline_buffer.is_empty() {
+        return;
+    }
+    let inlines = std::mem::take(inline_buffer);
+    for ctx in block_stack.iter_mut().rev() {
+        match ctx {
+            BlockContext::InlineContainer { inlines: target }
+            | BlockContext::Paragraph { inlines: target }
+            | BlockContext::Heading { inlines: target, .. } => {
+                target.extend(inlines);
+                return;
+            }
+            _ => continue,
+        }
+    }
+    root_blocks.push(BlockNode::Paragraph { inlines });
+}
+
+fn add_block(
+    block_stack: &mut VecDeque<BlockContext>,
+    root_blocks: &mut Vec<BlockNode>,
+    block: BlockNode,
+) {
+    for ctx in block_stack.iter_mut().rev() {
+        match ctx {
+            BlockContext::BlockQuote { children } => {
+                children.push(block);
+                return;
+            }
+            BlockContext::ListItem { blocks } => {
+                blocks.push(block);
+                return;
+            }
+            _ => continue,
+        }
+    }
+    root_blocks.push(block);
+}
+
+enum BlockContext {
+    Paragraph { inlines: Vec<InlineNode> },
+    Heading { level: HeadingLevel, inlines: Vec<InlineNode> },
+    BlockQuote { children: Vec<BlockNode> },
+    List { ordered: bool, start: Option<u64>, items: Vec<Vec<BlockNode>> },
+    ListItem { blocks: Vec<BlockNode> },
+    Table,
+    InlineContainer { inlines: Vec<InlineNode> },
+    Emphasis { children: Vec<InlineNode> },
+    Strong { children: Vec<InlineNode> },
+    Strikethrough { children: Vec<InlineNode> },
+    Link { url: SharedString, children: Vec<InlineNode> },
+}
+
+// ---- Renderer ----
+
+fn split_text_into_words(text: &str) -> Vec<SharedString> {
+    let mut words: Vec<SharedString> = Vec::new();
+    let mut current = String::new();
+    for c in text.chars() {
+        current.push(c);
+        if c == ' ' || c == '\n' {
+            if !current.is_empty() {
+                words.push(SharedString::from(current.clone()));
+                current.clear();
+            }
+        }
+    }
+    if !current.is_empty() {
+        words.push(SharedString::from(current));
+    }
+    words
+}
+
+fn render_inline_node(inline: &InlineNode) -> Vec<gpui::AnyElement> {
+    match inline {
+        InlineNode::Text { text } => {
+            let words = split_text_into_words(text);
+            words
+                .into_iter()
+                .map(|w| {
+                    div()
+                        .flex_shrink_0()
+                        .child(w)
+                        .into_any_element()
+                })
+                .collect()
+        }
+        InlineNode::Code { code } => {
+            let el = div()
+                .px_1()
+                .rounded_sm()
+                .bg(rgb(0x333333))
+                .text_color(rgb(0xe5c07b))
+                .text_xs()
+                .font_family("Menlo, Monaco, 'Courier New', monospace")
+                .flex_shrink_0()
+                .child(code.clone())
+                .into_any_element();
+            vec![el]
+        }
+        InlineNode::Emphasis { children } => {
+            let inner = render_inlines_flat(children);
+            if inner.is_empty() {
+                return vec![];
+            }
+            let el = div()
+                .italic()
+                .flex_shrink_0()
+                .children(inner)
+                .into_any_element();
+            vec![el]
+        }
+        InlineNode::Strong { children } => {
+            let inner = render_inlines_flat(children);
+            if inner.is_empty() {
+                return vec![];
+            }
+            let el = div()
+                .font_weight(FontWeight(700.0))
+                .flex_shrink_0()
+                .children(inner)
+                .into_any_element();
+            vec![el]
+        }
+        InlineNode::Strikethrough { children } => {
+            let inner = render_inlines_flat(children);
+            if inner.is_empty() {
+                return vec![];
+            }
+            let el = div()
+                .line_through()
+                .flex_shrink_0()
+                .children(inner)
+                .into_any_element();
+            vec![el]
+        }
+        InlineNode::Link { children } => {
+            let inner = render_inlines_flat(children);
+            if inner.is_empty() {
+                return vec![];
+            }
+            let el = div()
+                .text_color(rgb(0x60a5fa))
+                .underline()
+                .cursor_pointer()
+                .flex_shrink_0()
+                .children(inner)
+                .into_any_element();
+            vec![el]
+        }
+        InlineNode::Image { alt } => {
+            vec![
+                div()
+                    .text_color(rgb(0x888888))
+                    .text_xs()
+                    .flex_shrink_0()
+                    .child(alt.clone())
+                    .into_any_element(),
+            ]
+        }
+        InlineNode::SoftBreak => {
+            vec![
+                div()
+                    .flex_shrink_0()
+                    .child(SharedString::from(" "))
+                    .into_any_element(),
+            ]
+        }
+        InlineNode::HardBreak => {
+            vec![
+                div()
+                    .w_full()
+                    .h(px(4.))
+                    .into_any_element(),
+            ]
+        }
+        InlineNode::InlineHtml { html } => {
+            split_text_into_words(html)
+                .into_iter()
+                .map(|w| {
+                    div()
+                        .flex_shrink_0()
+                        .child(w)
+                        .into_any_element()
+                })
+                .collect()
+        }
+        InlineNode::TaskMarker { checked } => {
+            let marker = if *checked { "[x] " } else { "[ ] " };
+            vec![
+                div()
+                    .text_color(if *checked { rgb(0x3b82f6) } else { rgb(0x888888) })
+                    .text_xs()
+                    .flex_shrink_0()
+                    .child(SharedString::from(marker))
+                    .into_any_element(),
+            ]
+        }
+    }
+}
+
+fn render_inlines_flat(inlines: &[InlineNode]) -> Vec<gpui::AnyElement> {
+    inlines
+        .iter()
+        .flat_map(|inline| render_inline_node(inline))
+        .collect()
+}
+
+fn render_inlines_text(inlines: &[InlineNode]) -> String {
+    let mut result = String::new();
+    for inline in inlines {
+        match inline {
+            InlineNode::Text { text } => result.push_str(text),
+            InlineNode::Code { code } => {
+                result.push('`');
+                result.push_str(code);
+                result.push('`');
+            }
+            InlineNode::Emphasis { children } => {
+                result.push('_');
+                result.push_str(&render_inlines_text(children));
+                result.push('_');
+            }
+            InlineNode::Strong { children } => {
+                result.push_str("**");
+                result.push_str(&render_inlines_text(children));
+                result.push_str("**");
+            }
+            InlineNode::Strikethrough { children } => {
+                result.push_str("~~");
+                result.push_str(&render_inlines_text(children));
+                result.push_str("~~");
+            }
+            InlineNode::Link { children } => {
+                result.push_str(&render_inlines_text(children));
+            }
+            InlineNode::Image { alt } => {
+                result.push_str("[Image: ");
+                result.push_str(alt);
+                result.push(']');
+            }
+            InlineNode::SoftBreak => result.push(' '),
+            InlineNode::HardBreak => result.push('\n'),
+            InlineNode::InlineHtml { html } => result.push_str(html),
+            InlineNode::TaskMarker { checked } => {
+                if *checked {
+                    result.push_str("[x] ");
+                } else {
+                    result.push_str("[ ] ");
+                }
+            }
+        }
+    }
+    result
+}
+
+fn render_blocks(blocks: &[BlockNode]) -> Vec<gpui::AnyElement> {
+    blocks.iter().map(|block| render_block(block)).collect()
+}
+
+fn render_block(block: &BlockNode) -> gpui::AnyElement {
+    match block {
+        BlockNode::Paragraph { inlines } => {
+            if inlines.is_empty() {
+                div().h(px(4.)).into_any_element()
+            } else {
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_wrap()
+                    .children(render_inlines_flat(inlines))
+                    .into_any_element()
+            }
+        }
+        BlockNode::Heading { level, inlines } => {
+            let plain = render_inlines_text(inlines);
+            let font_size = match level {
+                HeadingLevel::H1 => px(22.),
+                HeadingLevel::H2 => px(20.),
+                HeadingLevel::H3 => px(18.),
+                HeadingLevel::H4 => px(16.),
+                HeadingLevel::H5 => px(15.),
+                HeadingLevel::H6 => px(14.),
+            };
+            div()
+                .w_full()
+                .mt_4()
+                .mb_2()
+                .font_weight(FontWeight(700.0))
+                .text_size(font_size)
+                .text_color(rgb(0xf0f0f0))
+                .child(SharedString::from(plain))
+                .into_any_element()
+        }
+        BlockNode::CodeBlock { language, code } => {
+            let lang_label = language.clone().unwrap_or_else(|| SharedString::from("code"));
+            div()
+                .flex()
+                .flex_col()
+                .w_full()
+                .my_2()
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(0x404040))
+                .bg(rgb(0x1e1e1e))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .px_3()
+                        .py_1()
+                        .border_b_1()
+                        .border_color(rgb(0x404040))
+                        .bg(rgb(0x2a2a2a))
+                        .rounded_t_md()
+                        .text_xs()
+                        .text_color(rgb(0x888888))
+                        .child(lang_label),
+                )
+                .child(
+                    div()
+                        .p_3()
+                        .text_xs()
+                        .text_color(rgb(0xe5e5e5))
+                        .font_family("Menlo, Monaco, 'Courier New', monospace")
+                        .child(code.clone()),
+                )
+                .into_any_element()
+        }
+        BlockNode::BlockQuote { children } => div()
+            .pl_4()
+            .border_l_4()
+            .border_color(rgb(0x444444))
+            .text_color(rgb(0xaaaaaa))
+            .flex()
+            .flex_col()
+            .gap_1()
+            .children(render_blocks(children))
+            .into_any_element(),
+        BlockNode::List {
+            ordered,
+            start,
+            items,
+        } => div()
+            .flex()
+            .flex_col()
+            .pl_4()
+            .gap_1()
+            .children(items.iter().enumerate().map(|(i, item_blocks)| {
+                let marker = if *ordered {
+                    let num = start.unwrap_or(1) + i as u64;
+                    SharedString::from(format!("{}. ", num))
+                } else {
+                    SharedString::from("• ")
+                };
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_color(rgb(0x888888))
+                            .min_w(px(16.))
+                            .child(marker),
+                    )
+                    .child(div().flex_1().children(render_blocks(item_blocks)))
+                    .into_any_element()
+            }))
+            .into_any_element(),
+        BlockNode::Table {
+            alignments,
+            headers,
+            rows,
+        } => div()
+            .flex()
+            .flex_col()
+            .w_full()
+            .my_2()
+            .rounded_md()
+            .border_1()
+            .border_color(rgb(0x404040))
+            .child(render_table_row(headers, true, alignments))
+            .children(
+                rows.iter()
+                    .map(|row| render_table_row(row, false, alignments)),
+            )
+            .into_any_element(),
+        BlockNode::Rule => div()
+            .w_full()
+            .h(px(1.))
+            .bg(rgb(0x444444))
+            .my_3()
+            .into_any_element(),
+    }
+}
+
+fn render_table_row(
+    cells: &[Vec<InlineNode>],
+    is_header: bool,
+    alignments: &[pulldown_cmark::Alignment],
+) -> gpui::AnyElement {
+    div()
+        .flex()
+        .flex_row()
+        .w_full()
+        .when(is_header, |this| {
+            this.border_b_1().border_color(rgb(0x444444)).bg(rgb(0x252525))
+        })
+        .children(cells.iter().enumerate().map(|(i, cell)| {
+            let text = render_inlines_text(cell);
+            let align = alignments
+                .get(i)
+                .copied()
+                .unwrap_or(pulldown_cmark::Alignment::None);
+            div()
+                .flex_1()
+                .px_2()
+                .py_1()
+                .when(
+                    align == pulldown_cmark::Alignment::Center,
+                    |this| this.text_center(),
+                )
+                .when(
+                    align == pulldown_cmark::Alignment::Right,
+                    |this| this.text_right(),
+                )
+                .when(is_header, |this| {
+                    this.font_weight(FontWeight(600.0)).text_color(rgb(0xf0f0f0))
+                })
+                .when(!is_header, |this| this.text_color(rgb(0xe5e5e5)))
+                .border_r_1()
+                .border_color(rgb(0x404040))
+                .child(SharedString::from(text))
+                .into_any_element()
+        }))
+        .into_any_element()
+}
+
+fn strip_html_tags(html: &str) -> String {
+    let mut result = String::new();
+    let mut in_tag = false;
+    for c in html.chars() {
+        if c == '<' {
+            in_tag = true;
+        } else if c == '>' {
+            in_tag = false;
+        } else if !in_tag {
+            result.push(c);
+        }
+    }
+    result
+}
+
+impl Render for MarkdownRenderer {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let blocks = parse_markdown(&self.content);
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .w_full()
+            .children(render_blocks(&blocks))
+    }
+}

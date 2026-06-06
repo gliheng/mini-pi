@@ -310,6 +310,15 @@ impl ThreadList {
                 item.update(cx, |item, _| item.thread = Arc::new(thread.clone()));
             }
         }
+        // Reorder to match the database sort: pinned first, then updated_at descending
+        let order: std::collections::HashMap<i64, usize> = threads
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.id, i))
+            .collect();
+        self.thread_items.sort_by_key(|item| {
+            order.get(&item.read(cx).thread.id).copied().unwrap_or(usize::MAX)
+        });
     }
 }
 

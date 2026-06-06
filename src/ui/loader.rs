@@ -56,9 +56,9 @@ fn animated_dot(
         )
 }
 
-/// Create an inline text loader that animates by alternating dot characters.
+/// Create an inline text loader that animates through a snake/circle braille sequence.
 ///
-/// Cycles through `.` → `..` → `...` every 500 ms.
+/// Cycles through `⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏` every 800 ms.
 /// Useful as a placeholder inside message bubbles while content is streaming.
 ///
 /// # Example
@@ -66,18 +66,15 @@ fn animated_dot(
 /// .child(text_loader())
 /// ```
 pub fn text_loader() -> impl IntoElement {
+    const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     div()
         .id("text-loader")
         .with_animation(
             "text-loader-anim",
-            Animation::new(Duration::from_millis(1500)).repeat(),
+            Animation::new(Duration::from_millis(800)).repeat(),
             move |this, progress| {
-                let dots = match (progress * 3.0) as usize {
-                    0 => ".",
-                    1 => "..",
-                    _ => "...",
-                };
-                this.child(SharedString::from(dots))
+                let idx = (progress * FRAMES.len() as f32) as usize % FRAMES.len();
+                this.child(SharedString::from(FRAMES[idx]))
             },
         )
 }

@@ -51,6 +51,8 @@ fn main() {
                 KeyBinding::new("cmd-x", ui::input::Cut, None),
                 KeyBinding::new("home", ui::input::Home, None),
                 KeyBinding::new("end", ui::input::End, None),
+                KeyBinding::new("ctrl-a", ui::input::Home, None),
+                KeyBinding::new("ctrl-e", ui::input::End, None),
             ]);
 
             cx.on_window_closed(|cx| {
