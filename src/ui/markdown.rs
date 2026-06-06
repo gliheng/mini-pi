@@ -1,8 +1,9 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, ops::Range};
 
 use gpui::{
-    AlignItems, Context, FontWeight, IntoElement, ParentElement, Render, SharedString, Styled,
-    Window, div, px, prelude::*, rgb,
+    Context, FontStyle, FontWeight, HighlightStyle, IntoElement, ParentElement, Render,
+    SharedString, StrikethroughStyle, Styled, StyledText, UnderlineStyle, Window, div, px,
+    prelude::*, rgb,
 };
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
@@ -216,6 +217,7 @@ fn parse_markdown(source: &str) -> Vec<BlockNode> {
                     add_block(&mut block_stack, &mut root_blocks, block);
                 }
                 TagEnd::BlockQuote(_) => {
+                    flush_inlines(&mut inline_buffer, &mut block_stack, &mut root_blocks);
                     if let Some(ctx) = block_stack.pop_back() {
                         if let BlockContext::BlockQuote { children } = ctx {
                             let block = BlockNode::BlockQuote { children };
@@ -236,6 +238,7 @@ fn parse_markdown(source: &str) -> Vec<BlockNode> {
                     }
                 }
                 TagEnd::Item => {
+                    flush_inlines(&mut inline_buffer, &mut block_stack, &mut root_blocks);
                     if let Some(ctx) = block_stack.pop_back() {
                         if let BlockContext::ListItem { blocks } = ctx {
                             if let Some(parent) = block_stack.back_mut() {
@@ -423,7 +426,7 @@ fn flush_inlines(
             _ => continue,
         }
     }
-    root_blocks.push(BlockNode::Paragraph { inlines });
+    add_block(block_stack, root_blocks, BlockNode::Paragraph { inlines });
 }
 
 fn add_block(
@@ -463,159 +466,134 @@ enum BlockContext {
 
 // ---- Renderer ----
 
-fn split_text_into_words(text: &str) -> Vec<SharedString> {
-    let mut words: Vec<SharedString> = Vec::new();
-    let mut current = String::new();
-    for c in text.chars() {
-        current.push(c);
-        if c == ' ' || c == '\n' {
-            if !current.is_empty() {
-                words.push(SharedString::from(current.clone()));
-                current.clear();
-            }
+fn append_highlighted_text(
+    text: &mut String,
+    highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
+    segment: &str,
+    style: HighlightStyle,
+) {
+    if segment.is_empty() {
+        return;
+    }
+
+    let start = text.len();
+    text.push_str(segment);
+    let end = text.len();
+
+    if style == HighlightStyle::default() {
+        return;
+    }
+
+    if let Some((range, last_style)) = highlights.last_mut() {
+        if *last_style == style && range.end == start {
+            range.end = end;
+            return;
         }
     }
-    if !current.is_empty() {
-        words.push(SharedString::from(current));
-    }
-    words
+
+    highlights.push((start..end, style));
 }
 
-fn render_inline_node(inline: &InlineNode) -> Vec<gpui::AnyElement> {
-    match inline {
-        InlineNode::Text { text } => {
-            let words = split_text_into_words(text);
-            words
-                .into_iter()
-                .map(|w| {
-                    div()
-                        .flex_shrink_0()
-                        .child(w)
-                        .into_any_element()
-                })
-                .collect()
-        }
-        InlineNode::Code { code } => {
-            let mut el = div();
-            el.style().align_self = Some(AlignItems::Center);
-            let el = el
-                .px_1()
-                .rounded_sm()
-                .bg(rgb(0x333333))
-                .text_color(rgb(0xe5c07b))
-                .text_xs()
-                .font_family("Menlo, Monaco, 'Courier New', monospace")
-                .flex_shrink_0()
-                .child(code.clone())
-                .into_any_element();
-            vec![el]
-        }
-        InlineNode::Emphasis { children } => {
-            let inner = render_inlines_flat(children);
-            if inner.is_empty() {
-                return vec![];
+fn collect_styled_inlines(
+    inlines: &[InlineNode],
+    active_style: HighlightStyle,
+    text: &mut String,
+    highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
+) {
+    for inline in inlines {
+        match inline {
+            InlineNode::Text { text: inline_text } => {
+                append_highlighted_text(text, highlights, inline_text, active_style);
             }
-            let el = div()
-                .italic()
-                .flex_shrink_0()
-                .children(inner)
-                .into_any_element();
-            vec![el]
-        }
-        InlineNode::Strong { children } => {
-            let inner = render_inlines_flat(children);
-            if inner.is_empty() {
-                return vec![];
+            InlineNode::Code { code } => {
+                append_highlighted_text(
+                    text,
+                    highlights,
+                    code,
+                    active_style.highlight(HighlightStyle {
+                        color: Some(rgb(0xe5c07b).into()),
+                        background_color: Some(rgb(0x333333).into()),
+                        ..Default::default()
+                    }),
+                );
             }
-            let el = div()
-                .font_weight(FontWeight(700.0))
-                .flex_shrink_0()
-                .children(inner)
-                .into_any_element();
-            vec![el]
-        }
-        InlineNode::Strikethrough { children } => {
-            let inner = render_inlines_flat(children);
-            if inner.is_empty() {
-                return vec![];
+            InlineNode::Emphasis { children } => {
+                collect_styled_inlines(
+                    children,
+                    active_style.highlight(FontStyle::Italic.into()),
+                    text,
+                    highlights,
+                );
             }
-            let el = div()
-                .line_through()
-                .flex_shrink_0()
-                .children(inner)
-                .into_any_element();
-            vec![el]
-        }
-        InlineNode::Link { children } => {
-            let inner = render_inlines_flat(children);
-            if inner.is_empty() {
-                return vec![];
+            InlineNode::Strong { children } => {
+                collect_styled_inlines(
+                    children,
+                    active_style.highlight(FontWeight(700.0).into()),
+                    text,
+                    highlights,
+                );
             }
-            let el = div()
-                .text_color(rgb(0x60a5fa))
-                .underline()
-                .cursor_pointer()
-                .flex_shrink_0()
-                .children(inner)
-                .into_any_element();
-            vec![el]
-        }
-        InlineNode::Image { alt } => {
-            vec![
-                div()
-                    .text_color(rgb(0x888888))
-                    .text_xs()
-                    .flex_shrink_0()
-                    .child(alt.clone())
-                    .into_any_element(),
-            ]
-        }
-        InlineNode::SoftBreak => {
-            vec![
-                div()
-                    .flex_shrink_0()
-                    .child(SharedString::from(" "))
-                    .into_any_element(),
-            ]
-        }
-        InlineNode::HardBreak => {
-            vec![
-                div()
-                    .w_full()
-                    .h(px(4.))
-                    .into_any_element(),
-            ]
-        }
-        InlineNode::InlineHtml { html } => {
-            split_text_into_words(html)
-                .into_iter()
-                .map(|w| {
-                    div()
-                        .flex_shrink_0()
-                        .child(w)
-                        .into_any_element()
-                })
-                .collect()
-        }
-        InlineNode::TaskMarker { checked } => {
-            let marker = if *checked { "[x] " } else { "[ ] " };
-            vec![
-                div()
-                    .text_color(if *checked { rgb(0x3b82f6) } else { rgb(0x888888) })
-                    .text_xs()
-                    .flex_shrink_0()
-                    .child(SharedString::from(marker))
-                    .into_any_element(),
-            ]
+            InlineNode::Strikethrough { children } => {
+                collect_styled_inlines(
+                    children,
+                    active_style.highlight(HighlightStyle {
+                        strikethrough: Some(StrikethroughStyle::default()),
+                        ..Default::default()
+                    }),
+                    text,
+                    highlights,
+                );
+            }
+            InlineNode::Link { children } => {
+                collect_styled_inlines(
+                    children,
+                    active_style.highlight(HighlightStyle {
+                        color: Some(rgb(0x60a5fa).into()),
+                        underline: Some(UnderlineStyle {
+                            thickness: px(1.),
+                            color: Some(rgb(0x60a5fa).into()),
+                            wavy: false,
+                        }),
+                        ..Default::default()
+                    }),
+                    text,
+                    highlights,
+                );
+            }
+            InlineNode::Image { alt } => {
+                append_highlighted_text(
+                    text,
+                    highlights,
+                    &format!("[Image: {alt}]"),
+                    active_style.highlight(HighlightStyle::color(rgb(0x888888).into())),
+                );
+            }
+            InlineNode::SoftBreak => append_highlighted_text(text, highlights, " ", active_style),
+            InlineNode::HardBreak => append_highlighted_text(text, highlights, "\n", active_style),
+            InlineNode::InlineHtml { html } => {
+                append_highlighted_text(text, highlights, html, active_style);
+            }
+            InlineNode::TaskMarker { checked } => {
+                append_highlighted_text(
+                    text,
+                    highlights,
+                    if *checked { "[x] " } else { "[ ] " },
+                    active_style.highlight(HighlightStyle::color(if *checked {
+                        rgb(0x3b82f6).into()
+                    } else {
+                        rgb(0x888888).into()
+                    })),
+                );
+            }
         }
     }
 }
 
-fn render_inlines_flat(inlines: &[InlineNode]) -> Vec<gpui::AnyElement> {
-    inlines
-        .iter()
-        .flat_map(|inline| render_inline_node(inline))
-        .collect()
+fn render_styled_inlines(inlines: &[InlineNode]) -> StyledText {
+    let mut text = String::new();
+    let mut highlights = Vec::new();
+    collect_styled_inlines(inlines, HighlightStyle::default(), &mut text, &mut highlights);
+    StyledText::new(text).with_highlights(highlights)
 }
 
 fn render_inlines_text(inlines: &[InlineNode]) -> String {
@@ -678,14 +656,12 @@ fn render_block(block: &BlockNode) -> gpui::AnyElement {
             } else {
                 div()
                     .w_full()
-                    .flex()
-                    .flex_wrap()
-                    .children(render_inlines_flat(inlines))
+                    .text_left()
+                    .child(render_styled_inlines(inlines))
                     .into_any_element()
             }
         }
         BlockNode::Heading { level, inlines } => {
-            let plain = render_inlines_text(inlines);
             let font_size = match level {
                 HeadingLevel::H1 => px(22.),
                 HeadingLevel::H2 => px(20.),
@@ -701,7 +677,7 @@ fn render_block(block: &BlockNode) -> gpui::AnyElement {
                 .font_weight(FontWeight(700.0))
                 .text_size(font_size)
                 .text_color(rgb(0xf0f0f0))
-                .child(SharedString::from(plain))
+                .child(render_styled_inlines(inlines))
                 .into_any_element()
         }
         BlockNode::CodeBlock { language, code } => {
@@ -871,5 +847,26 @@ impl Render for MarkdownRenderer {
             .gap_1()
             .w_full()
             .children(render_blocks(&blocks))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tight_lists_stay_inside_list_items() {
+        let blocks = parse_markdown(
+            "- **2015** — Rust 1.0\n- **2018** — Rust 1.31 (Dec 2018)\n- **2021** — Rust 1.56 (Oct 2021)\n- **2024** — Rust 1.85 (Feb 2025)",
+        );
+
+        assert_eq!(blocks.len(), 1);
+
+        let BlockNode::List { items, .. } = &blocks[0] else {
+            panic!("expected top-level list");
+        };
+
+        assert_eq!(items.len(), 4);
+        assert!(items.iter().all(|item| matches!(item.as_slice(), [BlockNode::Paragraph { .. }])));
     }
 }

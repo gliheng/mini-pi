@@ -780,11 +780,12 @@ impl Render for ChatWindow {
                                                         .gap_1()
                                                         .child(
                                                             div()
-                                                                .px_3()
                                                                 .py_2()
                                                                 .rounded_md()
                                                                 .when(is_user, |this| {
-                                                                    this.bg(rgb(0x3b82f6)).text_color(rgb(0xffffff))
+                                                                    this.px_3()
+                                                                        .bg(rgb(0x3b82f6))
+                                                                        .text_color(rgb(0xffffff))
                                                                 })
                                                                 .when(matches!(msg.role, Role::Assistant), |this| {
                                                                     this.text_color(rgb(0xe5e5e5))
