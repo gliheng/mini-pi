@@ -2,7 +2,7 @@ use std::{sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 
 use futures::StreamExt;
 use gpui::{
-    Context, FocusHandle, IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Styled, Task,
+    Context, FocusHandle, IntoElement, KeyDownEvent, ParentElement, Render, ScrollHandle, SharedString, Styled, Task,
     Window, div, prelude::*, px, rgb,
 };
 use uuid::Uuid;
@@ -38,6 +38,8 @@ pub struct ChatWindow {
     pub thinking_dropdown: gpui::Entity<Dropdown>,
     pub reasoning_displays: Vec<Vec<Option<gpui::Entity<Reasoning>>>>,
     pub markdown_displays: Vec<Vec<Option<gpui::Entity<MarkdownRenderer>>>>,
+    pub scroll_handle: ScrollHandle,
+    pub scroll_locked: bool,
 }
 
 impl ChatWindow {
@@ -148,6 +150,8 @@ impl ChatWindow {
             thinking_dropdown: thinking_dropdown.clone(),
             reasoning_displays: vec![],
             markdown_displays: vec![],
+            scroll_handle: ScrollHandle::new(),
+            scroll_locked: true,
         };
 
         // Subscribe to model dropdown selection events
@@ -516,6 +520,9 @@ impl ChatWindow {
                 self.state = ChatState::Idle;
             }
         }
+        if matches!(self.state, ChatState::Streaming) && self.scroll_locked {
+            self.scroll_handle.scroll_to_bottom();
+        }
         cx.notify();
     }
 
@@ -588,6 +595,7 @@ impl ChatWindow {
         }
 
         self.state = ChatState::Streaming;
+        self.scroll_locked = true;
 
         if let Some(ref mut pi) = self.pi {
             let _ = pi.send_prompt(&content);
@@ -731,6 +739,14 @@ impl Render for ChatWindow {
                     .id("messages")
                     .flex_1()
                     .overflow_y_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, window, _cx| {
+                        let delta = event.delta.pixel_delta(window.line_height());
+                        // If user scrolls up (positive delta) while locked, cancel the lock
+                        if this.scroll_locked && delta.y > gpui::px(0.) {
+                            this.scroll_locked = false;
+                        }
+                    }))
                     .flex()
                     .flex_col()
                     .p_3()
@@ -850,16 +866,11 @@ impl Render for ChatWindow {
                             div()
                                 .flex()
                                 .w_full()
-                                .child(
-                                    div()
-                                        .px_3()
-                                        .py_1()
-                                        .rounded_md()
-                                        .bg(rgb(0x252525))
-                                        .text_color(rgb(0x888888))
-                                        .text_xs()
-                                        .child(text_loader()),
-                                ),
+                                .px_3()
+                                .py_1()
+                                .text_color(rgb(0x888888))
+                                .text_xs()
+                                .child(text_loader()),
                         )
                     })
                     .when(is_error, |el| {
