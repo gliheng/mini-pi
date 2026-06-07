@@ -11,6 +11,7 @@ const WINDOWS_ICON_SIZE: f32 = 10.0;
 #[derive(Clone)]
 pub enum TitleBarEvent {
     ToggleUserPanel,
+    ExportHtml,
 }
 
 pub struct TitleBar {
@@ -18,6 +19,7 @@ pub struct TitleBar {
     pub icon: Option<SharedString>,
     pub show_avatar: bool,
     pub avatar_active: bool,
+    pub show_export: bool,
     should_move: bool,
 }
 
@@ -28,8 +30,14 @@ impl TitleBar {
             icon: None,
             show_avatar: true,
             avatar_active: false,
+            show_export: false,
             should_move: false,
         }
+    }
+
+    pub fn show_export(mut self, show: bool) -> Self {
+        self.show_export = show;
+        self
     }
 
     pub fn icon(mut self, path: impl Into<SharedString>) -> Self {
@@ -145,6 +153,39 @@ impl Render for TitleBar {
                 }
             })
             .child(drag_region);
+
+        // Export button on the right side
+        if self.show_export {
+            bar = bar.child(
+                div()
+                    .id("titlebar-export")
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .h_full()
+                    .flex_shrink_0()
+                    .child(
+                        div()
+                            .id("export-button")
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(26.))
+                            .cursor_pointer()
+                            .text_color(rgb(0x888888))
+                            .child(
+                                gpui::svg()
+                                    .path("export.svg")
+                                    .size(px(16.))
+                                    .text_color(rgb(0x888888))
+                            )
+                            .hover(|style| style.text_color(rgb(0xcccccc)))
+                            .on_click(cx.listener(|_this: &mut Self, _, _, cx| {
+                                cx.emit(TitleBarEvent::ExportHtml);
+                            })),
+                    ),
+            );
+        }
 
         // Avatar button on the right side
         if self.show_avatar {

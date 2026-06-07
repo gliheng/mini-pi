@@ -1,10 +1,11 @@
-use std::{sync::Arc, time::{SystemTime, UNIX_EPOCH}};
+use std::{path::PathBuf, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 
 use futures::StreamExt;
 use gpui::{
-    ClipboardItem, Context, FocusHandle, IntoElement, KeyDownEvent, ParentElement, Render, ScrollHandle, SharedString, Styled, Task,
+    ClipboardItem, Context, FocusHandle, IntoElement, KeyDownEvent, ParentElement, PathPromptOptions, Render, ScrollHandle, SharedString, Styled, Task,
     Window, div, prelude::*, px, rgb, svg,
 };
+use crate::views::title_bar::TitleBarEvent;
 use uuid::Uuid;
 
 use crate::core::actions::{CloseWindow, SendMessage};
@@ -16,7 +17,7 @@ use crate::config::model_config::{model_display_name, all_models};
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::rpc::pi_rpc::{BridgeEvent, PiRpc};
 use crate::views::reasoning::Reasoning;
-use crate::data::store::{Store, ThreadMeta};
+use crate::data::store::{Store, ThreadMeta, WorkspaceMeta};
 use crate::views::title_bar::TitleBar;
 use crate::utils::format::truncate_str;
 use crate::ui::markdown::MarkdownRenderer;
@@ -40,6 +41,8 @@ pub struct ChatWindow {
     pub markdown_displays: Vec<Vec<Option<gpui::Entity<MarkdownRenderer>>>>,
     pub scroll_handle: ScrollHandle,
     pub scroll_locked: bool,
+    pub workspaces: Vec<WorkspaceMeta>,
+    pub selected_workspace_id: Option<i64>,
 }
 
 impl ChatWindow {
@@ -52,7 +55,7 @@ impl ChatWindow {
             .map(|t| if t.title.is_empty() { "New Thread".into() } else { t.title.clone().into() })
             .unwrap_or_else(|| "New Thread".into());
         let input = cx.new(|cx| TextInput::new(cx, "Type a message..."));
-        let title_bar = cx.new(|_| TitleBar::new(title.clone()).show_avatar(false));
+        let title_bar = cx.new(|_| TitleBar::new(title.clone()).show_avatar(false).show_export(true));
 
         let session_file: String = thread
             .and_then(|t| t.session_file.clone())
@@ -63,44 +66,19 @@ impl ChatWindow {
                     .as_nanos();
                 format!("session_{}.jsonl", ns)
             });
-        let session_path = store.sessions_dir().join(&session_file);
         let is_restoring = thread.is_some();
         let selected_model: Option<String> = thread.and_then(|t| t.model.clone());
 
-        let (pi, pi_task) = match PiRpc::spawn(&session_path, selected_model.as_deref()) {
-            Ok((mut rpc, rx)) => {
-                eprintln!("[mini-pi] pi spawned with session {}", session_file);
-                if is_restoring {
-                    eprintln!("[mini-pi] restoring session, requesting message history");
-                    if let Err(e) = rpc.send_get_messages(None) {
-                        eprintln!("[mini-pi] failed to send get_messages: {}", e);
-                    }
-                }
-                let weak = cx.entity().downgrade();
-                let task = cx.spawn(async move |_, cx: &mut gpui::AsyncApp| {
-                    let mut rx = rx;
-                    while let Some(event) = rx.next().await {
-                        if weak.update(cx, |window, cx| {
-                            window.handle_bridge_event(event, cx);
-                        }).is_err() {
-                            break;
-                        }
-                    }
-                    eprintln!("[mini-pi] event loop ended");
-                });
-                (Some(rpc), Some(task))
+        let mut workspaces = store.list_workspaces().unwrap_or_default();
+        if workspaces.is_empty() {
+            let default_dir = store.default_workspace_dir();
+            std::fs::create_dir_all(&default_dir).ok();
+            let default_path_str = default_dir.to_string_lossy().to_string();
+            if let Ok(ws) = store.create_workspace("Default", &default_path_str) {
+                workspaces.push(ws);
             }
-            Err(e) => {
-                eprintln!("[mini-pi] failed to spawn pi: {}", e);
-                (None, None)
-            }
-        };
-
-        let initial_state = if pi.is_some() {
-            if is_restoring { ChatState::Loading } else { ChatState::Idle }
-        } else {
-            ChatState::Error("Failed to start pi agent. Is bun installed?".into())
-        };
+        }
+        let selected_workspace_id = workspaces.first().map(|ws| ws.id);
 
         // Build model dropdown items
         let model_items: Vec<DropdownItem> = all_models()
@@ -133,17 +111,17 @@ impl ChatWindow {
                 .with_direction(Direction::Up)
         });
 
-        let window = Self {
+        let mut window = Self {
             thread_id: thread.map(|t| t.id),
             session_file,
-            title_bar,
+            title_bar: title_bar.clone(),
             messages: vec![],
             input,
             focus_handle: cx.focus_handle(),
-            state: initial_state,
+            state: ChatState::Idle,
             store: store.clone(),
-            pi,
-            _pi_task: pi_task,
+            pi: None,
+            _pi_task: None,
             selected_model,
             thinking_level: None,
             model_dropdown: model_dropdown.clone(),
@@ -152,7 +130,48 @@ impl ChatWindow {
             markdown_displays: vec![],
             scroll_handle: ScrollHandle::new(),
             scroll_locked: true,
+            workspaces,
+            selected_workspace_id,
         };
+
+        if is_restoring {
+            window.spawn_pi(true, cx);
+        }
+
+        // Subscribe to title bar events
+        cx.subscribe(&title_bar, |this, _title_bar, event: &TitleBarEvent, cx| {
+            match event {
+                TitleBarEvent::ToggleUserPanel => {}
+                TitleBarEvent::ExportHtml => {
+                    let rx = cx.prompt_for_paths(PathPromptOptions {
+                        files: false,
+                        directories: true,
+                        multiple: false,
+                        prompt: Some("Choose a folder to export the session HTML".into()),
+                    });
+                    let session_file = this.session_file.clone();
+                    cx.spawn(async move |weak, cx| {
+                        if let Ok(Ok(Some(paths))) = rx.await {
+                            if let Some(dir) = paths.first() {
+                                let file_name = session_file
+                                    .rsplit_once('.')
+                                    .map(|(name, _)| format!("{}.html", name))
+                                    .unwrap_or_else(|| "session.html".to_string());
+                                let output_path = dir.join(&file_name);
+                                let path_str = output_path.to_string_lossy().to_string();
+                                let _ = weak.update(cx, |window, _cx| {
+                                    if let Some(ref mut pi) = window.pi {
+                                        if let Err(e) = pi.send_export_html(Some(&path_str), None) {
+                                            eprintln!("[mini-pi] send_export_html failed: {}", e);
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    }).detach();
+                }
+            }
+        }).detach();
 
         // Subscribe to model dropdown selection events
         cx.subscribe(&model_dropdown, |this, _dropdown, event: &DropdownEvent, _cx| {
@@ -187,6 +206,57 @@ impl ChatWindow {
         }).detach();
 
         window
+    }
+
+    fn spawn_pi(&mut self, restoring: bool, cx: &mut Context<Self>) -> bool {
+        let session_path = self.store.sessions_dir().join(&self.session_file);
+        let workspace_dir: Option<PathBuf> = self.selected_workspace_id
+            .and_then(|id| self.workspaces.iter().find(|ws| ws.id == id))
+            .map(|ws| PathBuf::from(&ws.path));
+
+        let (mut rpc, rx) = match PiRpc::spawn(&session_path, self.selected_model.as_deref(), workspace_dir) {
+            Ok(result) => result,
+            Err(e) => {
+                eprintln!("[mini-pi] failed to spawn pi: {}", e);
+                self.state = ChatState::Error("Failed to start pi agent. Is bun installed?".into());
+                cx.notify();
+                return false;
+            }
+        };
+
+        eprintln!("[mini-pi] pi spawned with session {}", self.session_file);
+
+        if restoring {
+            eprintln!("[mini-pi] restoring session, requesting message history");
+            if let Err(e) = rpc.send_get_messages(None) {
+                eprintln!("[mini-pi] failed to send get_messages: {}", e);
+            }
+            self.state = ChatState::Loading;
+        }
+
+        if let Some(ref level) = self.thinking_level {
+            if let Err(e) = rpc.send_set_thinking_level(level, None) {
+                eprintln!("[mini-pi] send_set_thinking_level failed: {}", e);
+            }
+        }
+
+        let weak = cx.entity().downgrade();
+        let task = cx.spawn(async move |_, cx: &mut gpui::AsyncApp| {
+            let mut rx = rx;
+            while let Some(event) = rx.next().await {
+                if weak.update(cx, |window, cx| {
+                    window.handle_bridge_event(event, cx);
+                }).is_err() {
+                    break;
+                }
+            }
+            eprintln!("[mini-pi] event loop ended");
+        });
+
+        self.pi = Some(rpc);
+        self._pi_task = Some(task);
+        cx.notify();
+        true
     }
 
     pub fn handle_bridge_event(&mut self,
@@ -536,6 +606,12 @@ impl ChatWindow {
         eprintln!("[mini-pi] send_message: {} chars", content.len());
         if content.is_empty() {
             return;
+        }
+
+        if self.pi.is_none() {
+            if !self.spawn_pi(false, cx) {
+                return;
+            }
         }
 
         self.messages.push(Message {
@@ -918,6 +994,94 @@ impl Render for ChatWindow {
                         )
                     }),
             )
+            .when(self.pi.is_none(), |el| {
+                el.child(
+                    div()
+                        .px_3()
+                        .pb_1()
+                        .flex()
+                        .flex_row()
+                        .gap_1()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0x666666))
+                                .child("Workspace")
+                        )
+                        .child(
+                            div()
+                                .id("add-workspace-btn")
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .px_2()
+                                .py_0p5()
+                                .rounded_md()
+                                .bg(rgb(0x333333))
+                                .text_color(rgb(0xcccccc))
+                                .text_xs()
+                                .cursor_pointer()
+                                .hover(|style| style.bg(rgb(0x444444)))
+                                .child("+")
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    let store = this.store.clone();
+                                    let rx = cx.prompt_for_paths(PathPromptOptions {
+                                        files: false,
+                                        directories: true,
+                                        multiple: false,
+                                        prompt: None,
+                                    });
+                                    cx.spawn(async move |weak, cx| {
+                                        if let Ok(Ok(Some(paths))) = rx.await {
+                                            if let Some(path) = paths.first() {
+                                                let name = path.file_name()
+                                                    .and_then(|n| n.to_str())
+                                                    .unwrap_or("Workspace")
+                                                    .to_string();
+                                                let path_str = path.to_string_lossy().to_string();
+                                                match store.create_workspace(&name, &path_str) {
+                                                    Ok(workspace) => {
+                                                        let ws_id = workspace.id;
+                                                        let _ = weak.update(cx, |window, cx| {
+                                                            window.workspaces.push(workspace);
+                                                            window.selected_workspace_id = Some(ws_id);
+                                                            cx.notify();
+                                                        });
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!("[mini-pi] failed to create workspace: {}", e);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }).detach();
+                                }))
+                        )
+                        .children(self.workspaces.iter().map(|ws| {
+                            let is_selected = self.selected_workspace_id == Some(ws.id);
+                            let ws_id = ws.id;
+                            let name: SharedString = ws.name.clone().into();
+                            div()
+                                .id(SharedString::from(format!("ws-{}", ws_id)))
+                                .flex()
+                                .items_center()
+                                .px_2()
+                                .py_0p5()
+                                .rounded_md()
+                                .bg(if is_selected { rgb(0x3b82f6) } else { rgb(0x2a2a2a) })
+                                .text_color(if is_selected { rgb(0xffffff) } else { rgb(0xaaaaaa) })
+                                .text_xs()
+                                .cursor_pointer()
+                                .hover(|style| if is_selected { style } else { style.bg(rgb(0x333333)) })
+                                .child(name)
+                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                    this.selected_workspace_id = Some(ws_id);
+                                    cx.notify();
+                                }))
+                        }))
+                )
+            })
             .child(
                 div()
                     .px_3()

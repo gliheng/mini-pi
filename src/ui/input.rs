@@ -5,7 +5,7 @@ use gpui::{
     EntityInputHandler, FocusHandle, Focusable, GlobalElementId, LayoutId, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ShapedLine,
     SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, actions, div, fill,
-    hsla, point, prelude::*, px, relative, rgb, rgba, size,
+    hsla, point, prelude::*, px, relative, rgba, size,
 };
 use unicode_segmentation::*;
 
@@ -139,9 +139,11 @@ impl TextInput {
     fn on_mouse_down(
         &mut self,
         event: &MouseDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        window.focus(&self.focus_handle);
+        window.prevent_default();
         self.is_selecting = true;
 
         if event.modifiers.shift {
@@ -617,8 +619,9 @@ impl Element for TextElement {
 impl Render for TextInput {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .flex()
             .key_context("TextInput")
+            .w_full()
+            .h(px(28.))
             .track_focus(&self.focus_handle(cx))
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::backspace))
@@ -644,8 +647,7 @@ impl Render for TextInput {
             .text_size(px(14.))
             .child(
                 div()
-                    .h(px(28.))
-                    .w_full()
+                    .size_full()
                     .child(TextElement { input: cx.entity() }),
             )
     }

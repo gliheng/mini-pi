@@ -83,6 +83,7 @@ impl PiRpc {
     pub fn spawn(
         session_path: &PathBuf,
         model: Option<&str>,
+        workspace_dir: Option<PathBuf>,
     ) -> Result<(Self, futures::channel::mpsc::UnboundedReceiver<BridgeEvent>), PiRpcError> {
         let mut cmd = Command::new("pi");
         if let Some(model_id) = model {
@@ -91,6 +92,10 @@ impl PiRpc {
         cmd.arg("--provider").arg("cloudflare-ai-gateway");
         cmd.arg("--mode").arg("rpc");
         cmd.arg("--session").arg(session_path);
+        if let Some(ref dir) = workspace_dir {
+            std::fs::create_dir_all(dir).map_err(PiRpcError::Io)?;
+            cmd.current_dir(dir);
+        }
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
@@ -310,6 +315,23 @@ impl PiRpc {
         let mut cmd = serde_json::json!({ "type": "compact" });
         if let Some(instructions) = custom_instructions {
             cmd["customInstructions"] = serde_json::json!(instructions);
+        }
+        add_request_id(&mut cmd, request_id);
+        self.write_json(&cmd)
+    }
+
+    // ------------------------------------------------------------------
+    // Export
+    // ------------------------------------------------------------------
+
+    pub fn send_export_html(
+        &mut self,
+        output_path: Option<&str>,
+        request_id: Option<&str>,
+    ) -> Result<(), PiRpcError> {
+        let mut cmd = serde_json::json!({ "type": "export_html" });
+        if let Some(path) = output_path {
+            cmd["outputPath"] = serde_json::json!(path);
         }
         add_request_id(&mut cmd, request_id);
         self.write_json(&cmd)

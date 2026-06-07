@@ -34,6 +34,18 @@ const MIGRATIONS: &[(&str, &str)] = &[
         );
         ",
     ),
+    (
+        "002_workspaces",
+        "
+        CREATE TABLE workspaces (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT NOT NULL,
+            path        TEXT NOT NULL UNIQUE,
+            created_at  DATETIME NOT NULL DEFAULT (datetime('now')),
+            updated_at  DATETIME NOT NULL DEFAULT (datetime('now'))
+        );
+        ",
+    ),
 ];
 
 impl Store {
@@ -216,6 +228,72 @@ impl Store {
         Ok(())
     }
 
+    pub fn create_workspace(&self, name: &str, path: &str) -> Result<WorkspaceMeta, StoreError> {
+        self.conn
+            .execute(
+                "INSERT INTO workspaces (name, path) VALUES (?1, ?2)",
+                params![name, path],
+            )
+            .map_err(StoreError::Rusqlite)?;
+        let id = self.conn.last_insert_rowid();
+        self.get_workspace(id).map(|opt| opt.unwrap())
+    }
+
+    pub fn list_workspaces(&self) -> Result<Vec<WorkspaceMeta>, StoreError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, name, path, created_at, updated_at \
+                 FROM workspaces ORDER BY updated_at DESC",
+            )
+            .map_err(StoreError::Rusqlite)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(WorkspaceMeta {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    path: row.get(2)?,
+                    created_at: row.get(3)?,
+                    updated_at: row.get(4)?,
+                })
+            })
+            .map_err(StoreError::Rusqlite)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::Rusqlite)
+    }
+
+    pub fn get_workspace(&self, id: i64) -> Result<Option<WorkspaceMeta>, StoreError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, name, path, created_at, updated_at \
+                 FROM workspaces WHERE id = ?1",
+            )
+            .map_err(StoreError::Rusqlite)?;
+        stmt.query_row(params![id], |row| {
+            Ok(WorkspaceMeta {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                path: row.get(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+            })
+        })
+        .optional()
+        .map_err(StoreError::Rusqlite)
+    }
+
+    pub fn delete_workspace(&self, id: i64) -> Result<(), StoreError> {
+        self.conn
+            .execute("DELETE FROM workspaces WHERE id = ?1", params![id])
+            .map_err(StoreError::Rusqlite)?;
+        Ok(())
+    }
+
+    pub fn default_workspace_dir(&self) -> PathBuf {
+        self.sessions_dir.parent().unwrap_or(&self.sessions_dir).join("workspace")
+    }
+
     pub fn toggle_pin(&self, id: i64) -> Result<bool, StoreError> {
         let current: bool = self
             .conn
@@ -255,6 +333,15 @@ impl Store {
         }
         Ok(())
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct WorkspaceMeta {
+    pub id: i64,
+    pub name: String,
+    pub path: String,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug)]
