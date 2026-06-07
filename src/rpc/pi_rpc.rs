@@ -137,10 +137,14 @@ impl PiRpc {
         workspace_dir: Option<PathBuf>,
     ) -> Result<(Self, futures::channel::mpsc::UnboundedReceiver<BridgeEvent>), PiRpcError> {
         let mut cmd = Command::new("pi");
-        if let Some(model_id) = model {
-            cmd.arg("--model").arg(model_id);
+        if let Some(model_str) = model {
+            if let Some((provider, model_id)) = crate::config::model_config::parse_model_id(model_str) {
+                cmd.arg("--provider").arg(provider);
+                cmd.arg("--model").arg(model_id);
+            } else {
+                cmd.arg("--model").arg(model_str);
+            }
         }
-        cmd.arg("--provider").arg("cloudflare-ai-gateway");
         cmd.arg("--mode").arg("rpc");
         cmd.arg("--session").arg(session_path);
         if let Some(ref dir) = workspace_dir {

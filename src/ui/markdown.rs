@@ -518,6 +518,46 @@ fn append_highlighted_text(
     highlights.push((start..end, style));
 }
 
+const INLINE_HORIZONTAL_PADDING: &str = "\u{2009}";
+
+fn append_inline_padding(
+    text: &mut String,
+    highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
+    style: HighlightStyle,
+) {
+    append_highlighted_text(text, highlights, INLINE_HORIZONTAL_PADDING, style);
+}
+
+fn append_padded_segment(
+    text: &mut String,
+    highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
+    segment: &str,
+    style: HighlightStyle,
+) {
+    if segment.is_empty() {
+        return;
+    }
+
+    append_inline_padding(text, highlights, style);
+    append_highlighted_text(text, highlights, segment, style);
+    append_inline_padding(text, highlights, style);
+}
+
+fn append_padded_children(
+    text: &mut String,
+    highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
+    children: &[InlineNode],
+    style: HighlightStyle,
+) {
+    if children.is_empty() {
+        return;
+    }
+
+    append_inline_padding(text, highlights, style);
+    collect_styled_inlines(children, style, text, highlights);
+    append_inline_padding(text, highlights, style);
+}
+
 fn collect_styled_inlines(
     inlines: &[InlineNode],
     active_style: HighlightStyle,
@@ -530,46 +570,44 @@ fn collect_styled_inlines(
                 append_highlighted_text(text, highlights, inline_text, active_style);
             }
             InlineNode::Code { code } => {
-                append_highlighted_text(
-                    text,
-                    highlights,
-                    code,
-                    active_style.highlight(HighlightStyle {
-                        color: Some(rgb(0xe5c07b).into()),
-                        background_color: Some(rgb(0x333333).into()),
-                        ..Default::default()
-                    }),
-                );
+                let style = active_style.highlight(HighlightStyle {
+                    color: Some(rgb(0xe5c07b).into()),
+                    background_color: Some(rgb(0x333333).into()),
+                    ..Default::default()
+                });
+                append_padded_segment(text, highlights, code, style);
             }
             InlineNode::Emphasis { children } => {
-                collect_styled_inlines(
-                    children,
-                    active_style.highlight(FontStyle::Italic.into()),
+                append_padded_children(
                     text,
                     highlights,
+                    children,
+                    active_style.highlight(FontStyle::Italic.into()),
                 );
             }
             InlineNode::Strong { children } => {
-                collect_styled_inlines(
-                    children,
-                    active_style.highlight(FontWeight(700.0).into()),
+                append_padded_children(
                     text,
                     highlights,
+                    children,
+                    active_style.highlight(FontWeight(700.0).into()),
                 );
             }
             InlineNode::Strikethrough { children } => {
-                collect_styled_inlines(
+                append_padded_children(
+                    text,
+                    highlights,
                     children,
                     active_style.highlight(HighlightStyle {
                         strikethrough: Some(StrikethroughStyle::default()),
                         ..Default::default()
                     }),
-                    text,
-                    highlights,
                 );
             }
             InlineNode::Link { children } => {
-                collect_styled_inlines(
+                append_padded_children(
+                    text,
+                    highlights,
                     children,
                     active_style.highlight(HighlightStyle {
                         color: Some(rgb(0x60a5fa).into()),
@@ -580,22 +618,21 @@ fn collect_styled_inlines(
                         }),
                         ..Default::default()
                     }),
-                    text,
-                    highlights,
                 );
             }
             InlineNode::Image { alt } => {
-                append_highlighted_text(
+                let image_text = format!("[Image: {alt}]");
+                append_padded_segment(
                     text,
                     highlights,
-                    &format!("[Image: {alt}]"),
+                    &image_text,
                     active_style.highlight(HighlightStyle::color(rgb(0x888888).into())),
                 );
             }
             InlineNode::SoftBreak => append_highlighted_text(text, highlights, " ", active_style),
             InlineNode::HardBreak => append_highlighted_text(text, highlights, "\n", active_style),
             InlineNode::InlineHtml { html } => {
-                append_highlighted_text(text, highlights, html, active_style);
+                append_padded_segment(text, highlights, html, active_style);
             }
             InlineNode::TaskMarker { checked } => {
                 append_highlighted_text(
@@ -613,7 +650,9 @@ fn collect_styled_inlines(
     }
 }
 
-fn render_styled_inlines(inlines: &[InlineNode]) -> StyledText {
+fn build_styled_inline_text(
+    inlines: &[InlineNode],
+) -> (String, Vec<(Range<usize>, HighlightStyle)>) {
     let mut text = String::new();
     let mut highlights = Vec::new();
     collect_styled_inlines(
@@ -622,6 +661,11 @@ fn render_styled_inlines(inlines: &[InlineNode]) -> StyledText {
         &mut text,
         &mut highlights,
     );
+    (text, highlights)
+}
+
+fn render_styled_inlines(inlines: &[InlineNode]) -> StyledText {
+    let (text, highlights) = build_styled_inline_text(inlines);
     StyledText::new(text).with_highlights(highlights)
 }
 
@@ -898,6 +942,54 @@ mod tests {
             items
                 .iter()
                 .all(|item| matches!(item.as_slice(), [BlockNode::Paragraph { .. }]))
+        );
+    }
+
+    #[test]
+    fn formatted_inlines_add_horizontal_padding_inside_the_span() {
+        let inlines = vec![
+            InlineNode::Text {
+                text: SharedString::from("before"),
+            },
+            InlineNode::Strong {
+                children: vec![InlineNode::Text {
+                    text: SharedString::from("bold"),
+                }],
+            },
+            InlineNode::Text {
+                text: SharedString::from("after"),
+            },
+        ];
+
+        let (text, _) = build_styled_inline_text(&inlines);
+
+        assert_eq!(
+            text,
+            format!("before{INLINE_HORIZONTAL_PADDING}bold{INLINE_HORIZONTAL_PADDING}after")
+        );
+    }
+
+    #[test]
+    fn formatted_inlines_pad_even_when_followed_by_punctuation() {
+        let inlines = vec![
+            InlineNode::Text {
+                text: SharedString::from("before"),
+            },
+            InlineNode::Emphasis {
+                children: vec![InlineNode::Text {
+                    text: SharedString::from("italic"),
+                }],
+            },
+            InlineNode::Text {
+                text: SharedString::from("."),
+            },
+        ];
+
+        let (text, _) = build_styled_inline_text(&inlines);
+
+        assert_eq!(
+            text,
+            format!("before{INLINE_HORIZONTAL_PADDING}italic{INLINE_HORIZONTAL_PADDING}.")
         );
     }
 }

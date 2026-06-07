@@ -5,9 +5,13 @@ use gpui::{
     WindowOptions, point, px,
 };
 
+use crate::config::app_config::AppConfig;
 use crate::data::store::Store;
 
-pub struct AppStore(pub Arc<Store>);
+pub struct AppStore {
+    pub store: Arc<Store>,
+    pub config: AppConfig,
+}
 
 impl Global for AppStore {}
 

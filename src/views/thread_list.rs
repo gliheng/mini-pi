@@ -421,7 +421,7 @@ impl Render for ThreadList {
                             .child("Create Thread")
                             .hover(|style| style.bg(rgb(0x4f46e5)))
                             .on_click(|_, _, cx| {
-                                let store = cx.global::<AppStore>().0.clone();
+                                let store = cx.global::<AppStore>().store.clone();
                                 let _sessions_dir = store.sessions_dir().clone();
                                 cx.open_window(
                                     custom_window_options(Some(Bounds::centered(

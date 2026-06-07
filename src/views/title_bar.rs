@@ -61,19 +61,19 @@ impl Render for TitleBar {
 
         let mut title_content = div().flex().flex_row().items_center().gap_2();
 
-        if let Some(icon_path) = match self.variant {
-            TitleBarVariant::Home => Some(SharedString::from("logo.svg")),
-            TitleBarVariant::Chat => None,
-        } {
-            title_content = title_content.child(
-                div().child(
-                    gpui::svg()
-                        .path(icon_path)
-                        .size(px(20.))
-                        .text_color(rgb(0xe0e0e0)),
-                ),
-            );
-        }
+        // if let Some(icon_path) = match self.variant {
+        //     TitleBarVariant::Home => Some(SharedString::from("logo.svg")),
+        //     TitleBarVariant::Chat => None,
+        // } {
+        //     title_content = title_content.child(
+        //         div().child(
+        //             gpui::svg()
+        //                 .path(icon_path)
+        //                 .size(px(20.))
+        //                 .text_color(rgb(0xe0e0e0)),
+        //         ),
+        //     );
+        // }
 
         title_content = title_content.child(
             div()

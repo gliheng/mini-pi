@@ -9,31 +9,31 @@ pub struct ModelInfo {
 const MODELS: &[ModelInfo] = &[
     ModelInfo {
         name: "OpenAI GPT-5.4 Nano",
-        id: "openai/gpt-5.4-nano",
+        id: "cloudflare-ai-gateway:openai/gpt-5.4-nano",
     },
     ModelInfo {
         name: "OpenAI GPT-5.5 Pro",
-        id: "openai/gpt-5.5-pro",
+        id: "cloudflare-ai-gateway:openai/gpt-5.5-pro",
     },
     ModelInfo {
         name: "Moonshot Kimi K2.6",
-        id: "workers-ai/@cf/moonshotai/kimi-k2.6",
+        id: "cloudflare-ai-gateway:workers-ai/@cf/moonshotai/kimi-k2.6",
     },
     ModelInfo {
         name: "MiniMax M3",
-        id: "minimax/m3",
+        id: "cloudflare-ai-gateway:minimax/m3",
     },
     ModelInfo {
         name: "OpenAI GPT-4o Mini",
-        id: "gpt-4o-mini",
+        id: "cloudflare-ai-gateway:gpt-4o-mini",
     },
     ModelInfo {
         name: "DeepSeek V4 Flash",
-        id: "deepseek/deepseek-v4-flash",
+        id: "cloudflare-ai-gateway:deepseek/deepseek-v4-flash",
     },
     ModelInfo {
         name: "DeepSeek V4 Pro",
-        id: "deepseek/deepseek-v4-pro",
+        id: "cloudflare-ai-gateway:deepseek/deepseek-v4-pro",
     },
 ];
 
@@ -51,6 +51,10 @@ pub fn get_model_id(name: &str) -> Option<&'static str> {
 
 pub fn all_models() -> &'static [ModelInfo] {
     MODELS
+}
+
+pub fn parse_model_id(id: &str) -> Option<(&str, &str)> {
+    id.split_once(':')
 }
 
 pub fn model_display_name(id: Option<&str>) -> SharedString {

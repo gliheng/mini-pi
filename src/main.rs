@@ -10,6 +10,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use gpui::{App, AppContext, Application, Bounds, KeyBinding, px, size};
 
+use crate::config::app_config::AppConfig;
 use crate::core::actions::Quit;
 use crate::core::app::{AppStore, custom_window_options};
 use crate::core::assets::Assets;
@@ -22,12 +23,13 @@ fn quit(_: &Quit, cx: &mut App) {
 
 fn main() {
     let store = Arc::new(Store::open().expect("failed to open database"));
+    let config = AppConfig::load();
     let assets_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
 
     Application::new()
         .with_assets(Assets { base: assets_dir })
         .run(|cx: &mut App| {
-            cx.set_global(AppStore(store));
+            cx.set_global(AppStore { store, config });
 
             cx.on_action(quit);
             cx.bind_keys([
@@ -60,7 +62,7 @@ fn main() {
             })
             .detach();
 
-            let store = cx.global::<AppStore>().0.clone();
+            let store = cx.global::<AppStore>().store.clone();
             let bounds = Bounds::centered(None, size(px(420.0), px(600.0)), cx);
             cx.open_window(custom_window_options(Some(bounds)), |window, cx| {
                 cx.new(|cx| {

@@ -78,7 +78,9 @@ impl ChatWindow {
                     format!("session_{}.jsonl", ns)
                 });
         let is_restoring = thread.is_some();
-        let selected_model: Option<String> = thread.and_then(|t| t.model.clone());
+        let selected_model: Option<String> = thread
+            .and_then(|t| t.model.clone())
+            .or_else(|| cx.global::<AppStore>().config.default_model.clone());
 
         let mut workspaces = store.list_workspaces().unwrap_or_default();
         if workspaces.is_empty() {
@@ -207,9 +209,15 @@ impl ChatWindow {
         // Subscribe to model dropdown selection events
         cx.subscribe(
             &model_dropdown,
-            |this, _dropdown, event: &DropdownEvent, _cx| {
+            |this, _dropdown, event: &DropdownEvent, cx| {
                 let DropdownEvent::Selected { id } = event;
                 this.selected_model = Some(id.clone());
+                cx.update_global(|app_store: &mut AppStore, _| {
+                    app_store.config.default_model = Some(id.clone());
+                    if let Err(e) = app_store.config.save() {
+                        eprintln!("[mini-pi] failed to save config: {}", e);
+                    }
+                });
                 if let Some(thread_id) = this.thread_id {
                     let _ =
                         this.store
