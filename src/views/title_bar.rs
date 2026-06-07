@@ -4,6 +4,7 @@ use gpui::{
     Pixels, Render, SharedString, StatefulInteractiveElement, Styled, Window, WindowControlArea,
     div, px, rgb,
 };
+use gpui::prelude::FluentBuilder;
 
 const TRAFFIC_LIGHT_LEFT_PADDING: f32 = 78.0;
 const TITLE_BAR_MIN_HEIGHT: f32 = 34.0;

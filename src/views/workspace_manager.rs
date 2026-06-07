@@ -141,70 +141,108 @@ impl Render for WorkspaceManager {
                                             })),
                                     ),
                             )
-                            .child(
-                                div()
-                                    .id("workspace-modal-list")
-                                    .flex()
-                                    .flex_col()
-                                    .gap_1()
-                                    .p_3()
-                                    .overflow_y_scroll()
-                                    .children(self.workspaces.iter().filter(|ws| ws.name != "Default").map(|ws| {
-                                        let ws_id = ws.id;
-                                        div()
-                                            .id(SharedString::from(format!("ws-modal-{ws_id}")))
-                                            .flex()
-                                            .flex_row()
-                                            .items_center()
-                                            .gap_2()
-                                            .px_3()
-                                            .py_2()
-                                            .rounded_md()
-                                            .bg(rgb(0x252525))
-                                            .hover(|style| style.bg(rgb(0x2a2a2a)))
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .flex_col()
-                                                    .flex_1()
-                                                    .gap_0p5()
-                                                    .child(
-                                                        div()
-                                                            .text_xs()
-                                                            .text_color(rgb(0xcccccc))
-                                                            .child(ws.name.clone()),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .text_xs()
-                                                            .text_color(rgb(0x666666))
-                                                            .child(ws.path.clone()),
-                                                    ),
-                                            )
-                                            .child(
-                                                div()
-                                                    .id(SharedString::from(format!("ws-delete-{ws_id}")))
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_center()
-                                                    .size(px(22.))
-                                                    .cursor_pointer()
-                                                    .text_color(rgb(0x888888))
-                                                    .child(
-                                                        svg()
-                                                            .path("close.svg")
-                                                            .size(px(12.))
-                                                            .text_color(rgb(0x888888)),
-                                                    )
-                                                    .hover(|style| style.text_color(rgb(0xef4444)))
-                                                    .on_click(cx.listener(move |_this, _, _window, cx| {
-                                                        cx.emit(WorkspaceManagerEvent::DeleteRequested {
-                                                            workspace_id: ws_id,
-                                                        });
-                                                    })),
-                                            )
-                                    })),
-                            ),
+                            .child({
+                                let filtered: Vec<_> = self.workspaces.iter().filter(|ws| ws.name != "Default").collect();
+                                if filtered.is_empty() {
+                                    div()
+                                        .id("workspace-modal-list")
+                                        .flex()
+                                        .flex_col()
+                                        .items_center()
+                                        .justify_center()
+                                        .gap_2()
+                                        .p_3()
+                                        .h(px(120.))
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .text_color(rgb(0x666666))
+                                                .child("No workspaces yet"),
+                                        )
+                                        .child(
+                                            div()
+                                                .id("modal-add-workspace-btn-empty")
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .px_3()
+                                                .py_1()
+                                                .rounded_md()
+                                                .bg(rgb(0x333333))
+                                                .text_color(rgb(0xcccccc))
+                                                .text_sm()
+                                                .cursor_pointer()
+                                                .hover(|style| style.bg(rgb(0x444444)))
+                                                .child("+ Add Workspace")
+                                                .on_click(cx.listener(|_this, _, _window, cx| {
+                                                    cx.emit(WorkspaceManagerEvent::AddRequested);
+                                                })),
+                                        )
+                                } else {
+                                    div()
+                                        .id("workspace-modal-list")
+                                        .flex()
+                                        .flex_col()
+                                        .gap_1()
+                                        .p_3()
+                                        .overflow_y_scroll()
+                                        .children(filtered.into_iter().map(|ws| {
+                                            let ws_id = ws.id;
+                                            div()
+                                                .id(SharedString::from(format!("ws-modal-{ws_id}")))
+                                                .flex()
+                                                .flex_row()
+                                                .items_center()
+                                                .gap_2()
+                                                .px_3()
+                                                .py_2()
+                                                .rounded_md()
+                                                .bg(rgb(0x252525))
+                                                .hover(|style| style.bg(rgb(0x2a2a2a)))
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .flex_col()
+                                                        .flex_1()
+                                                        .gap_0p5()
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .text_color(rgb(0xcccccc))
+                                                                .child(ws.name.clone()),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .text_color(rgb(0x666666))
+                                                                .child(ws.path.clone()),
+                                                        ),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .id(SharedString::from(format!("ws-delete-{ws_id}")))
+                                                        .flex()
+                                                        .items_center()
+                                                        .justify_center()
+                                                        .size(px(22.))
+                                                        .cursor_pointer()
+                                                        .text_color(rgb(0x888888))
+                                                        .child(
+                                                            svg()
+                                                                .path("close.svg")
+                                                                .size(px(12.))
+                                                                .text_color(rgb(0x888888)),
+                                                        )
+                                                        .hover(|style| style.text_color(rgb(0xef4444)))
+                                                        .on_click(cx.listener(move |_this, _, _window, cx| {
+                                                            cx.emit(WorkspaceManagerEvent::DeleteRequested {
+                                                                workspace_id: ws_id,
+                                                            });
+                                                        })),
+                                                )
+                                        }))
+                                }
+                            }),
                     ),
             )
     }

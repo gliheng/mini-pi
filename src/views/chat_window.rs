@@ -1251,19 +1251,26 @@ impl Render for ChatWindow {
                                 .flex()
                                 .items_center()
                                 .gap_1()
-                                .px_2()
-                                .py_0p5()
+                                .px(px(7.))
+                                .py(px(1.))
                                 .rounded_md()
-                                .bg(if self.show_workspace_manager { rgb(0x4f46e5) } else { rgb(0x333333) })
-                                .text_color(rgb(0xcccccc))
+                                .border_1()
+                                .border_color(if self.show_workspace_manager { rgb(0x4f46e5) } else { rgb(0x555555) })
+                                .text_color(if self.show_workspace_manager { rgb(0x4f46e5) } else { rgb(0xaaaaaa) })
                                 .text_xs()
                                 .cursor_pointer()
-                                .hover(|style| if self.show_workspace_manager { style } else { style.bg(rgb(0x444444)) })
+                                .hover(|style| {
+                                    if self.show_workspace_manager {
+                                        style
+                                    } else {
+                                        style.border_color(rgb(0x888888)).text_color(rgb(0xcccccc))
+                                    }
+                                })
                                 .child(
                                     svg()
                                         .path("manage.svg")
                                         .size(px(10.))
-                                        .text_color(rgb(0xcccccc))
+                                        .text_color(if self.show_workspace_manager { rgb(0x4f46e5) } else { rgb(0xaaaaaa) })
                                 )
                                 .child("Workspace")
                                 .on_click(cx.listener(|this, _, _window, cx| {

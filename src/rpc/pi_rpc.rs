@@ -1,4 +1,5 @@
 use std::io::{BufRead, Write};
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
