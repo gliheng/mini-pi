@@ -92,7 +92,10 @@ impl ChatWindow {
             }
         }
         Self::sort_workspaces(&mut workspaces);
-        let selected_workspace_id = workspaces.first().map(|ws| ws.id);
+        let config_workspace_name = cx.global::<AppStore>().config.default_workspace_name.clone();
+        let selected_workspace_id = config_workspace_name
+            .and_then(|name| workspaces.iter().find(|ws| ws.name == name).map(|ws| ws.id))
+            .or_else(|| workspaces.first().map(|ws| ws.id));
 
         // Build model dropdown items
         let model_items: Vec<DropdownItem> = all_models()
@@ -306,10 +309,17 @@ impl ChatWindow {
                     match store.create_workspace(&name, &path_str) {
                         Ok(workspace) => {
                             let ws_id = workspace.id;
+                            let ws_name = workspace.name.clone();
                             let _ = weak.update(cx, |window, cx| {
                                 window.workspaces.push(workspace);
                                 Self::sort_workspaces(&mut window.workspaces);
                                 window.selected_workspace_id = Some(ws_id);
+                                cx.update_global(|app_store: &mut AppStore, _| {
+                                    app_store.config.default_workspace_name = Some(ws_name);
+                                    if let Err(e) = app_store.config.save() {
+                                        eprintln!("[mini-pi] failed to save config: {}", e);
+                                    }
+                                });
                                 window.sync_workspace_manager(cx);
                                 cx.notify();
                             });
@@ -330,11 +340,26 @@ impl ChatWindow {
             return;
         }
 
+        let deleted_name = self
+            .workspaces
+            .iter()
+            .find(|ws| ws.id == workspace_id)
+            .map(|ws| ws.name.clone());
         self.workspaces
             .retain(|workspace| workspace.id != workspace_id);
         if self.selected_workspace_id == Some(workspace_id) {
             self.selected_workspace_id = self.workspaces.first().map(|workspace| workspace.id);
         }
+        cx.update_global(|app_store: &mut AppStore, _| {
+            if let Some(ref name) = deleted_name {
+                if app_store.config.default_workspace_name.as_deref() == Some(name) {
+                    app_store.config.default_workspace_name = None;
+                    if let Err(e) = app_store.config.save() {
+                        eprintln!("[mini-pi] failed to save config: {}", e);
+                    }
+                }
+            }
+        });
         self.sync_workspace_manager(cx);
         cx.notify();
     }
@@ -1239,7 +1264,8 @@ impl Render for ChatWindow {
                         .children(self.workspaces.iter().map(|ws| {
                             let is_selected = self.selected_workspace_id == Some(ws.id);
                             let ws_id = ws.id;
-                            let name: SharedString = ws.name.clone().into();
+                            let ws_name = ws.name.clone();
+                            let name: SharedString = ws_name.clone().into();
                             div()
                                 .id(SharedString::from(format!("ws-{}", ws_id)))
                                 .flex()
@@ -1263,6 +1289,12 @@ impl Render for ChatWindow {
                                 .child(name)
                                 .on_click(cx.listener(move |this, _, _window, cx| {
                                     this.selected_workspace_id = Some(ws_id);
+                                    cx.update_global(|app_store: &mut AppStore, _| {
+                                        app_store.config.default_workspace_name = Some(ws_name.clone());
+                                        if let Err(e) = app_store.config.save() {
+                                            eprintln!("[mini-pi] failed to save config: {}", e);
+                                        }
+                                    });
                                     cx.notify();
                                 }))
                         }))

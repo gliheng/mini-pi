@@ -223,11 +223,36 @@ impl Store {
         Ok(())
     }
 
+    pub fn make_unique_workspace_name(&self, base: &str) -> Result<String, StoreError> {
+        let existing: Vec<String> = self
+            .conn
+            .prepare("SELECT name FROM workspaces")
+            .map_err(StoreError::Rusqlite)?
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(StoreError::Rusqlite)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::Rusqlite)?;
+
+        if !existing.iter().any(|n| n == base) {
+            return Ok(base.to_string());
+        }
+
+        let mut suffix = 1;
+        loop {
+            let candidate = format!("{} {}", base, suffix);
+            if !existing.iter().any(|n| n == &candidate) {
+                return Ok(candidate);
+            }
+            suffix += 1;
+        }
+    }
+
     pub fn create_workspace(&self, name: &str, path: &str) -> Result<WorkspaceMeta, StoreError> {
+        let unique_name = self.make_unique_workspace_name(name)?;
         self.conn
             .execute(
                 "INSERT INTO workspaces (name, path) VALUES (?1, ?2)",
-                params![name, path],
+                params![unique_name, path],
             )
             .map_err(StoreError::Rusqlite)?;
         let id = self.conn.last_insert_rowid();

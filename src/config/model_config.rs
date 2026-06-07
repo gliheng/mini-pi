@@ -8,6 +8,10 @@ pub struct ModelInfo {
 
 const MODELS: &[ModelInfo] = &[
     ModelInfo {
+        name: "OpenAI GPT-4o Mini",
+        id: "cloudflare-ai-gateway:openai/gpt-4o-mini",
+    },
+    ModelInfo {
         name: "OpenAI GPT-5.4 Nano",
         id: "cloudflare-ai-gateway:openai/gpt-5.4-nano",
     },
@@ -24,16 +28,12 @@ const MODELS: &[ModelInfo] = &[
         id: "cloudflare-ai-gateway:minimax/m3",
     },
     ModelInfo {
-        name: "OpenAI GPT-4o Mini",
-        id: "cloudflare-ai-gateway:gpt-4o-mini",
-    },
-    ModelInfo {
         name: "DeepSeek V4 Flash",
-        id: "cloudflare-ai-gateway:deepseek/deepseek-v4-flash",
+        id: "deepseek:deepseek-v4-flash",
     },
     ModelInfo {
         name: "DeepSeek V4 Pro",
-        id: "cloudflare-ai-gateway:deepseek/deepseek-v4-pro",
+        id: "deepseek:deepseek-v4-pro",
     },
 ];
 

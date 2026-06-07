@@ -5,12 +5,15 @@ use std::path::PathBuf;
 pub struct AppConfig {
     #[serde(default)]
     pub default_model: Option<String>,
+    #[serde(default)]
+    pub default_workspace_name: Option<String>,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             default_model: None,
+            default_workspace_name: None,
         }
     }
 }
