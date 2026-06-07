@@ -1,0 +1,8 @@
+- [ ] Models and cf gateway
+- [ ] Support extension UI protocol
+- [ ] Steering, follow up and message queue
+- [ ] Properly display thinking select
+- [ ] Message display optimization
+- [ ] Display session stats
+- [ ] Pet
+- [ ] Packaging

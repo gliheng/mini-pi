@@ -13,7 +13,7 @@ use gpui::{
 };
 use uuid::Uuid;
 
-use crate::config::model_config::{all_models, model_display_name};
+use crate::config::model_config::{all_models, model_display_name, parse_model_id};
 use crate::core::actions::{CloseWindow, SendMessage};
 use crate::core::app::AppStore;
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
@@ -227,8 +227,11 @@ impl ChatWindow {
                             .update_thread(thread_id, None, None, None, Some(Some(id)), None);
                 }
                 if let Some(ref mut pi) = this.pi {
-                    if let Err(e) = pi.send_set_model("cloudflare-ai-gateway", id, None) {
-                        eprintln!("[mini-pi] send_set_model failed: {}", e);
+                    if let Some((provider, model)) = parse_model_id(id) {
+                        println!("[mini-pi] setting model: provider={} model={}", provider, model);
+                        if let Err(e) = pi.send_set_model(provider, model, None) {
+                            eprintln!("[mini-pi] send_set_model failed: {}", e);
+                        }
                     }
                 }
             },
@@ -878,14 +881,21 @@ impl ChatWindow {
             .iter()
             .filter(|m| matches!(m.role, Role::User))
             .count();
-        if user_count == 1 {
-            let title: String = content.chars().take(80).collect();
-            let preview: String = content.chars().take(120).collect();
-            let _ = self
-                .store
-                .update_thread(tid, Some(&title), Some(&preview), None, None, None);
-            needs_refresh = true;
-        }
+        let title: String = if user_count == 1 {
+            content.chars().take(80).collect()
+        } else {
+            self.store
+                .get_thread(tid)
+                .ok()
+                .flatten()
+                .map(|t| t.title)
+                .unwrap_or_default()
+        };
+        let preview: String = content.chars().take(120).collect();
+        let _ = self
+            .store
+            .update_thread(tid, Some(&title), Some(&preview), None, None, None);
+        needs_refresh = true;
 
         if needs_refresh {
             cx.update_global(|_: &mut AppStore, _| {});

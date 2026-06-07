@@ -9,23 +9,32 @@ pub struct ModelInfo {
 const MODELS: &[ModelInfo] = &[
     ModelInfo {
         name: "OpenAI GPT-4o Mini",
-        id: "cloudflare-ai-gateway:openai/gpt-4o-mini",
+        id: "cloudflare-ai-gateway:gpt-4o-mini",
     },
     ModelInfo {
-        name: "OpenAI GPT-5.4 Nano",
-        id: "cloudflare-ai-gateway:openai/gpt-5.4-nano",
+        name: "OpenAI GPT-5.5",
+        id: "cloudflare-ai-gateway:gpt-5.5",
+    },
+    // ModelInfo {
+    //     name: "Google Gemini 3.1 Pro",
+    //     id: "cloudflare-ai-gateway:google/gemini-3.1-pro",
+    // },
+    // ModelInfo {
+    //     name: "Google Gemini 3 Flash",
+    //     id: "cloudflare-ai-gateway:google/gemini-3-flash",
+    // },
+    ModelInfo {
+        name: "Anthropic Claude Sonnet 4.6",
+        id: "cloudflare-ai-gateway:claude-sonnet-4-6",
     },
     ModelInfo {
-        name: "OpenAI GPT-5.5 Pro",
-        id: "cloudflare-ai-gateway:openai/gpt-5.5-pro",
+        name: "Anthropic Claude Opus 4.8",
+        id: "cloudflare-ai-gateway:claude-opus-4-8",
     },
     ModelInfo {
         name: "Moonshot Kimi K2.6",
-        id: "cloudflare-ai-gateway:workers-ai/@cf/moonshotai/kimi-k2.6",
-    },
-    ModelInfo {
-        name: "MiniMax M3",
-        id: "cloudflare-ai-gateway:minimax/m3",
+        id: "cloudflare-ai-gateway:@cf/moonshotai/kimi-k2.6",
+        // id: "cloudflare-ai-gateway:workers-ai/@cf/moonshotai/kimi-k2.6",
     },
     ModelInfo {
         name: "DeepSeek V4 Flash",

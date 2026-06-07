@@ -1,5 +1,6 @@
 use gpui::{
-    Context, EventEmitter, Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement,
+    AppContext, Context, EventEmitter, Hsla, InteractiveElement, IntoElement, MouseButton,
+    ParentElement,
     Pixels, Render, SharedString, StatefulInteractiveElement, Styled, Window, WindowControlArea,
     div, px, rgb,
 };
@@ -7,6 +8,25 @@ use gpui::{
 const TRAFFIC_LIGHT_LEFT_PADDING: f32 = 78.0;
 const TITLE_BAR_MIN_HEIGHT: f32 = 34.0;
 const WINDOWS_ICON_SIZE: f32 = 10.0;
+
+struct TitleBarTooltip {
+    label: SharedString,
+}
+
+impl Render for TitleBarTooltip {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(rgb(0x2a2a2a))
+            .border_1()
+            .border_color(rgb(0x444444))
+            .text_xs()
+            .text_color(rgb(0xe5e5e5))
+            .child(self.label.clone())
+    }
+}
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum TitleBarVariant {
@@ -172,6 +192,12 @@ impl Render for TitleBar {
                                         .text_color(rgb(0x888888)),
                                 )
                                 .hover(|style| style.text_color(rgb(0xcccccc)))
+                                .tooltip(|_, cx| {
+                                    cx.new(|_| TitleBarTooltip {
+                                        label: "Open Workspace".into(),
+                                    })
+                                    .into()
+                                })
                                 .on_click(cx.listener(|_this: &mut Self, _, _, cx| {
                                     cx.emit(TitleBarEvent::OpenWorkspace);
                                 })),
@@ -202,6 +228,12 @@ impl Render for TitleBar {
                                         .text_color(rgb(0x888888)),
                                 )
                                 .hover(|style| style.text_color(rgb(0xcccccc)))
+                                .tooltip(|_, cx| {
+                                    cx.new(|_| TitleBarTooltip {
+                                        label: "Export HTML".into(),
+                                    })
+                                    .into()
+                                })
                                 .on_click(cx.listener(|_this: &mut Self, _, _, cx| {
                                     cx.emit(TitleBarEvent::ExportHtml);
                                 })),
@@ -248,6 +280,12 @@ impl Render for TitleBar {
                                 .font_weight(gpui::FontWeight::BOLD)
                                 .child("JD")
                                 .hover(|style| style.bg(rgb(0x4f46e5)).border_color(rgb(0x818cf8)))
+                                .tooltip(|_, cx| {
+                                    cx.new(|_| TitleBarTooltip {
+                                        label: "Account".into(),
+                                    })
+                                    .into()
+                                })
                                 .on_click(cx.listener(|this: &mut Self, _, _, cx| {
                                     this.avatar_active = !this.avatar_active;
                                     cx.emit(TitleBarEvent::ToggleUserPanel);
