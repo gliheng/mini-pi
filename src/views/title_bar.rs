@@ -8,46 +8,34 @@ const TRAFFIC_LIGHT_LEFT_PADDING: f32 = 78.0;
 const TITLE_BAR_MIN_HEIGHT: f32 = 34.0;
 const WINDOWS_ICON_SIZE: f32 = 10.0;
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum TitleBarVariant {
+    Home,
+    Chat,
+}
+
 #[derive(Clone)]
 pub enum TitleBarEvent {
     ToggleUserPanel,
     ExportHtml,
+    OpenWorkspace,
 }
 
 pub struct TitleBar {
     pub title: SharedString,
-    pub icon: Option<SharedString>,
-    pub show_avatar: bool,
+    pub variant: TitleBarVariant,
     pub avatar_active: bool,
-    pub show_export: bool,
     should_move: bool,
 }
 
 impl TitleBar {
-    pub fn new(title: impl Into<SharedString>) -> Self {
+    pub fn new(title: impl Into<SharedString>, variant: TitleBarVariant) -> Self {
         Self {
             title: title.into(),
-            icon: None,
-            show_avatar: true,
+            variant,
             avatar_active: false,
-            show_export: false,
             should_move: false,
         }
-    }
-
-    pub fn show_export(mut self, show: bool) -> Self {
-        self.show_export = show;
-        self
-    }
-
-    pub fn icon(mut self, path: impl Into<SharedString>) -> Self {
-        self.icon = Some(path.into());
-        self
-    }
-
-    pub fn show_avatar(mut self, show: bool) -> Self {
-        self.show_avatar = show;
-        self
     }
 
     pub fn height(window: &Window) -> Pixels {
@@ -77,12 +65,15 @@ impl Render for TitleBar {
             .items_center()
             .gap_2();
 
-        if let Some(icon_path) = &self.icon {
+        if let Some(icon_path) = match self.variant {
+            TitleBarVariant::Home => Some(SharedString::from("logo.svg")),
+            TitleBarVariant::Chat => None,
+        } {
             title_content = title_content.child(
                 div()
                     .child(
                         gpui::svg()
-                            .path(icon_path.clone())
+                            .path(icon_path)
                             .size(px(20.))
                             .text_color(rgb(0xe0e0e0)),
                     )
@@ -154,73 +145,103 @@ impl Render for TitleBar {
             })
             .child(drag_region);
 
-        // Export button on the right side
-        if self.show_export {
-            bar = bar.child(
-                div()
-                    .id("titlebar-export")
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .h_full()
-                    .flex_shrink_0()
-                    .child(
-                        div()
-                            .id("export-button")
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .size(px(26.))
-                            .cursor_pointer()
-                            .text_color(rgb(0x888888))
-                            .child(
-                                gpui::svg()
-                                    .path("export.svg")
-                                    .size(px(16.))
-                                    .text_color(rgb(0x888888))
-                            )
-                            .hover(|style| style.text_color(rgb(0xcccccc)))
-                            .on_click(cx.listener(|_this: &mut Self, _, _, cx| {
-                                cx.emit(TitleBarEvent::ExportHtml);
-                            })),
-                    ),
-            );
-        }
+        match self.variant {
+            TitleBarVariant::Chat => {
+                bar = bar.child(
+                    div()
+                        .id("titlebar-open-workspace")
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .h_full()
+                        .flex_shrink_0()
+                        .child(
+                            div()
+                                .id("open-workspace-button")
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .size(px(26.))
+                                .cursor_pointer()
+                                .text_color(rgb(0x888888))
+                                .child(
+                                    gpui::svg()
+                                        .path("folder.svg")
+                                        .size(px(16.))
+                                        .text_color(rgb(0x888888))
+                                )
+                                .hover(|style| style.text_color(rgb(0xcccccc)))
+                                .on_click(cx.listener(|_this: &mut Self, _, _, cx| {
+                                    cx.emit(TitleBarEvent::OpenWorkspace);
+                                })),
+                        ),
+                );
 
-        // Avatar button on the right side
-        if self.show_avatar {
-            let avatar_active = self.avatar_active;
-            bar = bar.child(
-                div()
-                    .id("titlebar-avatar")
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .h_full()
-                    .flex_shrink_0()
-                    .pr(if cfg!(target_os = "macos") { px(12.0) } else { px(4.0) })
-                    .child(
-                        div()
-                            .id("avatar-button")
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .size(px(26.))
-                            .rounded_full()
-                            .bg(if avatar_active { rgb(0x4f46e5) } else { rgb(0x6366f1) })
-                            .border_2()
-                            .border_color(if avatar_active { Into::<Hsla>::into(rgb(0x818cf8)) } else { Into::<Hsla>::into(rgb(0x6366f1)).alpha(0.0) })
-                            .cursor_pointer()
-                            .text_color(rgb(0xffffff))
-                            .text_size(px(11.))
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .child("JD")
-                            .hover(|style| style.bg(rgb(0x4f46e5)).border_color(rgb(0x818cf8)))
-                            .on_click(cx.listener(|this: &mut Self, _, _, cx| {
-                                cx.emit(TitleBarEvent::ToggleUserPanel);
-                            })),
-                    ),
-            );
+                bar = bar.child(
+                    div()
+                        .id("titlebar-export")
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .h_full()
+                        .flex_shrink_0()
+                        .child(
+                            div()
+                                .id("export-button")
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .size(px(26.))
+                                .cursor_pointer()
+                                .text_color(rgb(0x888888))
+                                .child(
+                                    gpui::svg()
+                                        .path("export.svg")
+                                        .size(px(16.))
+                                        .text_color(rgb(0x888888))
+                                )
+                                .hover(|style| style.text_color(rgb(0xcccccc)))
+                                .on_click(cx.listener(|_this: &mut Self, _, _, cx| {
+                                    cx.emit(TitleBarEvent::ExportHtml);
+                                })),
+                        ),
+                );
+            }
+            TitleBarVariant::Home => {
+                let avatar_active = self.avatar_active;
+                bar = bar.child(
+                    div()
+                        .id("titlebar-avatar")
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .h_full()
+                        .flex_shrink_0()
+                        .pr(if cfg!(target_os = "macos") { px(12.0) } else { px(4.0) })
+                        .child(
+                            div()
+                                .id("avatar-button")
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .size(px(26.))
+                                .rounded_full()
+                                .bg(if avatar_active { rgb(0x4f46e5) } else { rgb(0x6366f1) })
+                                .border_2()
+                                .border_color(if avatar_active { Into::<Hsla>::into(rgb(0x818cf8)) } else { Into::<Hsla>::into(rgb(0x6366f1)).alpha(0.0) })
+                                .cursor_pointer()
+                                .text_color(rgb(0xffffff))
+                                .text_size(px(11.))
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .child("JD")
+                                .hover(|style| style.bg(rgb(0x4f46e5)).border_color(rgb(0x818cf8)))
+                                .on_click(cx.listener(|this: &mut Self, _, _, cx| {
+                                    this.avatar_active = !this.avatar_active;
+                                    cx.emit(TitleBarEvent::ToggleUserPanel);
+                                })),
+                        ),
+                );
+            }
         }
 
         // Add window controls for non-Mac platforms with client-side decorations

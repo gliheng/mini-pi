@@ -10,7 +10,7 @@ use crate::core::actions::CloseWindow;
 use crate::core::app::{AppStore, custom_window_options};
 use crate::views::chat_window::ChatWindow;
 use crate::data::store::{Store, ThreadMeta};
-use crate::views::title_bar::{TitleBar, TitleBarEvent};
+use crate::views::title_bar::{TitleBar, TitleBarEvent, TitleBarVariant};
 use crate::views::user_panel::{UserPanel, UserPanelEvent};
 use crate::utils::format::format_relative_time;
 
@@ -257,7 +257,7 @@ impl ThreadList {
             .iter()
             .map(|t| cx.new(|_| ThreadItem::new(t.clone(), store.clone())))
             .collect();
-        let title_bar = cx.new(|_| TitleBar::new("Mini Pi"));
+        let title_bar = cx.new(|_| TitleBar::new("Mini Pi", TitleBarVariant::Home));
         let subscription = cx.observe_global::<AppStore>(move |this, cx| {
             let threads = this.store.list_threads().unwrap_or_default();
             this.sync_thread_items(&threads, cx);

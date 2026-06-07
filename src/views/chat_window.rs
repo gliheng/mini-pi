@@ -5,7 +5,7 @@ use gpui::{
     ClipboardItem, Context, FocusHandle, IntoElement, KeyDownEvent, ParentElement, PathPromptOptions, Render, ScrollHandle, SharedString, Styled, Task,
     Window, div, prelude::*, px, rgb, svg,
 };
-use crate::views::title_bar::TitleBarEvent;
+use crate::views::title_bar::{TitleBarEvent, TitleBarVariant};
 use uuid::Uuid;
 
 use crate::core::actions::{CloseWindow, SendMessage};
@@ -55,7 +55,7 @@ impl ChatWindow {
             .map(|t| if t.title.is_empty() { "New Thread".into() } else { t.title.clone().into() })
             .unwrap_or_else(|| "New Thread".into());
         let input = cx.new(|cx| TextInput::new(cx, "Type a message..."));
-        let title_bar = cx.new(|_| TitleBar::new(title.clone()).show_avatar(false).show_export(true));
+        let title_bar = cx.new(|_| TitleBar::new(title.clone(), TitleBarVariant::Chat));
 
         let session_file: String = thread
             .and_then(|t| t.session_file.clone())
@@ -169,6 +169,14 @@ impl ChatWindow {
                             }
                         }
                     }).detach();
+                }
+                TitleBarEvent::OpenWorkspace => {
+                    let workspace_dir: Option<PathBuf> = this.selected_workspace_id
+                        .and_then(|id| this.workspaces.iter().find(|ws| ws.id == id))
+                        .map(|ws| PathBuf::from(&ws.path));
+                    if let Some(dir) = workspace_dir {
+                        let _ = opener::open(&dir);
+                    }
                 }
             }
         }).detach();
