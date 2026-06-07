@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 gpui = "0.2.2"
 unicode-segmentation = "1.12"
+raw-window-handle = "0.6"
 smol = "2"
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
@@ -16,3 +17,6 @@ chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
 opener = "0.7"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"

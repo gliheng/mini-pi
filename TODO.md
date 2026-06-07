@@ -1,5 +1,6 @@
 - [ ] Models and cf gateway
 - [ ] Support extension UI protocol
+- [ ] Message editing
 - [ ] Steering, follow up and message queue
 - [ ] Properly display thinking select
 - [ ] Message display optimization

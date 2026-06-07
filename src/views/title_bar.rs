@@ -4,7 +4,8 @@ use gpui::{
     Pixels, Render, SharedString, StatefulInteractiveElement, Styled, Window, WindowControlArea,
     div, px, rgb,
 };
-use gpui::prelude::FluentBuilder;
+#[cfg(target_os = "macos")]
+use objc::{msg_send, sel, sel_impl};
 
 const TRAFFIC_LIGHT_LEFT_PADDING: f32 = 78.0;
 const TITLE_BAR_MIN_HEIGHT: f32 = 34.0;
@@ -46,6 +47,7 @@ pub struct TitleBar {
     pub title: SharedString,
     pub variant: TitleBarVariant,
     pub avatar_active: bool,
+    pub pinned: bool,
     should_move: bool,
 }
 
@@ -55,6 +57,7 @@ impl TitleBar {
             title: title.into(),
             variant,
             avatar_active: false,
+            pinned: false,
             should_move: false,
         }
     }
@@ -166,6 +169,49 @@ impl Render for TitleBar {
                 }
             })
             .child(drag_region);
+
+        let pinned = self.pinned;
+        bar = bar.child(
+            div()
+                .id("titlebar-pin")
+                .flex()
+                .flex_row()
+                .items_center()
+                .h_full()
+                .flex_shrink_0()
+                .child(
+                    div()
+                        .id("pin-button")
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .size(px(26.))
+                        .cursor_pointer()
+                        .text_color(if pinned { rgb(0x4f46e5) } else { rgb(0x888888) })
+                        .child(
+                            gpui::svg()
+                                .path(if pinned { "unpin.svg" } else { "pin.svg" })
+                                .size(px(16.))
+                                .text_color(if pinned { rgb(0x4f46e5) } else { rgb(0x888888) }),
+                        )
+                        .hover(|style| style.text_color(rgb(0xcccccc)))
+                        .tooltip(move |_, cx| {
+                            cx.new(|_| TitleBarTooltip {
+                                label: if pinned {
+                                    "Unpin Window".into()
+                                } else {
+                                    "Pin to Top".into()
+                                },
+                            })
+                            .into()
+                        })
+                        .on_click(cx.listener(|this: &mut Self, _, window, _cx| {
+                            this.pinned = !this.pinned;
+                            #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+                            set_window_level(window, this.pinned);
+                        })),
+                ),
+        );
 
         match self.variant {
             TitleBarVariant::Chat => {
@@ -365,3 +411,79 @@ fn caption_button(icon: &str, area: WindowControlArea, height: Pixels) -> impl I
         })
         .child(icon.to_string())
 }
+
+#[cfg(target_os = "macos")]
+fn set_window_level(window: &Window, pinned: bool) {
+    use objc::runtime::Object;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    const NSFLOATING_WINDOW_LEVEL: isize = 3;
+    const NSNORMAL_WINDOW_LEVEL: isize = 0;
+
+    if let Ok(handle) = HasWindowHandle::window_handle(window) {
+        if let RawWindowHandle::AppKit(appkit) = handle.as_raw() {
+            let ns_view = appkit.ns_view.as_ptr() as *mut Object;
+            unsafe {
+                let ns_window: *mut Object = msg_send![ns_view, window];
+                let level = if pinned { NSFLOATING_WINDOW_LEVEL } else { NSNORMAL_WINDOW_LEVEL };
+                let () = msg_send![ns_window, setLevel: level];
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn set_window_level(window: &Window, pinned: bool) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    type HWND = *mut std::ffi::c_void;
+    const HWND_TOPMOST: HWND = -1isize as HWND;
+    const HWND_NOTOPMOST: HWND = -2isize as HWND;
+    const SWP_NOSIZE: u32 = 0x0001;
+    const SWP_NOMOVE: u32 = 0x0002;
+    const SWP_SHOWWINDOW: u32 = 0x0040;
+
+    extern "system" {
+        fn SetWindowPos(
+            hwnd: HWND,
+            hwnd_insert_after: HWND,
+            x: i32,
+            y: i32,
+            cx: i32,
+            cy: i32,
+            u_flags: u32,
+        ) -> i32;
+    }
+
+    if let Ok(handle) = HasWindowHandle::window_handle(window) {
+        if let RawWindowHandle::Win32(win32) = handle.as_raw() {
+            let hwnd = win32.hwnd.get() as *mut std::ffi::c_void;
+            unsafe {
+                SetWindowPos(
+                    hwnd,
+                    if pinned { HWND_TOPMOST } else { HWND_NOTOPMOST },
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW,
+                );
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn set_window_level(_window: &Window, pinned: bool) {
+    // Best-effort X11 support via wmctrl. Wayland has no standard always-on-top protocol.
+    let _ = std::process::Command::new("wmctrl")
+        .args([
+            "-r",
+            ":ACTIVE:",
+            "-b",
+            if pinned { "add,above" } else { "remove,above" },
+        ])
+        .spawn();
+}
+
+
