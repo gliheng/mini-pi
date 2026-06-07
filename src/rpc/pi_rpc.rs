@@ -18,27 +18,78 @@ pub enum BridgeEvent {
     AgentStart,
     AgentEnd,
     Disconnected,
-    MessageStart { message: Option<serde_json::Value> },
+    MessageStart {
+        message: Option<serde_json::Value>,
+    },
     MessageEnd,
     TextStart,
-    TextDelta { content: String },
-    TextEnd { content: String },
+    TextDelta {
+        content: String,
+    },
+    TextEnd {
+        content: String,
+    },
     ThinkingStart,
-    ThinkingDelta { content: String },
-    ThinkingEnd { content: String },
-    ToolCallStart { name: String, call_id: String },
-    ToolCallDelta { call_id: String, delta: String },
-    ToolCallEnd { call_id: String, name: String, args: serde_json::Value },
-    ToolStart { name: String, args: Option<serde_json::Value>, call_id: String },
-    ToolUpdate { call_id: String, tool_name: String, partial_output: String },
-    ToolEnd { call_id: String, tool_name: String, output: String, is_error: bool },
+    ThinkingDelta {
+        content: String,
+    },
+    ThinkingEnd {
+        content: String,
+    },
+    ToolCallStart {
+        name: String,
+        call_id: String,
+    },
+    ToolCallDelta {
+        call_id: String,
+        delta: String,
+    },
+    ToolCallEnd {
+        call_id: String,
+        name: String,
+        args: serde_json::Value,
+    },
+    ToolStart {
+        name: String,
+        args: Option<serde_json::Value>,
+        call_id: String,
+    },
+    ToolUpdate {
+        call_id: String,
+        tool_name: String,
+        partial_output: String,
+    },
+    ToolEnd {
+        call_id: String,
+        tool_name: String,
+        output: String,
+        is_error: bool,
+    },
     TurnStart,
     TurnEnd,
-    Error { message: String },
-    MessagesLoaded { messages: Vec<LoadedMessage> },
-    ExtensionUiRequest { id: String, method: String, payload: serde_json::Value },
-    ExtensionError { extension_path: String, event: String, error: String },
-    Response { command: String, success: bool, data: Option<serde_json::Value>, error: Option<String>, request_id: Option<String> },
+    Error {
+        message: String,
+    },
+    MessagesLoaded {
+        messages: Vec<LoadedMessage>,
+    },
+    ExtensionUiRequest {
+        id: String,
+        method: String,
+        payload: serde_json::Value,
+    },
+    ExtensionError {
+        extension_path: String,
+        event: String,
+        error: String,
+    },
+    Response {
+        command: String,
+        success: bool,
+        data: Option<serde_json::Value>,
+        error: Option<String>,
+        request_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -290,11 +341,7 @@ impl PiRpc {
     // Bash
     // ------------------------------------------------------------------
 
-    pub fn send_bash(
-        &mut self,
-        command: &str,
-        request_id: Option<&str>,
-    ) -> Result<(), PiRpcError> {
+    pub fn send_bash(&mut self, command: &str, request_id: Option<&str>) -> Result<(), PiRpcError> {
         let mut cmd = serde_json::json!({
             "type": "bash",
             "command": command,
@@ -348,7 +395,10 @@ impl PiRpc {
     ) -> Result<(), PiRpcError> {
         let mut cmd = response.clone();
         if let Some(obj) = cmd.as_object_mut() {
-            obj.insert("type".to_string(), serde_json::json!("extension_ui_response"));
+            obj.insert(
+                "type".to_string(),
+                serde_json::json!("extension_ui_response"),
+            );
             obj.insert("id".to_string(), serde_json::json!(id));
         }
         self.write_json(&cmd)
@@ -361,7 +411,9 @@ impl PiRpc {
     fn write_json(&mut self, json: &serde_json::Value) -> Result<(), PiRpcError> {
         let mut line = serde_json::to_string(json).map_err(PiRpcError::Serde)?;
         line.push('\n');
-        self.stdin.write_all(line.as_bytes()).map_err(PiRpcError::Io)?;
+        self.stdin
+            .write_all(line.as_bytes())
+            .map_err(PiRpcError::Io)?;
         self.stdin.flush().map_err(PiRpcError::Io)?;
         Ok(())
     }
@@ -495,7 +547,10 @@ fn parse_pi_line(line: &str) -> Option<BridgeEvent> {
                             .and_then(|n| n.as_str())
                             .unwrap_or("unknown")
                             .to_string(),
-                        args: tool_call.get("arguments").cloned().unwrap_or(serde_json::Value::Null),
+                        args: tool_call
+                            .get("arguments")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null),
                     })
                 }
                 "start" | "done" | "error" => None,
@@ -508,10 +563,7 @@ fn parse_pi_line(line: &str) -> Option<BridgeEvent> {
 
         // -- tool execution ----------------------------------------------
         "tool_execution_start" => Some(BridgeEvent::ToolStart {
-            name: val
-                .get("toolName")?
-                .as_str()?
-                .to_string(),
+            name: val.get("toolName")?.as_str()?.to_string(),
             args: val.get("args").cloned(),
             call_id: val
                 .get("toolCallId")
@@ -590,7 +642,10 @@ fn parse_pi_line(line: &str) -> Option<BridgeEvent> {
                 .and_then(|e| e.as_str())
                 .map(|e| e.to_string());
             let data = val.get("data").cloned();
-            let request_id = val.get("id").and_then(|i| i.as_str()).map(|i| i.to_string());
+            let request_id = val
+                .get("id")
+                .and_then(|i| i.as_str())
+                .map(|i| i.to_string());
 
             if !success {
                 log!(
@@ -695,10 +750,7 @@ fn parse_messages(messages_val: &serde_json::Value) -> Option<BridgeEvent> {
                 let mut parts: Vec<LoadedPart> = vec![];
                 if let Some(content_arr) = content.and_then(|c| c.as_array()) {
                     for block in content_arr {
-                        let block_type = block
-                            .get("type")
-                            .and_then(|t| t.as_str())
-                            .unwrap_or("");
+                        let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
                         match block_type {
                             "text" => {
                                 if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
@@ -708,8 +760,7 @@ fn parse_messages(messages_val: &serde_json::Value) -> Option<BridgeEvent> {
                                 }
                             }
                             "thinking" => {
-                                if let Some(t) = block.get("thinking").and_then(|t| t.as_str())
-                                {
+                                if let Some(t) = block.get("thinking").and_then(|t| t.as_str()) {
                                     parts.push(LoadedPart::Thinking {
                                         text: t.to_string(),
                                     });
@@ -766,19 +817,18 @@ fn parse_messages(messages_val: &serde_json::Value) -> Option<BridgeEvent> {
                     .get("command")
                     .and_then(|c| c.as_str())
                     .unwrap_or("unknown");
-                let output = msg
-                    .get("output")
-                    .and_then(|o| o.as_str())
-                    .unwrap_or("");
-                let exit_code = msg
-                    .get("exitCode")
-                    .and_then(|c| c.as_i64())
-                    .unwrap_or(-1);
+                let output = msg.get("output").and_then(|o| o.as_str()).unwrap_or("");
+                let exit_code = msg.get("exitCode").and_then(|c| c.as_i64()).unwrap_or(-1);
                 loaded.push(LoadedMessage {
                     role: "bash".to_string(),
                     parts: vec![LoadedPart::ToolResult {
                         name: "bash".to_string(),
-                        output: format!("`{}` (exit {})\n{}", command, exit_code, truncate_str(output, 500)),
+                        output: format!(
+                            "`{}` (exit {})\n{}",
+                            command,
+                            exit_code,
+                            truncate_str(output, 500)
+                        ),
                     }],
                 });
             }

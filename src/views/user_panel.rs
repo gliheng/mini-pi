@@ -1,4 +1,7 @@
-use gpui::{Context, EventEmitter, Hsla, InteractiveElement, IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window, div, px, rgb};
+use gpui::{
+    Context, EventEmitter, Hsla, InteractiveElement, IntoElement, ParentElement, Render,
+    SharedString, StatefulInteractiveElement, Styled, Window, div, px, rgb,
+};
 
 #[derive(Clone)]
 pub enum UserPanelEvent {
@@ -39,11 +42,7 @@ impl UserPanel {
 impl EventEmitter<UserPanelEvent> for UserPanel {}
 
 impl Render for UserPanel {
-    fn render(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let user = UserProfile::default();
 
         div()
@@ -58,32 +57,27 @@ impl Render for UserPanel {
             .gap_6()
             // Back button at top left
             .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .child(
-                        div()
-                            .id("back-button")
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .size(px(32.))
-                            .rounded_full()
-                            .bg(rgb(0x252525))
-                            .cursor_pointer()
-                            .child(
-                                gpui::svg()
-                                    .path("arrow-left.svg")
-                                    .size(px(16.))
-                                    .text_color(rgb(0x888888)),
-                            )
-                            .hover(|style| style.bg(rgb(0x333333)))
-                            .on_click(cx.listener(|_this, _, _, cx| {
-                                cx.emit(UserPanelEvent::BackPressed);
-                            })),
-                    ),
+                div().w_full().flex().flex_row().items_center().child(
+                    div()
+                        .id("back-button")
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .size(px(32.))
+                        .rounded_full()
+                        .bg(rgb(0x252525))
+                        .cursor_pointer()
+                        .child(
+                            gpui::svg()
+                                .path("arrow-left.svg")
+                                .size(px(16.))
+                                .text_color(rgb(0x888888)),
+                        )
+                        .hover(|style| style.bg(rgb(0x333333)))
+                        .on_click(cx.listener(|_this, _, _, cx| {
+                            cx.emit(UserPanelEvent::BackPressed);
+                        })),
+                ),
             )
             // Large avatar
             .child(
@@ -127,7 +121,7 @@ impl Render for UserPanel {
                             .px_3()
                             .py_1()
                             .rounded_full()
-                                    .bg(Into::<Hsla>::into(rgb(0x4f46e5)).alpha(0.2))
+                            .bg(Into::<Hsla>::into(rgb(0x4f46e5)).alpha(0.2))
                             .text_color(rgb(0x818cf8))
                             .text_xs()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
@@ -159,12 +153,7 @@ impl Render for UserPanel {
                                     .text_color(rgb(0xe0e0e0))
                                     .child(user.threads_count.to_string()),
                             )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(0x888888))
-                                    .child("Threads"),
-                            ),
+                            .child(div().text_xs().text_color(rgb(0x888888)).child("Threads")),
                     )
                     .child(
                         div()
@@ -184,12 +173,7 @@ impl Render for UserPanel {
                                     .text_color(rgb(0xe0e0e0))
                                     .child(user.total_messages.to_string()),
                             )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(0x888888))
-                                    .child("Messages"),
-                            ),
+                            .child(div().text_xs().text_color(rgb(0x888888)).child("Messages")),
                     ),
             )
             // Settings section
@@ -217,11 +201,17 @@ impl Render for UserPanel {
     }
 }
 
-fn settings_row(label: impl Into<SharedString>, icon_path: impl Into<SharedString>) -> impl IntoElement {
+fn settings_row(
+    label: impl Into<SharedString>,
+    icon_path: impl Into<SharedString>,
+) -> impl IntoElement {
     let label: SharedString = label.into();
     let icon_path: SharedString = icon_path.into();
     div()
-        .id(SharedString::from(format!("settings-{}", label.to_lowercase().replace(" ", "-"))))
+        .id(SharedString::from(format!(
+            "settings-{}",
+            label.to_lowercase().replace(" ", "-")
+        )))
         .flex()
         .flex_row()
         .items_center()

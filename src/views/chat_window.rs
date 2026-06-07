@@ -1,26 +1,32 @@
-use std::{path::PathBuf, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    path::PathBuf,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
+use crate::views::title_bar::{TitleBarEvent, TitleBarVariant};
 use futures::StreamExt;
 use gpui::{
-    ClipboardItem, Context, FocusHandle, IntoElement, KeyDownEvent, ParentElement, PathPromptOptions, Render, ScrollHandle, SharedString, Styled, Task,
-    Window, div, prelude::*, px, rgb, svg,
+    ClipboardItem, Context, FocusHandle, IntoElement, KeyDownEvent, ParentElement,
+    PathPromptOptions, Render, ScrollHandle, SharedString, Styled, Task, Window, div, prelude::*,
+    px, rgb, svg,
 };
-use crate::views::title_bar::{TitleBarEvent, TitleBarVariant};
 use uuid::Uuid;
 
+use crate::config::model_config::{all_models, model_display_name};
 use crate::core::actions::{CloseWindow, SendMessage};
 use crate::core::app::AppStore;
+use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
+use crate::data::store::{Store, ThreadMeta, WorkspaceMeta};
+use crate::rpc::pi_rpc::{BridgeEvent, PiRpc};
 use crate::ui::dropdown::{Direction, Dropdown, DropdownEvent, DropdownItem};
 use crate::ui::input::TextInput;
 use crate::ui::loader::{loader, text_loader};
-use crate::config::model_config::{model_display_name, all_models};
-use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
-use crate::rpc::pi_rpc::{BridgeEvent, PiRpc};
-use crate::views::reasoning::Reasoning;
-use crate::data::store::{Store, ThreadMeta, WorkspaceMeta};
-use crate::views::title_bar::TitleBar;
-use crate::utils::format::truncate_str;
 use crate::ui::markdown::MarkdownRenderer;
+use crate::utils::format::truncate_str;
+use crate::views::reasoning::Reasoning;
+use crate::views::title_bar::TitleBar;
+use crate::views::workspace_manager::{WorkspaceManager, WorkspaceManagerEvent};
 
 pub struct ChatWindow {
     pub thread_id: Option<i64>,
@@ -43,29 +49,34 @@ pub struct ChatWindow {
     pub scroll_locked: bool,
     pub workspaces: Vec<WorkspaceMeta>,
     pub selected_workspace_id: Option<i64>,
+    pub show_workspace_manager: bool,
+    pub workspace_manager: gpui::Entity<WorkspaceManager>,
 }
 
 impl ChatWindow {
-    pub fn new(
-        cx: &mut Context<Self>,
-        thread: Option<&ThreadMeta>,
-        store: Arc<Store>,
-    ) -> Self {
+    pub fn new(cx: &mut Context<Self>, thread: Option<&ThreadMeta>, store: Arc<Store>) -> Self {
         let title: SharedString = thread
-            .map(|t| if t.title.is_empty() { "New Thread".into() } else { t.title.clone().into() })
+            .map(|t| {
+                if t.title.is_empty() {
+                    "New Thread".into()
+                } else {
+                    t.title.clone().into()
+                }
+            })
             .unwrap_or_else(|| "New Thread".into());
         let input = cx.new(|cx| TextInput::new(cx, "Type a message..."));
         let title_bar = cx.new(|_| TitleBar::new(title.clone(), TitleBarVariant::Chat));
 
-        let session_file: String = thread
-            .and_then(|t| t.session_file.clone())
-            .unwrap_or_else(|| {
-                let ns = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos();
-                format!("session_{}.jsonl", ns)
-            });
+        let session_file: String =
+            thread
+                .and_then(|t| t.session_file.clone())
+                .unwrap_or_else(|| {
+                    let ns = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos();
+                    format!("session_{}.jsonl", ns)
+                });
         let is_restoring = thread.is_some();
         let selected_model: Option<String> = thread.and_then(|t| t.model.clone());
 
@@ -78,6 +89,7 @@ impl ChatWindow {
                 workspaces.push(ws);
             }
         }
+        Self::sort_workspaces(&mut workspaces);
         let selected_workspace_id = workspaces.first().map(|ws| ws.id);
 
         // Build model dropdown items
@@ -87,12 +99,16 @@ impl ChatWindow {
             .collect();
 
         let model_dropdown = cx.new(|cx| {
-            Dropdown::new(cx, model_display_name(selected_model.as_deref()), model_items)
-                .with_selected(selected_model.clone())
-                .with_searchable(true)
-                .with_width(px(280.))
-                .with_max_height(px(400.))
-                .with_direction(Direction::Up)
+            Dropdown::new(
+                cx,
+                model_display_name(selected_model.as_deref()),
+                model_items,
+            )
+            .with_selected(selected_model.clone())
+            .with_searchable(true)
+            .with_width(px(280.))
+            .with_max_height(px(400.))
+            .with_direction(Direction::Up)
         });
 
         // Build thinking level dropdown items
@@ -110,6 +126,7 @@ impl ChatWindow {
                 .with_max_height(px(300.))
                 .with_direction(Direction::Up)
         });
+        let workspace_manager = cx.new(|_| WorkspaceManager::new(workspaces.clone()));
 
         let mut window = Self {
             thread_id: thread.map(|t| t.id),
@@ -132,6 +149,8 @@ impl ChatWindow {
             scroll_locked: true,
             workspaces,
             selected_workspace_id,
+            show_workspace_manager: false,
+            workspace_manager: workspace_manager.clone(),
         };
 
         if is_restoring {
@@ -139,8 +158,9 @@ impl ChatWindow {
         }
 
         // Subscribe to title bar events
-        cx.subscribe(&title_bar, |this, _title_bar, event: &TitleBarEvent, cx| {
-            match event {
+        cx.subscribe(
+            &title_bar,
+            |this, _title_bar, event: &TitleBarEvent, cx| match event {
                 TitleBarEvent::ToggleUserPanel => {}
                 TitleBarEvent::ExportHtml => {
                     let rx = cx.prompt_for_paths(PathPromptOptions {
@@ -168,69 +188,167 @@ impl ChatWindow {
                                 });
                             }
                         }
-                    }).detach();
+                    })
+                    .detach();
                 }
                 TitleBarEvent::OpenWorkspace => {
-                    let workspace_dir: Option<PathBuf> = this.selected_workspace_id
+                    let workspace_dir: Option<PathBuf> = this
+                        .selected_workspace_id
                         .and_then(|id| this.workspaces.iter().find(|ws| ws.id == id))
                         .map(|ws| PathBuf::from(&ws.path));
                     if let Some(dir) = workspace_dir {
                         let _ = opener::open(&dir);
                     }
                 }
-            }
-        }).detach();
+            },
+        )
+        .detach();
 
         // Subscribe to model dropdown selection events
-        cx.subscribe(&model_dropdown, |this, _dropdown, event: &DropdownEvent, _cx| {
-            let DropdownEvent::Selected { id } = event;
-            this.selected_model = Some(id.clone());
-            if let Some(thread_id) = this.thread_id {
-                let _ = this.store.update_thread(
-                    thread_id,
-                    None,
-                    None,
-                    None,
-                    Some(Some(id)),
-                    None,
-                );
-            }
-            if let Some(ref mut pi) = this.pi {
-                if let Err(e) = pi.send_set_model("cloudflare-ai-gateway", id, None) {
-                    eprintln!("[mini-pi] send_set_model failed: {}", e);
+        cx.subscribe(
+            &model_dropdown,
+            |this, _dropdown, event: &DropdownEvent, _cx| {
+                let DropdownEvent::Selected { id } = event;
+                this.selected_model = Some(id.clone());
+                if let Some(thread_id) = this.thread_id {
+                    let _ =
+                        this.store
+                            .update_thread(thread_id, None, None, None, Some(Some(id)), None);
                 }
-            }
-        }).detach();
+                if let Some(ref mut pi) = this.pi {
+                    if let Err(e) = pi.send_set_model("cloudflare-ai-gateway", id, None) {
+                        eprintln!("[mini-pi] send_set_model failed: {}", e);
+                    }
+                }
+            },
+        )
+        .detach();
 
         // Subscribe to thinking dropdown selection events
-        cx.subscribe(&thinking_dropdown, |this, _dropdown, event: &DropdownEvent, _cx| {
-            let DropdownEvent::Selected { id } = event;
-            this.thinking_level = Some(id.clone());
-            if let Some(ref mut pi) = this.pi {
-                if let Err(e) = pi.send_set_thinking_level(id, None) {
-                    eprintln!("[mini-pi] send_set_thinking_level failed: {}", e);
+        cx.subscribe(
+            &thinking_dropdown,
+            |this, _dropdown, event: &DropdownEvent, _cx| {
+                let DropdownEvent::Selected { id } = event;
+                this.thinking_level = Some(id.clone());
+                if let Some(ref mut pi) = this.pi {
+                    if let Err(e) = pi.send_set_thinking_level(id, None) {
+                        eprintln!("[mini-pi] send_set_thinking_level failed: {}", e);
+                    }
                 }
-            }
-        }).detach();
+            },
+        )
+        .detach();
+
+        cx.subscribe(
+            &workspace_manager,
+            |this, _manager, event: &WorkspaceManagerEvent, cx| match event {
+                WorkspaceManagerEvent::AddRequested => this.add_workspace(cx),
+                WorkspaceManagerEvent::CloseRequested => this.close_workspace_manager(cx),
+                WorkspaceManagerEvent::DeleteRequested { workspace_id } => {
+                    this.delete_workspace(*workspace_id, cx);
+                }
+            },
+        )
+        .detach();
 
         window
     }
 
+    fn sort_workspaces(workspaces: &mut Vec<WorkspaceMeta>) {
+        workspaces.sort_by(|a, b| {
+            if a.name == "Default" {
+                std::cmp::Ordering::Less
+            } else if b.name == "Default" {
+                std::cmp::Ordering::Greater
+            } else {
+                a.name.cmp(&b.name)
+            }
+        });
+    }
+
+    fn sync_workspace_manager(&mut self, cx: &mut Context<Self>) {
+        let workspaces = self.workspaces.clone();
+        self.workspace_manager.update(cx, |manager, _cx| {
+            manager.set_workspaces(workspaces);
+        });
+    }
+
+    fn close_workspace_manager(&mut self, cx: &mut Context<Self>) {
+        self.show_workspace_manager = false;
+        cx.notify();
+    }
+
+    fn add_workspace(&mut self, cx: &mut Context<Self>) {
+        let store = self.store.clone();
+        let rx = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: None,
+        });
+        cx.spawn(async move |weak, cx| {
+            if let Ok(Ok(Some(paths))) = rx.await {
+                if let Some(path) = paths.first() {
+                    let name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("Workspace")
+                        .to_string();
+                    let path_str = path.to_string_lossy().to_string();
+                    match store.create_workspace(&name, &path_str) {
+                        Ok(workspace) => {
+                            let ws_id = workspace.id;
+                            let _ = weak.update(cx, |window, cx| {
+                                window.workspaces.push(workspace);
+                                Self::sort_workspaces(&mut window.workspaces);
+                                window.selected_workspace_id = Some(ws_id);
+                                window.sync_workspace_manager(cx);
+                                cx.notify();
+                            });
+                        }
+                        Err(e) => {
+                            eprintln!("[mini-pi] failed to create workspace: {}", e);
+                        }
+                    }
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn delete_workspace(&mut self, workspace_id: i64, cx: &mut Context<Self>) {
+        if let Err(e) = self.store.delete_workspace(workspace_id) {
+            eprintln!("[mini-pi] failed to delete workspace: {}", e);
+            return;
+        }
+
+        self.workspaces
+            .retain(|workspace| workspace.id != workspace_id);
+        if self.selected_workspace_id == Some(workspace_id) {
+            self.selected_workspace_id = self.workspaces.first().map(|workspace| workspace.id);
+        }
+        self.sync_workspace_manager(cx);
+        cx.notify();
+    }
+
     fn spawn_pi(&mut self, restoring: bool, cx: &mut Context<Self>) -> bool {
         let session_path = self.store.sessions_dir().join(&self.session_file);
-        let workspace_dir: Option<PathBuf> = self.selected_workspace_id
+        let workspace_dir: Option<PathBuf> = self
+            .selected_workspace_id
             .and_then(|id| self.workspaces.iter().find(|ws| ws.id == id))
             .map(|ws| PathBuf::from(&ws.path));
 
-        let (mut rpc, rx) = match PiRpc::spawn(&session_path, self.selected_model.as_deref(), workspace_dir) {
-            Ok(result) => result,
-            Err(e) => {
-                eprintln!("[mini-pi] failed to spawn pi: {}", e);
-                self.state = ChatState::Error("Failed to start pi agent. Is bun installed?".into());
-                cx.notify();
-                return false;
-            }
-        };
+        let (mut rpc, rx) =
+            match PiRpc::spawn(&session_path, self.selected_model.as_deref(), workspace_dir) {
+                Ok(result) => result,
+                Err(e) => {
+                    eprintln!("[mini-pi] failed to spawn pi: {}", e);
+                    self.state =
+                        ChatState::Error("Failed to start pi agent. Is bun installed?".into());
+                    cx.notify();
+                    return false;
+                }
+            };
 
         eprintln!("[mini-pi] pi spawned with session {}", self.session_file);
 
@@ -252,9 +370,12 @@ impl ChatWindow {
         let task = cx.spawn(async move |_, cx: &mut gpui::AsyncApp| {
             let mut rx = rx;
             while let Some(event) = rx.next().await {
-                if weak.update(cx, |window, cx| {
-                    window.handle_bridge_event(event, cx);
-                }).is_err() {
+                if weak
+                    .update(cx, |window, cx| {
+                        window.handle_bridge_event(event, cx);
+                    })
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -267,10 +388,7 @@ impl ChatWindow {
         true
     }
 
-    pub fn handle_bridge_event(&mut self,
-        event: BridgeEvent,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn handle_bridge_event(&mut self, event: BridgeEvent, cx: &mut Context<Self>) {
         eprintln!("[mini-pi] bridge event: {:?}", event);
         match event {
             BridgeEvent::AgentStart => {
@@ -303,9 +421,25 @@ impl ChatWindow {
             BridgeEvent::TextDelta { content } => {
                 if let Some(msg) = self.messages.iter_mut().find(|m| {
                     matches!(m.role, Role::Assistant)
-                        && m.parts.iter().any(|p| matches!(p, MessagePart::Text { state: Some(PartState::Streaming), .. }))
+                        && m.parts.iter().any(|p| {
+                            matches!(
+                                p,
+                                MessagePart::Text {
+                                    state: Some(PartState::Streaming),
+                                    ..
+                                }
+                            )
+                        })
                 }) {
-                    if let Some(part) = msg.parts.iter_mut().find(|p| matches!(p, MessagePart::Text { state: Some(PartState::Streaming), .. })) {
+                    if let Some(part) = msg.parts.iter_mut().find(|p| {
+                        matches!(
+                            p,
+                            MessagePart::Text {
+                                state: Some(PartState::Streaming),
+                                ..
+                            }
+                        )
+                    }) {
                         if let MessagePart::Text { text, .. } = part {
                             let new_text = format!("{}{}", text, content);
                             *text = new_text.into();
@@ -323,9 +457,25 @@ impl ChatWindow {
             BridgeEvent::ThinkingDelta { content } => {
                 if let Some(msg) = self.messages.iter_mut().find(|m| {
                     matches!(m.role, Role::Assistant)
-                        && m.parts.iter().any(|p| matches!(p, MessagePart::Reasoning { state: Some(PartState::Streaming), .. }))
+                        && m.parts.iter().any(|p| {
+                            matches!(
+                                p,
+                                MessagePart::Reasoning {
+                                    state: Some(PartState::Streaming),
+                                    ..
+                                }
+                            )
+                        })
                 }) {
-                    if let Some(part) = msg.parts.iter_mut().find(|p| matches!(p, MessagePart::Reasoning { state: Some(PartState::Streaming), .. })) {
+                    if let Some(part) = msg.parts.iter_mut().find(|p| {
+                        matches!(
+                            p,
+                            MessagePart::Reasoning {
+                                state: Some(PartState::Streaming),
+                                ..
+                            }
+                        )
+                    }) {
                         if let MessagePart::Reasoning { text, .. } = part {
                             let new_text = format!("{}{}", text, content);
                             *text = new_text.into();
@@ -357,7 +507,12 @@ impl ChatWindow {
                     }
                 }
             }
-            BridgeEvent::ToolEnd { tool_name, output, is_error, .. } => {
+            BridgeEvent::ToolEnd {
+                tool_name,
+                output,
+                is_error,
+                ..
+            } => {
                 if let Some(msg) = self.messages.last_mut() {
                     if matches!(msg.role, Role::Assistant) {
                         // Mark any existing streaming tool call as done
@@ -375,7 +530,8 @@ impl ChatWindow {
                                 format!("ERROR: {}", truncate_str(&output, 500))
                             } else {
                                 truncate_str(&output, 500)
-                            }.into(),
+                            }
+                            .into(),
                             state: Some(PartState::Done),
                         });
                     }
@@ -397,7 +553,15 @@ impl ChatWindow {
             BridgeEvent::TextEnd { .. } => {
                 if let Some(msg) = self.messages.last_mut() {
                     if matches!(msg.role, Role::Assistant) {
-                        if let Some(part) = msg.parts.iter_mut().rev().find(|p| matches!(p, MessagePart::Text { state: Some(PartState::Streaming), .. })) {
+                        if let Some(part) = msg.parts.iter_mut().rev().find(|p| {
+                            matches!(
+                                p,
+                                MessagePart::Text {
+                                    state: Some(PartState::Streaming),
+                                    ..
+                                }
+                            )
+                        }) {
                             if let MessagePart::Text { state, .. } = part {
                                 *state = Some(PartState::Done);
                             }
@@ -419,7 +583,15 @@ impl ChatWindow {
             BridgeEvent::ThinkingEnd { .. } => {
                 if let Some(msg) = self.messages.last_mut() {
                     if matches!(msg.role, Role::Assistant) {
-                        if let Some(part) = msg.parts.iter_mut().rev().find(|p| matches!(p, MessagePart::Reasoning { state: Some(PartState::Streaming), .. })) {
+                        if let Some(part) = msg.parts.iter_mut().rev().find(|p| {
+                            matches!(
+                                p,
+                                MessagePart::Reasoning {
+                                    state: Some(PartState::Streaming),
+                                    ..
+                                }
+                            )
+                        }) {
                             if let MessagePart::Reasoning { state, .. } = part {
                                 *state = Some(PartState::Done);
                             }
@@ -451,7 +623,11 @@ impl ChatWindow {
                     }
                 }
             }
-            BridgeEvent::ToolCallEnd { call_id, name, args } => {
+            BridgeEvent::ToolCallEnd {
+                call_id,
+                name,
+                args,
+            } => {
                 if let Some(msg) = self.messages.last_mut() {
                     if matches!(msg.role, Role::Assistant) {
                         if let Some(part) = msg.parts.iter_mut().find(|p| matches!(p, MessagePart::ToolCall { tool_call_id: id, .. } if id == &SharedString::from(call_id.clone()))) {
@@ -488,16 +664,24 @@ impl ChatWindow {
                 }
             }
             BridgeEvent::ExtensionUiRequest { id, method, .. } => {
-                eprintln!("[mini-pi] extension_ui_request method={}, id={}, auto-cancelling", method, id);
+                eprintln!(
+                    "[mini-pi] extension_ui_request method={}, id={}, auto-cancelling",
+                    method, id
+                );
                 if let Some(ref mut pi) = self.pi {
-                    let _ = pi.send_extension_ui_response(
-                        &id,
-                        &serde_json::json!({ "cancelled": true }),
-                    );
+                    let _ = pi
+                        .send_extension_ui_response(&id, &serde_json::json!({ "cancelled": true }));
                 }
             }
-            BridgeEvent::ExtensionError { extension_path, event, error } => {
-                eprintln!("[mini-pi] extension error in {} (event: {}): {}", extension_path, event, error);
+            BridgeEvent::ExtensionError {
+                extension_path,
+                event,
+                error,
+            } => {
+                eprintln!(
+                    "[mini-pi] extension error in {} (event: {}): {}",
+                    extension_path, event, error
+                );
             }
             BridgeEvent::Disconnected => {
                 eprintln!("[mini-pi] pi process disconnected");
@@ -578,7 +762,9 @@ impl ChatWindow {
                         }
                         "tool" => {
                             for part in msg.parts {
-                                if let crate::rpc::pi_rpc::LoadedPart::ToolResult { name, output } = part {
+                                if let crate::rpc::pi_rpc::LoadedPart::ToolResult { name, output } =
+                                    part
+                                {
                                     if let Some(last_msg) = self.messages.last_mut() {
                                         if matches!(last_msg.role, Role::Assistant) {
                                             last_msg.parts.push(MessagePart::ToolResult {
@@ -604,12 +790,7 @@ impl ChatWindow {
         cx.notify();
     }
 
-    pub fn send_message(
-        &mut self,
-        _: &SendMessage,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn send_message(&mut self, _: &SendMessage, _window: &mut Window, cx: &mut Context<Self>) {
         let content = self.input.read(cx).content().clone();
         eprintln!("[mini-pi] send_message: {} chars", content.len());
         if content.is_empty() {
@@ -659,18 +840,17 @@ impl ChatWindow {
         }
 
         let tid = self.thread_id.unwrap();
-        let user_count = self.messages.iter().filter(|m| matches!(m.role, Role::User)).count();
+        let user_count = self
+            .messages
+            .iter()
+            .filter(|m| matches!(m.role, Role::User))
+            .count();
         if user_count == 1 {
             let title: String = content.chars().take(80).collect();
             let preview: String = content.chars().take(120).collect();
-            let _ = self.store.update_thread(
-                tid,
-                Some(&title),
-                Some(&preview),
-                None,
-                None,
-                None,
-            );
+            let _ = self
+                .store
+                .update_thread(tid, Some(&title), Some(&preview), None, None, None);
             needs_refresh = true;
         }
 
@@ -690,11 +870,7 @@ impl ChatWindow {
 }
 
 impl Render for ChatWindow {
-    fn render(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let status = match &self.state {
             ChatState::Idle => None,
             ChatState::Loading => Some(SharedString::from("Loading...")),
@@ -714,7 +890,8 @@ impl Render for ChatWindow {
             dropdown.selected_id = self.selected_model.clone();
         });
 
-        let thinking_label: SharedString = self.thinking_level
+        let thinking_label: SharedString = self
+            .thinking_level
             .as_ref()
             .map(|l| match l.as_str() {
                 "off" => "Off".into(),
@@ -806,11 +983,15 @@ impl Render for ChatWindow {
             })
             .on_action(cx.listener(Self::send_message))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
-                // Close any open dropdowns on escape if neither dropdown consumed it
-                let model_open = this.model_dropdown.read(cx).is_open;
-                let thinking_open = this.thinking_dropdown.read(cx).is_open;
-                if event.keystroke.key == "escape" && (model_open || thinking_open) {
-                    // Dropdowns handle their own escape; this is a fallback
+                if event.keystroke.key == "escape" {
+                    if this.show_workspace_manager {
+                        this.close_workspace_manager(cx);
+                    }
+                    let model_open = this.model_dropdown.read(cx).is_open;
+                    let thinking_open = this.thinking_dropdown.read(cx).is_open;
+                    if model_open || thinking_open {
+                        // Dropdowns handle their own escape; this is a fallback
+                    }
                 }
             }))
             .flex()
@@ -955,6 +1136,16 @@ impl Render for ChatWindow {
                                 )
                         })
                     )
+                    .when(self.messages.is_empty(), |el| {
+                        el.items_center()
+                            .justify_center()
+                            .child(
+                                svg()
+                                    .path("logo.svg")
+                                    .text_color(rgb(0x252525))
+                                    .size(px(180.)),
+                            )
+                    })
                     .when(is_loading, |el| {
                         el.child(
                             div()
@@ -1013,57 +1204,28 @@ impl Render for ChatWindow {
                         .items_center()
                         .child(
                             div()
-                                .text_xs()
-                                .text_color(rgb(0x666666))
-                                .child("Workspace")
-                        )
-                        .child(
-                            div()
-                                .id("add-workspace-btn")
+                                .id("manage-workspace-btn")
                                 .flex()
                                 .items_center()
-                                .justify_center()
+                                .gap_1()
                                 .px_2()
                                 .py_0p5()
                                 .rounded_md()
-                                .bg(rgb(0x333333))
+                                .bg(if self.show_workspace_manager { rgb(0x4f46e5) } else { rgb(0x333333) })
                                 .text_color(rgb(0xcccccc))
                                 .text_xs()
                                 .cursor_pointer()
-                                .hover(|style| style.bg(rgb(0x444444)))
-                                .child("+")
+                                .hover(|style| if self.show_workspace_manager { style } else { style.bg(rgb(0x444444)) })
+                                .child(
+                                    svg()
+                                        .path("manage.svg")
+                                        .size(px(10.))
+                                        .text_color(rgb(0xcccccc))
+                                )
+                                .child("Workspace")
                                 .on_click(cx.listener(|this, _, _window, cx| {
-                                    let store = this.store.clone();
-                                    let rx = cx.prompt_for_paths(PathPromptOptions {
-                                        files: false,
-                                        directories: true,
-                                        multiple: false,
-                                        prompt: None,
-                                    });
-                                    cx.spawn(async move |weak, cx| {
-                                        if let Ok(Ok(Some(paths))) = rx.await {
-                                            if let Some(path) = paths.first() {
-                                                let name = path.file_name()
-                                                    .and_then(|n| n.to_str())
-                                                    .unwrap_or("Workspace")
-                                                    .to_string();
-                                                let path_str = path.to_string_lossy().to_string();
-                                                match store.create_workspace(&name, &path_str) {
-                                                    Ok(workspace) => {
-                                                        let ws_id = workspace.id;
-                                                        let _ = weak.update(cx, |window, cx| {
-                                                            window.workspaces.push(workspace);
-                                                            window.selected_workspace_id = Some(ws_id);
-                                                            cx.notify();
-                                                        });
-                                                    }
-                                                    Err(e) => {
-                                                        eprintln!("[mini-pi] failed to create workspace: {}", e);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }).detach();
+                                    this.show_workspace_manager = !this.show_workspace_manager;
+                                    cx.notify();
                                 }))
                         )
                         .children(self.workspaces.iter().map(|ws| {
@@ -1082,6 +1244,14 @@ impl Render for ChatWindow {
                                 .text_xs()
                                 .cursor_pointer()
                                 .hover(|style| if is_selected { style } else { style.bg(rgb(0x333333)) })
+                                .when(ws.name == "Default", |this| {
+                                    this.gap_1().child(
+                                        svg()
+                                            .path("folder.svg")
+                                            .size(px(10.))
+                                            .text_color(if is_selected { rgb(0xffffff) } else { rgb(0xaaaaaa) })
+                                    )
+                                })
                                 .child(name)
                                 .on_click(cx.listener(move |this, _, _window, cx| {
                                     this.selected_workspace_id = Some(ws_id);
@@ -1148,5 +1318,8 @@ impl Render for ChatWindow {
                             )
                     )
             )
+            .when(self.show_workspace_manager, |this| {
+                this.child(self.workspace_manager.clone())
+            })
     }
 }

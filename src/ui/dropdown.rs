@@ -1,6 +1,6 @@
 use gpui::{
-    Context, EventEmitter, FocusHandle, IntoElement, KeyDownEvent, MouseButton,
-    ParentElement, Render, SharedString, Styled, Window, div, prelude::*, px, rgb,
+    Context, EventEmitter, FocusHandle, IntoElement, KeyDownEvent, MouseButton, ParentElement,
+    Render, SharedString, Styled, Window, div, prelude::*, px, rgb, svg,
 };
 
 use crate::ui::input::TextInput;
@@ -143,7 +143,12 @@ impl Dropdown {
         if !self.searchable {
             return self.items.clone();
         }
-        let query = self.search_input.read(cx).content().to_string().to_lowercase();
+        let query = self
+            .search_input
+            .read(cx)
+            .content()
+            .to_string()
+            .to_lowercase();
         if query.is_empty() {
             return self.items.clone();
         }
@@ -217,11 +222,11 @@ impl Render for Dropdown {
                                 })
                                 .child(item.label.clone()),
                         )
-                        .child(
-                            div()
-                                .text_color(rgb(0x3b82f6))
-                                .child(if is_selected { "✓" } else { "" }),
-                        )
+                        .child(div().text_color(rgb(0x3b82f6)).child(if is_selected {
+                            "✓"
+                        } else {
+                            ""
+                        }))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.select_item(&item_id, window, cx);
                         }))
@@ -229,7 +234,8 @@ impl Render for Dropdown {
                 );
             }
 
-            if filtered.is_empty() && searchable && !self.search_input.read(cx).content().is_empty() {
+            if filtered.is_empty() && searchable && !self.search_input.read(cx).content().is_empty()
+            {
                 dropdown_children.push(
                     div()
                         .px_3()
@@ -244,7 +250,6 @@ impl Render for Dropdown {
 
         // Button label text
         let button_label = self.label.clone();
-        let arrow = if is_open { "▲" } else { "▼" };
 
         div()
             .id("dropdown")
@@ -262,9 +267,7 @@ impl Render for Dropdown {
                         let items = this.filtered_items(cx);
                         let count = items.len();
                         if count > 0 {
-                            let next = highlighted
-                                .map(|i| (i + 1) % count)
-                                .unwrap_or(0);
+                            let next = highlighted.map(|i| (i + 1) % count).unwrap_or(0);
                             this.highlighted_index = Some(next);
                         }
                         cx.notify();
@@ -307,7 +310,16 @@ impl Render for Dropdown {
                     .cursor_pointer()
                     .hover(|s| s.bg(rgb(0x333333)))
                     .child(button_label)
-                    .child(arrow)
+                    .child(
+                        svg()
+                            .path(if is_open {
+                                "chevron-up.svg"
+                            } else {
+                                "chevron-down.svg"
+                            })
+                            .size(px(14.))
+                            .text_color(rgb(0xaaaaaa)),
+                    )
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.toggle(window, cx);
                     })),
@@ -324,9 +336,12 @@ impl Render for Dropdown {
                         .left(px(-5000.))
                         .w(px(10000.))
                         .h(px(10000.))
-                        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                            this.close(cx);
-                        })),
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                this.close(cx);
+                            }),
+                        ),
                 )
                 .child(
                     // Dropdown panel

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    Bounds, Global, TitlebarOptions, WindowBackgroundAppearance, WindowBounds,
-    WindowDecorations, WindowOptions, point, px,
+    Bounds, Global, TitlebarOptions, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
+    WindowOptions, point, px,
 };
 
 use crate::data::store::Store;

@@ -1,16 +1,14 @@
+mod config;
 mod core;
 mod data;
 mod rpc;
-mod config;
 mod ui;
-mod views;
 mod utils;
+mod views;
 
 use std::{path::PathBuf, sync::Arc};
 
-use gpui::{
-    App, AppContext, Application, Bounds, KeyBinding, px, size,
-};
+use gpui::{App, AppContext, Application, Bounds, KeyBinding, px, size};
 
 use crate::core::actions::Quit;
 use crate::core::app::{AppStore, custom_window_options};
@@ -64,16 +62,13 @@ fn main() {
 
             let store = cx.global::<AppStore>().0.clone();
             let bounds = Bounds::centered(None, size(px(420.0), px(600.0)), cx);
-            cx.open_window(
-                custom_window_options(Some(bounds)),
-                |window, cx| {
-                    cx.new(|cx| {
-                        let list = ThreadList::new(cx, store);
-                        list.focus_handle.focus(window);
-                        list
-                    })
-                },
-            )
+            cx.open_window(custom_window_options(Some(bounds)), |window, cx| {
+                cx.new(|cx| {
+                    let list = ThreadList::new(cx, store);
+                    list.focus_handle.focus(window);
+                    list
+                })
+            })
             .unwrap();
 
             cx.activate(true);

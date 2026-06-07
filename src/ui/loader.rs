@@ -1,4 +1,7 @@
-use gpui::{Animation, AnimationExt, IntoElement, ParentElement, SharedString, Styled, div, prelude::*, px, rgb};
+use gpui::{
+    Animation, AnimationExt, IntoElement, ParentElement, SharedString, Styled, div, prelude::*, px,
+    rgb,
+};
 use std::time::Duration;
 
 /// Create a reusable animated loader / spinner.
@@ -67,14 +70,12 @@ fn animated_dot(
 /// ```
 pub fn text_loader() -> impl IntoElement {
     const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-    div()
-        .id("text-loader")
-        .with_animation(
-            "text-loader-anim",
-            Animation::new(Duration::from_millis(800)).repeat(),
-            move |this, progress| {
-                let idx = (progress * FRAMES.len() as f32) as usize % FRAMES.len();
-                this.child(SharedString::from(FRAMES[idx]))
-            },
-        )
+    div().id("text-loader").with_animation(
+        "text-loader-anim",
+        Animation::new(Duration::from_millis(800)).repeat(),
+        move |this, progress| {
+            let idx = (progress * FRAMES.len() as f32) as usize % FRAMES.len();
+            this.child(SharedString::from(FRAMES[idx]))
+        },
+    )
 }

@@ -1,4 +1,7 @@
-use gpui::{Context, IntoElement, ParentElement, Render, SharedString, Styled, Window, div, prelude::*, px, rgb, svg};
+use gpui::{
+    Context, IntoElement, ParentElement, Render, SharedString, Styled, Window, div, prelude::*, px,
+    rgb, svg,
+};
 
 /// A self-contained reasoning/thinking display component.
 ///
@@ -52,20 +55,13 @@ impl Render for Reasoning {
                             .size(px(12.))
                             .text_color(rgb(0x888888)),
                     )
-                    .child(
-                        div().child(format!(
-                            "Thinking {}",
-                            if collapsed { "▶" } else { "▼" }
-                        )),
-                    )
+                    .child(div().child(format!("Thinking {}", if collapsed { "▶" } else { "▼" })))
                     .on_click(cx.listener(|this, _, _window, cx| {
                         this.collapsed = !this.collapsed;
                         cx.notify();
                     }))
                     .into_any_element(),
             )
-            .when(!collapsed, |this| {
-                this.child(div().mt_1().child(content))
-            })
+            .when(!collapsed, |this| this.child(div().mt_1().child(content)))
     }
 }

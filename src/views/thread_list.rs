@@ -8,11 +8,11 @@ use gpui::{
 
 use crate::core::actions::CloseWindow;
 use crate::core::app::{AppStore, custom_window_options};
-use crate::views::chat_window::ChatWindow;
 use crate::data::store::{Store, ThreadMeta};
+use crate::utils::format::format_relative_time;
+use crate::views::chat_window::ChatWindow;
 use crate::views::title_bar::{TitleBar, TitleBarEvent, TitleBarVariant};
 use crate::views::user_panel::{UserPanel, UserPanelEvent};
-use crate::utils::format::format_relative_time;
 
 pub struct ThreadItem {
     thread: Arc<ThreadMeta>,
@@ -70,17 +70,14 @@ impl Render for ThreadItem {
                 let thread_meta = (*this.thread).clone();
                 let store = this.store.clone();
                 let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
-                cx.open_window(
-                    custom_window_options(Some(bounds)),
-                    move |window, cx| {
-                        cx.new(|cx| {
-                            let chat = ChatWindow::new(cx, Some(&thread_meta), store.clone());
-                            let input_handle = chat.input.read(cx).focus_handle(cx);
-                            window.focus(&input_handle);
-                            chat
-                        })
-                    },
-                )
+                cx.open_window(custom_window_options(Some(bounds)), move |window, cx| {
+                    cx.new(|cx| {
+                        let chat = ChatWindow::new(cx, Some(&thread_meta), store.clone());
+                        let input_handle = chat.input.read(cx).focus_handle(cx);
+                        window.focus(&input_handle);
+                        chat
+                    })
+                })
                 .unwrap();
             }))
             .on_hover(cx.listener(move |this, hovered: &bool, _, _cx| {
@@ -94,18 +91,13 @@ impl Render for ThreadItem {
                     .flex_col()
                     .gap_1()
                     .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(rgb(0xe0e0e0))
-                                    .overflow_x_hidden()
-                                    .child(title),
-                            ),
+                        div().flex().flex_row().items_center().gap_1().child(
+                            div()
+                                .text_sm()
+                                .text_color(rgb(0xe0e0e0))
+                                .overflow_x_hidden()
+                                .child(title),
+                        ),
                     )
                     .child(
                         div()
@@ -122,12 +114,7 @@ impl Render for ThreadItem {
                     .items_center()
                     .gap_2()
                     .when(!confirming && !hovered, |el| {
-                        el.child(
-                            div()
-                                .text_xs()
-                                .text_color(rgb(0x666666))
-                                .child(time_label),
-                        )
+                        el.child(div().text_xs().text_color(rgb(0x666666)).child(time_label))
                     })
                     .when(!confirming && hovered, |el| {
                         el.child(
@@ -183,15 +170,13 @@ impl Render for ThreadItem {
                                 .flex_row()
                                 .items_center()
                                 .gap_1()
+                                .child(div().text_xs().text_color(rgb(0xfca5a5)).child("Delete?"))
                                 .child(
                                     div()
-                                        .text_xs()
-                                        .text_color(rgb(0xfca5a5))
-                                        .child("Delete?"),
-                                )
-                                .child(
-                                    div()
-                                        .id(SharedString::from(format!("confirm-delete-btn-{}", thread_id)))
+                                        .id(SharedString::from(format!(
+                                            "confirm-delete-btn-{}",
+                                            thread_id
+                                        )))
                                         .flex()
                                         .items_center()
                                         .justify_center()
@@ -213,7 +198,10 @@ impl Render for ThreadItem {
                                 )
                                 .child(
                                     div()
-                                        .id(SharedString::from(format!("cancel-delete-btn-{}", thread_id)))
+                                        .id(SharedString::from(format!(
+                                            "cancel-delete-btn-{}",
+                                            thread_id
+                                        )))
                                         .flex()
                                         .items_center()
                                         .justify_center()
@@ -266,21 +254,17 @@ impl ThreadList {
 
         let user_panel = cx.new(|_| UserPanel::new());
 
-        let titlebar_subscription = cx.subscribe(
-            &title_bar,
-            move |this, _, _event: &TitleBarEvent, cx| {
+        let titlebar_subscription =
+            cx.subscribe(&title_bar, move |this, _, _event: &TitleBarEvent, cx| {
                 this.show_user_panel = !this.show_user_panel;
                 cx.notify();
-            },
-        );
+            });
 
-        let user_panel_subscription = cx.subscribe(
-            &user_panel,
-            move |this, _, _event: &UserPanelEvent, cx| {
+        let user_panel_subscription =
+            cx.subscribe(&user_panel, move |this, _, _event: &UserPanelEvent, cx| {
                 this.show_user_panel = false;
                 cx.notify();
-            },
-        );
+            });
 
         Self {
             title_bar,
@@ -296,11 +280,14 @@ impl ThreadList {
     }
 
     fn sync_thread_items(&mut self, threads: &[ThreadMeta], cx: &mut Context<Self>) {
-        self.thread_items.retain(|item| {
-            threads.iter().any(|t| t.id == item.read(cx).thread.id)
-        });
+        self.thread_items
+            .retain(|item| threads.iter().any(|t| t.id == item.read(cx).thread.id));
         for thread in threads {
-            if !self.thread_items.iter().any(|item| item.read(cx).thread.id == thread.id) {
+            if !self
+                .thread_items
+                .iter()
+                .any(|item| item.read(cx).thread.id == thread.id)
+            {
                 let item = cx.new(|_| ThreadItem::new(thread.clone(), self.store.clone()));
                 self.thread_items.push(item);
             }
@@ -311,23 +298,19 @@ impl ThreadList {
             }
         }
         // Reorder to match the database sort: pinned first, then updated_at descending
-        let order: std::collections::HashMap<i64, usize> = threads
-            .iter()
-            .enumerate()
-            .map(|(i, t)| (t.id, i))
-            .collect();
+        let order: std::collections::HashMap<i64, usize> =
+            threads.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
         self.thread_items.sort_by_key(|item| {
-            order.get(&item.read(cx).thread.id).copied().unwrap_or(usize::MAX)
+            order
+                .get(&item.read(cx).thread.id)
+                .copied()
+                .unwrap_or(usize::MAX)
         });
     }
 }
 
 impl Render for ThreadList {
-    fn render(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.title_bar.update(cx, |title_bar, _cx| {
             title_bar.avatar_active = self.show_user_panel;
         });
@@ -371,16 +354,12 @@ impl Render for ThreadList {
                     .flex_col()
                     .when(!pinned.is_empty(), |el| {
                         el.child(
-                            div()
-                                .px_3()
-                                .py_1()
-                                .bg(rgb(0x1f1f1f))
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(rgb(0x888888))
-                                        .child("Pinned threads"),
-                                ),
+                            div().px_3().py_1().bg(rgb(0x1f1f1f)).child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(0x888888))
+                                    .child("Pinned threads"),
+                            ),
                         )
                         .children(pinned.iter().map(|item| item.clone()))
                     })
@@ -390,24 +369,17 @@ impl Render for ThreadList {
                                 .px_3()
                                 .py_1()
                                 .bg(rgb(0x1f1f1f))
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(rgb(0x888888))
-                                        .child("Threads"),
-                                ),
+                                .child(div().text_xs().text_color(rgb(0x888888)).child("Threads")),
                         )
                         .children(unpinned.iter().map(|item| item.clone()))
                     })
                     .when(self.thread_items.is_empty(), |el| {
-                        el.items_center()
-                            .justify_center()
-                            .child(
-                                svg()
-                                    .path("logo.svg")
-                                    .text_color(rgb(0x252525))
-                                    .size(px(180.)),
-                            )
+                        el.items_center().justify_center().child(
+                            svg()
+                                .path("logo.svg")
+                                .text_color(rgb(0x252525))
+                                .size(px(180.)),
+                        )
                     }),
             )
             .child(

@@ -2,8 +2,8 @@ use std::{collections::VecDeque, ops::Range};
 
 use gpui::{
     Context, FontStyle, FontWeight, HighlightStyle, IntoElement, ParentElement, Render,
-    SharedString, StrikethroughStyle, Styled, StyledText, UnderlineStyle, Window, div, px,
-    prelude::*, rgb,
+    SharedString, StrikethroughStyle, Styled, StyledText, UnderlineStyle, Window, div, prelude::*,
+    px, rgb,
 };
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
@@ -140,9 +140,7 @@ fn parse_markdown(source: &str) -> Vec<BlockNode> {
                         });
                     }
                     Tag::Item => {
-                        block_stack.push_back(BlockContext::ListItem {
-                            blocks: Vec::new(),
-                        });
+                        block_stack.push_back(BlockContext::ListItem { blocks: Vec::new() });
                     }
                     Tag::Table(alignments) => {
                         table_alignments = alignments;
@@ -419,7 +417,9 @@ fn flush_inlines(
         match ctx {
             BlockContext::InlineContainer { inlines: target }
             | BlockContext::Paragraph { inlines: target }
-            | BlockContext::Heading { inlines: target, .. } => {
+            | BlockContext::Heading {
+                inlines: target, ..
+            } => {
                 target.extend(inlines);
                 return;
             }
@@ -451,17 +451,41 @@ fn add_block(
 }
 
 enum BlockContext {
-    Paragraph { inlines: Vec<InlineNode> },
-    Heading { level: HeadingLevel, inlines: Vec<InlineNode> },
-    BlockQuote { children: Vec<BlockNode> },
-    List { ordered: bool, start: Option<u64>, items: Vec<Vec<BlockNode>> },
-    ListItem { blocks: Vec<BlockNode> },
+    Paragraph {
+        inlines: Vec<InlineNode>,
+    },
+    Heading {
+        level: HeadingLevel,
+        inlines: Vec<InlineNode>,
+    },
+    BlockQuote {
+        children: Vec<BlockNode>,
+    },
+    List {
+        ordered: bool,
+        start: Option<u64>,
+        items: Vec<Vec<BlockNode>>,
+    },
+    ListItem {
+        blocks: Vec<BlockNode>,
+    },
     Table,
-    InlineContainer { inlines: Vec<InlineNode> },
-    Emphasis { children: Vec<InlineNode> },
-    Strong { children: Vec<InlineNode> },
-    Strikethrough { children: Vec<InlineNode> },
-    Link { url: SharedString, children: Vec<InlineNode> },
+    InlineContainer {
+        inlines: Vec<InlineNode>,
+    },
+    Emphasis {
+        children: Vec<InlineNode>,
+    },
+    Strong {
+        children: Vec<InlineNode>,
+    },
+    Strikethrough {
+        children: Vec<InlineNode>,
+    },
+    Link {
+        url: SharedString,
+        children: Vec<InlineNode>,
+    },
 }
 
 // ---- Renderer ----
@@ -592,7 +616,12 @@ fn collect_styled_inlines(
 fn render_styled_inlines(inlines: &[InlineNode]) -> StyledText {
     let mut text = String::new();
     let mut highlights = Vec::new();
-    collect_styled_inlines(inlines, HighlightStyle::default(), &mut text, &mut highlights);
+    collect_styled_inlines(
+        inlines,
+        HighlightStyle::default(),
+        &mut text,
+        &mut highlights,
+    );
     StyledText::new(text).with_highlights(highlights)
 }
 
@@ -681,7 +710,9 @@ fn render_block(block: &BlockNode) -> gpui::AnyElement {
                 .into_any_element()
         }
         BlockNode::CodeBlock { language, code } => {
-            let lang_label = language.clone().unwrap_or_else(|| SharedString::from("code"));
+            let lang_label = language
+                .clone()
+                .unwrap_or_else(|| SharedString::from("code"));
             div()
                 .flex()
                 .flex_col()
@@ -743,12 +774,7 @@ fn render_block(block: &BlockNode) -> gpui::AnyElement {
                     .flex()
                     .flex_row()
                     .gap_1()
-                    .child(
-                        div()
-                            .text_color(rgb(0x888888))
-                            .min_w(px(16.))
-                            .child(marker),
-                    )
+                    .child(div().text_color(rgb(0x888888)).min_w(px(16.)).child(marker))
                     .child(div().flex_1().children(render_blocks(item_blocks)))
                     .into_any_element()
             }))
@@ -790,7 +816,9 @@ fn render_table_row(
         .flex_row()
         .w_full()
         .when(is_header, |this| {
-            this.border_b_1().border_color(rgb(0x444444)).bg(rgb(0x252525))
+            this.border_b_1()
+                .border_color(rgb(0x444444))
+                .bg(rgb(0x252525))
         })
         .children(cells.iter().enumerate().map(|(i, cell)| {
             let text = render_inlines_text(cell);
@@ -802,16 +830,15 @@ fn render_table_row(
                 .flex_1()
                 .px_2()
                 .py_1()
-                .when(
-                    align == pulldown_cmark::Alignment::Center,
-                    |this| this.text_center(),
-                )
-                .when(
-                    align == pulldown_cmark::Alignment::Right,
-                    |this| this.text_right(),
-                )
+                .when(align == pulldown_cmark::Alignment::Center, |this| {
+                    this.text_center()
+                })
+                .when(align == pulldown_cmark::Alignment::Right, |this| {
+                    this.text_right()
+                })
                 .when(is_header, |this| {
-                    this.font_weight(FontWeight(600.0)).text_color(rgb(0xf0f0f0))
+                    this.font_weight(FontWeight(600.0))
+                        .text_color(rgb(0xf0f0f0))
                 })
                 .when(!is_header, |this| this.text_color(rgb(0xe5e5e5)))
                 .border_r_1()
@@ -867,6 +894,10 @@ mod tests {
         };
 
         assert_eq!(items.len(), 4);
-        assert!(items.iter().all(|item| matches!(item.as_slice(), [BlockNode::Paragraph { .. }])));
+        assert!(
+            items
+                .iter()
+                .all(|item| matches!(item.as_slice(), [BlockNode::Paragraph { .. }]))
+        );
     }
 }

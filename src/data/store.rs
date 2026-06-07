@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::path::PathBuf;
 
 pub struct Store {
@@ -90,14 +90,9 @@ impl Store {
                 .unwrap_or(false);
 
             if !applied {
+                self.conn.execute_batch(sql).map_err(StoreError::Rusqlite)?;
                 self.conn
-                    .execute_batch(sql)
-                    .map_err(StoreError::Rusqlite)?;
-                self.conn
-                    .execute(
-                        "INSERT INTO _migrations (name) VALUES (?1)",
-                        params![name],
-                    )
+                    .execute("INSERT INTO _migrations (name) VALUES (?1)", params![name])
                     .map_err(StoreError::Rusqlite)?;
             }
         }
@@ -291,7 +286,10 @@ impl Store {
     }
 
     pub fn default_workspace_dir(&self) -> PathBuf {
-        self.sessions_dir.parent().unwrap_or(&self.sessions_dir).join("workspace")
+        self.sessions_dir
+            .parent()
+            .unwrap_or(&self.sessions_dir)
+            .join("workspace")
     }
 
     pub fn toggle_pin(&self, id: i64) -> Result<bool, StoreError> {

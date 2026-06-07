@@ -26,7 +26,11 @@ pub fn format_relative_time(datetime_str: &str) -> String {
     if minutes < 1 {
         return "just now".to_string();
     } else if minutes < 60 {
-        return format!("{} minute{} ago", minutes, if minutes == 1 { "" } else { "s" });
+        return format!(
+            "{} minute{} ago",
+            minutes,
+            if minutes == 1 { "" } else { "s" }
+        );
     } else if hours < 24 {
         return format!("{} hour{} ago", hours, if hours == 1 { "" } else { "s" });
     } else if days < 7 {

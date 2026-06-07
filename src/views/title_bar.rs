@@ -1,7 +1,7 @@
 use gpui::{
-    Context, EventEmitter, Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels,
-    Render, SharedString, StatefulInteractiveElement, Styled, Window,
-    WindowControlArea, div, px, rgb,
+    Context, EventEmitter, Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement,
+    Pixels, Render, SharedString, StatefulInteractiveElement, Styled, Window, WindowControlArea,
+    div, px, rgb,
 };
 
 const TRAFFIC_LIGHT_LEFT_PADDING: f32 = 78.0;
@@ -59,24 +59,19 @@ impl Render for TitleBar {
             px(12.0)
         };
 
-        let mut title_content = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_2();
+        let mut title_content = div().flex().flex_row().items_center().gap_2();
 
         if let Some(icon_path) = match self.variant {
             TitleBarVariant::Home => Some(SharedString::from("logo.svg")),
             TitleBarVariant::Chat => None,
         } {
             title_content = title_content.child(
-                div()
-                    .child(
-                        gpui::svg()
-                            .path(icon_path)
-                            .size(px(20.))
-                            .text_color(rgb(0xe0e0e0)),
-                    )
+                div().child(
+                    gpui::svg()
+                        .path(icon_path)
+                        .size(px(20.))
+                        .text_color(rgb(0xe0e0e0)),
+                ),
             );
         }
 
@@ -122,12 +117,18 @@ impl Render for TitleBar {
             .on_mouse_down_out(cx.listener(|this: &mut Self, _, _, _| {
                 this.should_move = false;
             }))
-            .on_mouse_up(MouseButton::Left, cx.listener(|this: &mut Self, _, _, _| {
-                this.should_move = false;
-            }))
-            .on_mouse_down(MouseButton::Left, cx.listener(|this: &mut Self, _, _, _| {
-                this.should_move = true;
-            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this: &mut Self, _, _, _| {
+                    this.should_move = false;
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this: &mut Self, _, _, _| {
+                    this.should_move = true;
+                }),
+            )
             .on_mouse_move(cx.listener(|this: &mut Self, _, window, _| {
                 if this.should_move {
                     this.should_move = false;
@@ -168,7 +169,7 @@ impl Render for TitleBar {
                                     gpui::svg()
                                         .path("folder.svg")
                                         .size(px(16.))
-                                        .text_color(rgb(0x888888))
+                                        .text_color(rgb(0x888888)),
                                 )
                                 .hover(|style| style.text_color(rgb(0xcccccc)))
                                 .on_click(cx.listener(|_this: &mut Self, _, _, cx| {
@@ -198,7 +199,7 @@ impl Render for TitleBar {
                                     gpui::svg()
                                         .path("export.svg")
                                         .size(px(16.))
-                                        .text_color(rgb(0x888888))
+                                        .text_color(rgb(0x888888)),
                                 )
                                 .hover(|style| style.text_color(rgb(0xcccccc)))
                                 .on_click(cx.listener(|_this: &mut Self, _, _, cx| {
@@ -217,7 +218,11 @@ impl Render for TitleBar {
                         .items_center()
                         .h_full()
                         .flex_shrink_0()
-                        .pr(if cfg!(target_os = "macos") { px(12.0) } else { px(4.0) })
+                        .pr(if cfg!(target_os = "macos") {
+                            px(12.0)
+                        } else {
+                            px(4.0)
+                        })
                         .child(
                             div()
                                 .id("avatar-button")
@@ -226,9 +231,17 @@ impl Render for TitleBar {
                                 .justify_center()
                                 .size(px(26.))
                                 .rounded_full()
-                                .bg(if avatar_active { rgb(0x4f46e5) } else { rgb(0x6366f1) })
+                                .bg(if avatar_active {
+                                    rgb(0x4f46e5)
+                                } else {
+                                    rgb(0x6366f1)
+                                })
                                 .border_2()
-                                .border_color(if avatar_active { Into::<Hsla>::into(rgb(0x818cf8)) } else { Into::<Hsla>::into(rgb(0x6366f1)).alpha(0.0) })
+                                .border_color(if avatar_active {
+                                    Into::<Hsla>::into(rgb(0x818cf8))
+                                } else {
+                                    Into::<Hsla>::into(rgb(0x6366f1)).alpha(0.0)
+                                })
                                 .cursor_pointer()
                                 .text_color(rgb(0xffffff))
                                 .text_size(px(11.))
@@ -248,7 +261,7 @@ impl Render for TitleBar {
         #[cfg(not(target_os = "macos"))]
         {
             let is_maximized = window.is_maximized();
-            
+
             bar = bar.child(
                 div()
                     .flex()
@@ -264,29 +277,13 @@ impl Render for TitleBar {
                         }
                     })
                     .when(controls.minimize, |el| {
-                        el.child(caption_button(
-                            "\u{e921}",
-                            WindowControlArea::Min,
-                            height,
-                        ))
+                        el.child(caption_button("\u{e921}", WindowControlArea::Min, height))
                     })
                     .when(controls.maximize, |el| {
-                        let icon = if is_maximized {
-                            "\u{e923}"
-                        } else {
-                            "\u{e922}"
-                        };
-                        el.child(caption_button(
-                            icon,
-                            WindowControlArea::Max,
-                            height,
-                        ))
+                        let icon = if is_maximized { "\u{e923}" } else { "\u{e922}" };
+                        el.child(caption_button(icon, WindowControlArea::Max, height))
                     })
-                    .child(caption_button(
-                        "\u{e8bb}",
-                        WindowControlArea::Close,
-                        height,
-                    )),
+                    .child(caption_button("\u{e8bb}", WindowControlArea::Close, height)),
             );
         }
 
@@ -294,13 +291,9 @@ impl Render for TitleBar {
     }
 }
 
-fn caption_button(
-    icon: &str,
-    area: WindowControlArea,
-    height: Pixels,
-) -> impl IntoElement {
+fn caption_button(icon: &str, area: WindowControlArea, height: Pixels) -> impl IntoElement {
     let is_close = matches!(area, WindowControlArea::Close);
-    
+
     div()
         .id(match area {
             WindowControlArea::Close => "close",

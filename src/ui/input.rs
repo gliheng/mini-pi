@@ -4,8 +4,8 @@ use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, FocusHandle, Focusable, GlobalElementId, LayoutId, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ShapedLine,
-    SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, actions, div, fill,
-    hsla, point, prelude::*, px, relative, rgba, size,
+    SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, actions, div, fill, hsla,
+    point, prelude::*, px, relative, rgba, size,
 };
 use unicode_segmentation::*;
 
@@ -605,7 +605,9 @@ impl Element for TextElement {
         line.paint(bounds.origin, window.line_height(), window, cx)
             .unwrap();
 
-        if focus_handle.is_focused(window) && let Some(cursor) = prepaint.cursor.take() {
+        if focus_handle.is_focused(window)
+            && let Some(cursor) = prepaint.cursor.take()
+        {
             window.paint_quad(cursor);
         }
 
@@ -645,11 +647,7 @@ impl Render for TextInput {
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .line_height(px(20.))
             .text_size(px(14.))
-            .child(
-                div()
-                    .size_full()
-                    .child(TextElement { input: cx.entity() }),
-            )
+            .child(div().size_full().child(TextElement { input: cx.entity() }))
     }
 }
 
