@@ -7,9 +7,10 @@ use std::{
 use crate::views::title_bar::{TitleBarEvent, TitleBarVariant};
 use futures::StreamExt;
 use gpui::{
-    ClipboardItem, Context, FocusHandle, IntoElement, KeyDownEvent, ParentElement,
+    Bounds, ClipboardItem, Context, FocusHandle, IntoElement, KeyDownEvent, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
     PathPromptOptions, Render, ScrollHandle, SharedString, Styled, Task, Window, div, prelude::*,
-    px, rgb, svg,
+    canvas, fill, point, px, rgb, svg,
 };
 use uuid::Uuid;
 
@@ -49,6 +50,7 @@ pub struct ChatWindow {
     pub markdown_displays: Vec<Vec<Option<gpui::Entity<MarkdownRenderer>>>>,
     pub scroll_handle: ScrollHandle,
     pub scroll_locked: bool,
+    pub scrollbar_drag_offset_y: Option<Pixels>,
     pub workspaces: Vec<WorkspaceMeta>,
     pub selected_workspace_id: Option<i64>,
     pub show_workspace_manager: bool,
@@ -155,6 +157,7 @@ chat_input,
             scroll_handle: ScrollHandle::new(),
             at_mention_scroll_handle: ScrollHandle::new(),
             scroll_locked: true,
+            scrollbar_drag_offset_y: None,
             workspaces,
             selected_workspace_id,
             show_workspace_manager: false,
@@ -1073,6 +1076,101 @@ chat_input,
                     })),
             )
     }
+
+    fn render_messages_scrollbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let scroll_handle = self.scroll_handle.clone();
+        let entity = cx.entity();
+        div()
+            .id("messages-scrollbar")
+            .absolute()
+            .top_0()
+            .right_1()
+            .bottom_0()
+            .w(px(8.))
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |bounds, _, window, _| {
+                        let viewport_height = scroll_handle.bounds().size.height;
+                        let max_scroll = scroll_handle.max_offset().height;
+                        if viewport_height <= px(0.) || max_scroll <= px(0.) {
+                            return;
+                        }
+
+                        let track_bounds = Bounds::from_corners(
+                            point(bounds.left() + px(2.), bounds.top() + px(6.)),
+                            point(bounds.right() - px(2.), bounds.bottom() - px(6.)),
+                        );
+                        let track_height = track_bounds.size.height;
+                        if track_height <= px(0.) {
+                            return;
+                        }
+
+                        let content_height = viewport_height + max_scroll;
+                        let thumb_height =
+                            ((viewport_height / content_height) * track_height).clamp(px(36.), track_height);
+                        let progress = (-scroll_handle.offset().y / max_scroll).clamp(0., 1.);
+                        let thumb_top = track_bounds.top() + (track_height - thumb_height) * progress;
+                        let thumb_bounds = Bounds::from_corners(
+                            point(track_bounds.left(), thumb_top),
+                            point(track_bounds.right(), thumb_top + thumb_height),
+                        );
+
+                        window.on_mouse_event({
+                            let entity = entity.clone();
+                            move |ev: &MouseDownEvent, _, _, cx| {
+                                if !thumb_bounds.contains(&ev.position) {
+                                    return;
+                                }
+
+                                entity.update(cx, |this, _| {
+                                    this.scrollbar_drag_offset_y =
+                                        Some(ev.position.y - thumb_bounds.origin.y);
+                                });
+                            }
+                        });
+                        window.on_mouse_event({
+                            let entity = entity.clone();
+                            move |_: &MouseUpEvent, _, _, cx| {
+                                entity.update(cx, |this, _| {
+                                    this.scrollbar_drag_offset_y = None;
+                                });
+                            }
+                        });
+                        window.on_mouse_event({
+                            let entity = entity.clone();
+                            let scroll_handle = scroll_handle.clone();
+                            move |ev: &MouseMoveEvent, _, _, cx| {
+                                if !ev.dragging() {
+                                    return;
+                                }
+
+                                let Some(drag_offset_y) = entity.read(cx).scrollbar_drag_offset_y else {
+                                    return;
+                                };
+
+                                let draggable_height = (track_height - thumb_height).max(px(0.));
+                                if draggable_height <= px(0.) {
+                                    return;
+                                }
+
+                                let thumb_top = (ev.position.y - drag_offset_y)
+                                    .clamp(track_bounds.top(), track_bounds.bottom() - thumb_height);
+                                let progress = ((thumb_top - track_bounds.top()) / draggable_height)
+                                    .clamp(0., 1.);
+                                let offset_y = (max_scroll * progress).clamp(px(0.), max_scroll);
+                                scroll_handle.set_offset(point(px(0.), -offset_y));
+                                cx.notify(entity.entity_id());
+                            }
+                        });
+
+                        window.paint_quad(fill(track_bounds, rgb(0x2a2a2a)));
+                        window.paint_quad(fill(thumb_bounds, rgb(0x666666)));
+                    },
+                )
+                .size_full(),
+            )
+    }
 }
 
 impl Render for ChatWindow {
@@ -1210,203 +1308,212 @@ impl Render for ChatWindow {
             .child(self.title_bar.clone())
             .child(
                 div()
-                    .id("messages")
                     .flex_1()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll_handle)
-                    .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, window, _cx| {
-                        let delta = event.delta.pixel_delta(window.line_height());
-                        if this.scroll_locked && delta.y > gpui::px(0.) {
-                            this.scroll_locked = false;
-                        }
-                        if !this.scroll_locked {
-                            let offset_y = this.scroll_handle.offset().y;
-                            let max_y = this.scroll_handle.max_offset().height;
-                            if offset_y.abs() >= max_y - gpui::px(5.) {
-                                this.scroll_locked = true;
-                            }
-                        }
-                    }))
-                    .flex()
-                    .flex_col()
-                    .p_3()
-                    .gap_2()
-                    .children(
-                        self.messages.iter().enumerate().map(|(msg_idx, msg)| {
-                            let is_user = matches!(msg.role, Role::User);
-                            let msg_reasoning = reasoning_entities.get(msg_idx).cloned().unwrap_or_default();
-                            let msg_markdown = markdown_entities.get(msg_idx).cloned().unwrap_or_default();
-                            div()
-                                .flex()
-                                .w_full()
-                                .when(is_user, |this| this.justify_end())
-                                .when(!is_user, |this| this.justify_start())
-                                .child(
+                    .min_h(px(0.0))
+                    .relative()
+                    .child(
+                        div()
+                            .id("messages")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.scroll_handle)
+                            .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, window, cx| {
+                                let delta = event.delta.pixel_delta(window.line_height());
+                                if this.scroll_locked && delta.y > gpui::px(0.) {
+                                    this.scroll_locked = false;
+                                }
+                                if !this.scroll_locked {
+                                    let offset_y = this.scroll_handle.offset().y;
+                                    let max_y = this.scroll_handle.max_offset().height;
+                                    if offset_y.abs() >= max_y - gpui::px(5.) {
+                                        this.scroll_locked = true;
+                                    }
+                                }
+                                cx.notify();
+                            }))
+                            .flex()
+                            .flex_col()
+                            .p_3()
+                            .pr_4()
+                            .gap_2()
+                            .children(
+                                self.messages.iter().enumerate().map(|(msg_idx, msg)| {
+                                    let is_user = matches!(msg.role, Role::User);
+                                    let msg_reasoning = reasoning_entities.get(msg_idx).cloned().unwrap_or_default();
+                                    let msg_markdown = markdown_entities.get(msg_idx).cloned().unwrap_or_default();
                                     div()
                                         .flex()
-                                        .flex_col()
                                         .w_full()
-                                        .when(is_user, |this| this.items_end())
-                                        .gap_1()
-                                        .children(msg.parts.iter().enumerate().map(|(part_idx, part)| {
-                                            match part {
-                                                MessagePart::Text { text, state } => {
-                                                    let is_streaming_empty = *state == Some(PartState::Streaming) && text.is_empty();
-                                                    let markdown_entity = msg_markdown.get(part_idx).and_then(|e| e.clone());
-                                                    let text_to_copy: SharedString = text.clone();
-                                                    div()
-                                                        .flex()
-                                                        .flex_col()
-                                                        .gap_1()
-                                                        .child(
+                                        .when(is_user, |this| this.justify_end())
+                                        .when(!is_user, |this| this.justify_start())
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .flex_col()
+                                                .w_full()
+                                                .when(is_user, |this| this.items_end())
+                                                .gap_1()
+                                                .children(msg.parts.iter().enumerate().map(|(part_idx, part)| {
+                                                    match part {
+                                                        MessagePart::Text { text, state } => {
+                                                            let is_streaming_empty = *state == Some(PartState::Streaming) && text.is_empty();
+                                                            let markdown_entity = msg_markdown.get(part_idx).and_then(|e| e.clone());
+                                                            let text_to_copy: SharedString = text.clone();
                                                             div()
-                                                                .py_2()
-                                                                .rounded_md()
-                                                                .when(is_user, |this| {
-                                                                    this.px_3()
-                                                                        .bg(rgb(0x3b82f6))
-                                                                        .text_color(rgb(0xffffff))
-                                                                })
-                                                                .when(matches!(msg.role, Role::Assistant), |this| {
-                                                                    this.text_color(rgb(0xe5e5e5))
-                                                                })
-                                                                .text_sm()
-                                                                .when(is_streaming_empty, |this| {
-                                                                    this.child(text_loader())
-                                                                })
-                                                                .when(!is_streaming_empty, |this| {
-                                                                    if let Some(md) = markdown_entity {
-                                                                        this.child(md)
-                                                                    } else {
-                                                                        this.child(text.clone())
-                                                                    }
-                                                                })
-                                                        )
-                                                        .when(!is_user && !is_streaming_empty, |this| {
-                                                            this.child(
-                                                                div()
-                                                                    .id(("copy-btn", msg_idx as u64))
-                                                                    .flex()
-                                                                    .items_center()
-                                                                    .cursor_pointer()
-                                                                    .child(
-                                                                        svg()
-                                                                            .path("clipboard.svg")
-                                                                            .size(px(12.))
-                                                                            .text_color(rgb(0x888888))
-                                                                            .hover(|style| style.text_color(rgb(0xcccccc))),
+                                                                .flex()
+                                                                .flex_col()
+                                                                .gap_1()
+                                                                .child(
+                                                                    div()
+                                                                        .py_2()
+                                                                        .rounded_md()
+                                                                        .when(is_user, |this| {
+                                                                            this.px_3()
+                                                                                .bg(rgb(0x3b82f6))
+                                                                                .text_color(rgb(0xffffff))
+                                                                        })
+                                                                        .when(matches!(msg.role, Role::Assistant), |this| {
+                                                                            this.text_color(rgb(0xe5e5e5))
+                                                                        })
+                                                                        .text_sm()
+                                                                        .when(is_streaming_empty, |this| {
+                                                                            this.child(text_loader())
+                                                                        })
+                                                                        .when(!is_streaming_empty, |this| {
+                                                                            if let Some(md) = markdown_entity {
+                                                                                this.child(md)
+                                                                            } else {
+                                                                                this.child(text.clone())
+                                                                            }
+                                                                        })
+                                                                )
+                                                                .when(!is_user && !is_streaming_empty, |this| {
+                                                                    this.child(
+                                                                        div()
+                                                                            .id(("copy-btn", msg_idx as u64))
+                                                                            .flex()
+                                                                            .items_center()
+                                                                            .cursor_pointer()
+                                                                            .child(
+                                                                                svg()
+                                                                                    .path("clipboard.svg")
+                                                                                    .size(px(12.))
+                                                                                    .text_color(rgb(0x888888))
+                                                                                    .hover(|style| style.text_color(rgb(0xcccccc))),
+                                                                            )
+                                                                            .on_click(cx.listener(move |_this, _, _window, cx| {
+                                                                                cx.write_to_clipboard(ClipboardItem::new_string(text_to_copy.to_string()));
+                                                                            }))
                                                                     )
-                                                                    .on_click(cx.listener(move |_this, _, _window, cx| {
-                                                                        cx.write_to_clipboard(ClipboardItem::new_string(text_to_copy.to_string()));
-                                                                    }))
-                                                            )
-                                                        })
-                                                }
-                                                MessagePart::Reasoning { .. } => {
-                                                    let reasoning_entity = msg_reasoning.get(part_idx).and_then(|e| e.clone());
-                                                    div()
-                                                        .flex()
-                                                        .flex_col()
-                                                        .w_full()
-                                                        .when(reasoning_entity.is_some(), |this| {
-                                                            this.child(reasoning_entity.unwrap())
-                                                        })
-                                                }
-                                                MessagePart::ToolCall { name, args, .. } => {
-                                                    div()
-                                                        .flex()
-                                                        .w_full()
-                                                        .justify_start()
-                                                        .child(
+                                                                })
+                                                        }
+                                                        MessagePart::Reasoning { .. } => {
+                                                            let reasoning_entity = msg_reasoning.get(part_idx).and_then(|e| e.clone());
                                                             div()
-                                                                .px_3()
-                                                                .py_1()
-                                                                .rounded_md()
-                                                                .bg(rgb(0x3b2818))
-                                                                .text_color(rgb(0xfbbf24))
-                                                                .text_xs()
+                                                                .flex()
+                                                                .flex_col()
                                                                 .w_full()
-                                                                .child(format!("⚙ {} {}", name, args)),
-                                                        )
-                                                }
-                                                MessagePart::ToolResult { name, output, .. } => {
-                                                    div()
-                                                        .flex()
-                                                        .w_full()
-                                                        .justify_start()
-                                                        .child(
+                                                                .when(reasoning_entity.is_some(), |this| {
+                                                                    this.child(reasoning_entity.unwrap())
+                                                                })
+                                                        }
+                                                        MessagePart::ToolCall { name, args, .. } => {
                                                             div()
-                                                                .px_3()
-                                                                .py_1()
-                                                                .rounded_md()
-                                                                .bg(rgb(0x1a1a2e))
-                                                                .text_color(rgb(0xa5b4fc))
-                                                                .text_xs()
+                                                                .flex()
                                                                 .w_full()
-                                                                .child(format!("↳ {}: {}", name, output)),
-                                                        )
-                                                }
-                                            }
-                                        }))
-                                )
-                        })
-                    )
-                    .when(self.messages.is_empty(), |el| {
-                        el.items_center()
-                            .justify_center()
-                            .child(
-                                svg()
-                                    .path("logo.svg")
-                                    .text_color(rgb(0x252525))
-                                    .size(px(180.)),
+                                                                .justify_start()
+                                                                .child(
+                                                                    div()
+                                                                        .px_3()
+                                                                        .py_1()
+                                                                        .rounded_md()
+                                                                        .bg(rgb(0x3b2818))
+                                                                        .text_color(rgb(0xfbbf24))
+                                                                        .text_xs()
+                                                                        .w_full()
+                                                                        .child(format!("⚙ {} {}", name, args)),
+                                                                )
+                                                        }
+                                                        MessagePart::ToolResult { name, output, .. } => {
+                                                            div()
+                                                                .flex()
+                                                                .w_full()
+                                                                .justify_start()
+                                                                .child(
+                                                                    div()
+                                                                        .px_3()
+                                                                        .py_1()
+                                                                        .rounded_md()
+                                                                        .bg(rgb(0x1a1a2e))
+                                                                        .text_color(rgb(0xa5b4fc))
+                                                                        .text_xs()
+                                                                        .w_full()
+                                                                        .child(format!("↳ {}: {}", name, output)),
+                                                                )
+                                                        }
+                                                    }
+                                                }))
+                                        )
+                                })
                             )
-                    })
-                    .when(is_loading, |el| {
-                        el.child(
-                            div()
-                                .flex()
-                                .justify_center()
-                                .child(
+                            .when(self.messages.is_empty(), |el| {
+                                el.items_center()
+                                    .justify_center()
+                                    .child(
+                                        svg()
+                                            .path("logo.svg")
+                                            .text_color(rgb(0x252525))
+                                            .size(px(180.)),
+                                    )
+                            })
+                            .when(is_loading, |el| {
+                                el.child(
                                     div()
+                                        .flex()
+                                        .justify_center()
+                                        .child(
+                                            div()
+                                                .px_3()
+                                                .py_1()
+                                                .rounded_md()
+                                                .bg(rgb(0x252525))
+                                                .text_color(rgb(0x888888))
+                                                .text_xs()
+                                                .child(loader()),
+                                        ),
+                                )
+                            })
+                            .when(is_streaming, |el| {
+                                el.child(
+                                    div()
+                                        .flex()
+                                        .w_full()
                                         .px_3()
                                         .py_1()
-                                        .rounded_md()
-                                        .bg(rgb(0x252525))
                                         .text_color(rgb(0x888888))
                                         .text_xs()
-                                        .child(loader()),
-                                ),
-                        )
-                    })
-                    .when(is_streaming, |el| {
-                        el.child(
-                            div()
-                                .flex()
-                                .w_full()
-                                .px_3()
-                                .py_1()
-                                .text_color(rgb(0x888888))
-                                .text_xs()
-                                .child(text_loader()),
-                        )
-                    })
-                    .when(is_error, |el| {
-                        el.child(
-                            div()
-                                .flex()
-                                .justify_center()
-                                .child(
+                                        .child(text_loader()),
+                                )
+                            })
+                            .when(is_error, |el| {
+                                el.child(
                                     div()
-                                        .px_3()
-                                        .py_1()
-                                        .rounded_md()
-                                        .bg(rgb(0x7f1d1d))
-                                        .text_color(rgb(0xfca5a5))
-                                        .text_xs()
-                                        .child(status.unwrap_or_default()),
-                                ),
-                        )
-                    }),
+                                        .flex()
+                                        .justify_center()
+                                        .child(
+                                            div()
+                                                .px_3()
+                                                .py_1()
+                                                .rounded_md()
+                                                .bg(rgb(0x7f1d1d))
+                                                .text_color(rgb(0xfca5a5))
+                                                .text_xs()
+                                                .child(status.unwrap_or_default()),
+                                        ),
+                                )
+                            }),
+                    )
+                    .child(self.render_messages_scrollbar(cx)),
             )
             .when(self.pi.is_none(), |el| {
                 el.child(
