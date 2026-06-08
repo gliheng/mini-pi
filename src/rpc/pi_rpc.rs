@@ -1,7 +1,9 @@
 use std::io::{BufRead, Write};
-use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 use crate::utils::format::truncate_str;
 
