@@ -19,8 +19,8 @@ use crate::core::app::AppStore;
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::data::store::{Store, ThreadMeta, WorkspaceMeta};
 use crate::rpc::pi_rpc::{BridgeEvent, PiRpc};
+use crate::ui::chat_input::ChatInput;
 use crate::ui::dropdown::{Direction, Dropdown, DropdownEvent, DropdownItem};
-use crate::ui::input::TextInput;
 use crate::ui::loader::{loader, text_loader};
 use crate::ui::markdown::MarkdownRenderer;
 use crate::utils::format::truncate_str;
@@ -33,11 +33,12 @@ pub struct ChatWindow {
     pub session_file: String,
     pub title_bar: gpui::Entity<TitleBar>,
     pub messages: Vec<Message>,
-    pub input: gpui::Entity<TextInput>,
+    pub chat_input: gpui::Entity<ChatInput>,
     pub focus_handle: FocusHandle,
     pub state: ChatState,
     pub store: Arc<Store>,
     pub pi: Option<PiRpc>,
+    pub at_mention_scroll_handle: ScrollHandle,
     pub _pi_task: Option<Task<()>>,
     pub selected_model: Option<String>,
     pub thinking_level: Option<String>,
@@ -64,7 +65,7 @@ impl ChatWindow {
                 }
             })
             .unwrap_or_else(|| "New Thread".into());
-        let input = cx.new(|cx| TextInput::new(cx, "Type a message..."));
+        let chat_input = cx.new(|cx| ChatInput::new(cx, "Type a message..."));
         let title_bar = cx.new(|_| TitleBar::new(title.clone(), TitleBarVariant::Chat));
 
         let session_file: String =
@@ -138,7 +139,7 @@ impl ChatWindow {
             session_file,
             title_bar: title_bar.clone(),
             messages: vec![],
-            input,
+chat_input,
             focus_handle: cx.focus_handle(),
             state: ChatState::Idle,
             store: store.clone(),
@@ -151,6 +152,7 @@ impl ChatWindow {
             reasoning_displays: vec![],
             markdown_displays: vec![],
             scroll_handle: ScrollHandle::new(),
+            at_mention_scroll_handle: ScrollHandle::new(),
             scroll_locked: true,
             workspaces,
             selected_workspace_id,
@@ -161,6 +163,21 @@ impl ChatWindow {
         if is_restoring {
             window.spawn_pi(true, cx);
         }
+
+        // Set initial workspace on chat input
+        if let Some(ws_id) = window.selected_workspace_id {
+            if let Some(ws) = window.workspaces.iter().find(|ws| ws.id == ws_id) {
+                window.chat_input.update(cx, |ci, cx| {
+                    ci.set_workspace(ws.id, PathBuf::from(&ws.path), ws.name.clone(), cx);
+                });
+            }
+        }
+
+        // Subscribe to chat input events (re-render on changes)
+        cx.observe(&window.chat_input, |_, _, cx| {
+            cx.notify();
+        })
+        .detach();
 
         // Subscribe to title bar events
         cx.subscribe(
@@ -827,7 +844,14 @@ impl ChatWindow {
     }
 
     pub fn send_message(&mut self, _: &SendMessage, _window: &mut Window, cx: &mut Context<Self>) {
-        let content = self.input.read(cx).content().clone();
+        if self.chat_input.read(cx).is_just_selected_mention() {
+            self.chat_input.update(cx, |ci, _| ci.clear_just_selected_mention());
+            return;
+        }
+        if self.chat_input.read(cx).is_popup_visible() {
+            return;
+        }
+        let content = self.chat_input.read(cx).content().clone();
         eprintln!("[mini-pi] send_message: {} chars", content.len());
         if content.is_empty() {
             return;
@@ -847,7 +871,7 @@ impl ChatWindow {
                 state: Some(PartState::Done),
             }],
         });
-        self.input.update(cx, |input, _| input.reset());
+        self.chat_input.update(cx, |ci, cx| ci.reset(cx));
 
         let mut needs_refresh = false;
 
@@ -910,6 +934,114 @@ impl ChatWindow {
 
         cx.notify();
     }
+
+    fn render_at_mention_popup(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let chat_input = self.chat_input.read(cx);
+        let items = chat_input.popup_items();
+        let highlighted = chat_input.popup_highlighted();
+
+        if !items.is_empty() && highlighted < items.len() {
+            self.at_mention_scroll_handle.scroll_to_item(highlighted);
+        }
+
+        div()
+            .relative()
+            .px_3()
+            .pb_1()
+            .child(
+                div()
+                    .id("at-mention-overlay")
+                    .absolute()
+                    .occlude()
+                    .top(px(-5000.))
+                    .left(px(-5000.))
+                    .w(px(10000.))
+                    .h(px(10000.))
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, _, cx| {
+                        this.chat_input.update(cx, |ci, cx| ci.close_popup(cx));
+                    })),
+            )
+            .child(
+                div()
+                    .id("at-mention-popup")
+                    .track_scroll(&self.at_mention_scroll_handle)
+                    .absolute()
+                    .occlude()
+                    .bottom(px(0.))
+                    .left(px(12.))
+                    .right(px(12.))
+                    .max_h(px(240.))
+                    .overflow_y_scroll()
+                    .bg(rgb(0x1e1e1e))
+                    .border_1()
+                    .border_color(rgb(0x3b82f6))
+                    .rounded_md()
+                    .py_1()
+                    .shadow(vec![gpui::BoxShadow {
+                        color: gpui::rgba(0x000000aa).into(),
+                        offset: gpui::point(px(0.), px(4.)),
+                        blur_radius: px(12.),
+                        spread_radius: px(0.),
+                    }])
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
+                    .children(items.iter().enumerate().map(|(idx, item)| {
+                        let is_highlighted = idx == highlighted;
+                        let icon = if item.is_dir { "folder.svg" } else { "file.svg" };
+                        let label: SharedString = item.name.clone().into();
+                        let detail: SharedString = if item.relative_path != item.name {
+                            item.relative_path.clone().into()
+                        } else {
+                            "".into()
+                        };
+                        let item_idx = idx;
+                        div()
+                            .id(SharedString::from(format!("mention-{}", idx)))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .px_3()
+                            .py_1p5()
+                            .cursor_pointer()
+                            .when(is_highlighted, |s| s.bg(rgb(0x2a2a2a)))
+                            .hover(|style| style.bg(rgb(0x2a2a2a)))
+                            .child(
+                                svg()
+                                    .path(icon)
+                                    .size(px(14.))
+                                    .text_color(if is_highlighted { rgb(0x3b82f6) } else { rgb(0x888888) }),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_baseline()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(if is_highlighted { rgb(0xffffff) } else { rgb(0xcccccc) })
+                                            .child(label),
+                                    )
+                                    .when(!detail.is_empty(), |s| {
+                                        s.child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(0x666666))
+                                                .child(detail),
+                                        )
+                                    }),
+                            )
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.chat_input.update(cx, |ci, cx| {
+                                    ci.select_mention_at(item_idx, cx);
+                                });
+                            }))
+                    })),
+            )
+    }
 }
 
 impl Render for ChatWindow {
@@ -923,7 +1055,7 @@ impl Render for ChatWindow {
         let is_error = matches!(self.state, ChatState::Error(_));
         let is_loading = matches!(self.state, ChatState::Loading);
         let is_streaming = matches!(self.state, ChatState::Streaming);
-        let input_empty = self.input.read(cx).content().is_empty();
+        let input_empty = self.chat_input.read(cx).content().is_empty();
         let is_disabled = is_streaming || is_loading || input_empty;
 
         // Sync dropdown labels with current state
@@ -1027,13 +1159,16 @@ impl Render for ChatWindow {
             .on_action(cx.listener(Self::send_message))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
                 if event.keystroke.key == "escape" {
-                    if this.show_workspace_manager {
+                    if this.chat_input.read(cx).is_popup_visible() {
+                        this.chat_input.update(cx, |ci, cx| ci.close_popup(cx));
+                    } else if this.show_workspace_manager {
                         this.close_workspace_manager(cx);
-                    }
-                    let model_open = this.model_dropdown.read(cx).is_open;
-                    let thinking_open = this.thinking_dropdown.read(cx).is_open;
-                    if model_open || thinking_open {
-                        // Dropdowns handle their own escape; this is a fallback
+                    } else {
+                        let model_open = this.model_dropdown.read(cx).is_open;
+                        let thinking_open = this.thinking_dropdown.read(cx).is_open;
+                        if model_open || thinking_open {
+                            // Dropdowns handle their own escape; this is a fallback
+                        }
                     }
                 }
             }))
@@ -1306,8 +1441,16 @@ impl Render for ChatWindow {
                                 .child(name)
                                 .on_click(cx.listener(move |this, _, _window, cx| {
                                     this.selected_workspace_id = Some(ws_id);
+                                    let ws_dir = this.workspaces.iter().find(|w| w.id == ws_id).map(|w| PathBuf::from(&w.path));
+                                    let ws_name_for_global = ws_name.clone();
+                                    let ws_name_for_input = ws_name.clone();
+                                    if let Some(dir) = ws_dir {
+                                        this.chat_input.update(cx, |ci, cx| {
+                                            ci.set_workspace(ws_id, dir, ws_name_for_input, cx);
+                                        });
+                                    }
                                     cx.update_global(|app_store: &mut AppStore, _| {
-                                        app_store.config.default_workspace_name = Some(ws_name.clone());
+                                        app_store.config.default_workspace_name = Some(ws_name_for_global);
                                         if let Err(e) = app_store.config.save() {
                                             eprintln!("[mini-pi] failed to save config: {}", e);
                                         }
@@ -1321,6 +1464,9 @@ impl Render for ChatWindow {
                 div()
                     .px_3()
                     .pb_3()
+                    .when(self.chat_input.read(cx).is_popup_visible(), |this| {
+                        this.child(self.render_at_mention_popup(cx))
+                    })
                     .child(
                         div()
                             .bg(rgb(0x252525))
@@ -1336,7 +1482,7 @@ impl Render for ChatWindow {
                                 div()
                                     .flex()
                                     .flex_1()
-                                    .child(self.input.clone())
+                                    .child(self.chat_input.clone())
                             )
                             .child(
                                 div()

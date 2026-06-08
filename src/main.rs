@@ -53,6 +53,22 @@ fn main() {
                 KeyBinding::new("end", ui::input::End, None),
                 KeyBinding::new("ctrl-a", ui::input::Home, None),
                 KeyBinding::new("ctrl-e", ui::input::End, None),
+                KeyBinding::new("backspace", ui::chat_input::Backspace, Some("ChatInput")),
+                KeyBinding::new("delete", ui::chat_input::Delete, Some("ChatInput")),
+                KeyBinding::new("left", ui::chat_input::Left, Some("ChatInput")),
+                KeyBinding::new("right", ui::chat_input::Right, Some("ChatInput")),
+                KeyBinding::new("shift-left", ui::chat_input::SelectLeft, Some("ChatInput")),
+                KeyBinding::new("shift-right", ui::chat_input::SelectRight, Some("ChatInput")),
+                KeyBinding::new("ctrl-f", ui::chat_input::Forward, Some("ChatInput")),
+                KeyBinding::new("ctrl-b", ui::chat_input::Backward, Some("ChatInput")),
+                KeyBinding::new("cmd-a", ui::chat_input::SelectAll, Some("ChatInput")),
+                KeyBinding::new("cmd-v", ui::chat_input::Paste, Some("ChatInput")),
+                KeyBinding::new("cmd-c", ui::chat_input::CopyText, Some("ChatInput")),
+                KeyBinding::new("cmd-x", ui::chat_input::Cut, Some("ChatInput")),
+                KeyBinding::new("home", ui::chat_input::Home, Some("ChatInput")),
+                KeyBinding::new("end", ui::chat_input::End, Some("ChatInput")),
+                KeyBinding::new("ctrl-a", ui::chat_input::Home, Some("ChatInput")),
+                KeyBinding::new("ctrl-e", ui::chat_input::End, Some("ChatInput")),
             ]);
 
             cx.on_window_closed(|cx| {

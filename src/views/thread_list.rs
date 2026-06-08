@@ -73,7 +73,7 @@ impl Render for ThreadItem {
                 cx.open_window(custom_window_options(Some(bounds)), move |window, cx| {
                     cx.new(|cx| {
                         let chat = ChatWindow::new(cx, Some(&thread_meta), store.clone());
-                        let input_handle = chat.input.read(cx).focus_handle(cx);
+                        let input_handle = chat.chat_input.read(cx).focus_handle(cx);
                         window.focus(&input_handle);
                         chat
                     })
@@ -432,7 +432,7 @@ impl Render for ThreadList {
                                     |window, cx| {
                                         cx.new(|cx| {
                                             let chat = ChatWindow::new(cx, None, store.clone());
-                                            let input_handle = chat.input.read(cx).focus_handle(cx);
+                                            let input_handle = chat.chat_input.read(cx).focus_handle(cx);
                                             window.focus(&input_handle);
                                             chat
                                         })
