@@ -24,6 +24,7 @@ use crate::ui::dropdown::{Direction, Dropdown, DropdownEvent, DropdownItem};
 use crate::ui::loader::{loader, text_loader};
 use crate::ui::markdown::MarkdownRenderer;
 use crate::utils::format::truncate_str;
+use crate::utils::llm::generate_title;
 use crate::views::reasoning::Reasoning;
 use crate::views::title_bar::TitleBar;
 use crate::views::workspace_manager::{WorkspaceManager, WorkspaceManagerEvent};
@@ -905,15 +906,45 @@ chat_input,
             .iter()
             .filter(|m| matches!(m.role, Role::User))
             .count();
-        let title: String = if user_count == 1 {
-            content.chars().take(80).collect()
+        let (title, is_first_message) = if user_count == 1 {
+            let temp_title: String = content.chars().take(80).collect();
+
+            let content_clone = content.clone();
+            let weak = cx.entity().downgrade();
+            cx.spawn(async move |_, cx| {
+                let result = smol::unblock(move || generate_title(&content_clone)).await;
+                match result {
+                    Ok(title) => {
+                        let _ = weak.update(cx, |window, cx| {
+                            if let Some(tid) = window.thread_id {
+                                let _ = window
+                                    .store
+                                    .update_thread(tid, Some(&title), None, None, None, None);
+                            }
+                            window.title_bar.update(cx, |tb, _| {
+                                tb.title = title.into();
+                            });
+                            cx.update_global(|_: &mut AppStore, _| {});
+                            cx.notify();
+                        });
+                    }
+                    Err(e) => {
+                        eprintln!("[mini-pi] failed to generate title: {}", e);
+                    }
+                }
+            })
+            .detach();
+
+            (temp_title, true)
         } else {
-            self.store
+            let existing_title = self
+                .store
                 .get_thread(tid)
                 .ok()
                 .flatten()
                 .map(|t| t.title)
-                .unwrap_or_default()
+                .unwrap_or_default();
+            (existing_title, false)
         };
         let preview: String = content.chars().take(120).collect();
         let _ = self
