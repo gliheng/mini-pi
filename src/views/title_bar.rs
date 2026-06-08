@@ -263,6 +263,7 @@ impl Render for TitleBar {
                         .items_center()
                         .h_full()
                         .flex_shrink_0()
+                        .pr(px(8.0))
                         .child(
                             div()
                                 .id("export-button")
@@ -358,7 +359,7 @@ impl Render for TitleBar {
                     .items_center()
                     .h_full()
                     .flex_shrink_0()
-                    .gap(px(4.0))
+                    .gap(px(8.0))
                     .when(controls.minimize, |el| {
                         el.child(caption_button_svg(
                             "minimize.svg",
