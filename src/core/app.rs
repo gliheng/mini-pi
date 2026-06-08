@@ -1,8 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use gpui::{
-    AnyWindowHandle, Bounds, Global, TitlebarOptions, WindowBackgroundAppearance, WindowBounds,
-    WindowDecorations, WindowOptions, point, px,
+    point, px, AnyWindowHandle, Bounds, Global, TitlebarOptions, WindowBackgroundAppearance,
+    WindowBounds, WindowDecorations, WindowOptions,
 };
 
 use crate::config::app_config::AppConfig;
@@ -24,10 +24,10 @@ pub fn custom_window_options(bounds: Option<Bounds<gpui::Pixels>>) -> WindowOpti
             appears_transparent: true,
             traffic_light_position: Some(point(px(9.0), px(9.0))),
         }),
-        window_decorations: if cfg!(target_os = "linux") {
-            Some(WindowDecorations::Client)
-        } else {
+        window_decorations: if cfg!(target_os = "macos") {
             None
+        } else {
+            Some(WindowDecorations::Client)
         },
         window_background: WindowBackgroundAppearance::Transparent,
         ..Default::default()

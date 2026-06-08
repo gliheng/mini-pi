@@ -1,8 +1,8 @@
+use gpui::prelude::FluentBuilder;
 use gpui::{
-    AppContext, Context, EventEmitter, Hsla, InteractiveElement, IntoElement, MouseButton,
-    ParentElement,
-    Pixels, Render, SharedString, StatefulInteractiveElement, Styled, Window, WindowControlArea,
-    div, px, rgb,
+    div, px, rgb, AppContext, Context, EventEmitter, Hsla, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,
+    Window, WindowControlArea,
 };
 #[cfg(target_os = "macos")]
 use objc::{msg_send, sel, sel_impl};
@@ -194,7 +194,7 @@ impl Render for TitleBar {
                                 .size(px(16.))
                                 .text_color(if pinned { rgb(0x4f46e5) } else { rgb(0x888888) }),
                         )
-                        .hover(|style| style.text_color(rgb(0xcccccc)))
+                        .hover(|style| style.bg(rgb(0x333333)).text_color(rgb(0xcccccc)))
                         .tooltip(move |_, cx| {
                             cx.new(|_| TitleBarTooltip {
                                 label: if pinned {
@@ -207,7 +207,11 @@ impl Render for TitleBar {
                         })
                         .on_click(cx.listener(|this: &mut Self, _, window, _cx| {
                             this.pinned = !this.pinned;
-                            #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+                            #[cfg(any(
+                                target_os = "macos",
+                                target_os = "windows",
+                                target_os = "linux"
+                            ))]
                             set_window_level(window, this.pinned);
                         })),
                 ),
@@ -238,7 +242,7 @@ impl Render for TitleBar {
                                         .size(px(16.))
                                         .text_color(rgb(0x888888)),
                                 )
-                                .hover(|style| style.text_color(rgb(0xcccccc)))
+                                .hover(|style| style.bg(rgb(0x333333)).text_color(rgb(0xcccccc)))
                                 .tooltip(|_, cx| {
                                     cx.new(|_| TitleBarTooltip {
                                         label: "Open Workspace".into(),
@@ -274,7 +278,7 @@ impl Render for TitleBar {
                                         .size(px(16.))
                                         .text_color(rgb(0x888888)),
                                 )
-                                .hover(|style| style.text_color(rgb(0xcccccc)))
+                                .hover(|style| style.bg(rgb(0x333333)).text_color(rgb(0xcccccc)))
                                 .tooltip(|_, cx| {
                                     cx.new(|_| TitleBarTooltip {
                                         label: "Export HTML".into(),
@@ -354,21 +358,27 @@ impl Render for TitleBar {
                     .items_center()
                     .h_full()
                     .flex_shrink_0()
-                    .map(|el| {
-                        if cfg!(target_os = "windows") {
-                            el.font_family("Segoe Fluent Icons")
-                        } else {
-                            el
-                        }
-                    })
+                    .gap(px(4.0))
                     .when(controls.minimize, |el| {
-                        el.child(caption_button("\u{e921}", WindowControlArea::Min, height))
+                        el.child(caption_button_svg(
+                            "minimize.svg",
+                            WindowControlArea::Min,
+                            height,
+                        ))
                     })
                     .when(controls.maximize, |el| {
-                        let icon = if is_maximized { "\u{e923}" } else { "\u{e922}" };
-                        el.child(caption_button(icon, WindowControlArea::Max, height))
+                        let icon = if is_maximized {
+                            "restore.svg"
+                        } else {
+                            "maximize.svg"
+                        };
+                        el.child(caption_button_svg(icon, WindowControlArea::Max, height))
                     })
-                    .child(caption_button("\u{e8bb}", WindowControlArea::Close, height)),
+                    .child(caption_button_svg(
+                        "close.svg",
+                        WindowControlArea::Close,
+                        height,
+                    )),
             );
         }
 
@@ -376,7 +386,11 @@ impl Render for TitleBar {
     }
 }
 
-fn caption_button(icon: &str, area: WindowControlArea, height: Pixels) -> impl IntoElement {
+fn caption_button_svg(
+    icon_path: impl Into<SharedString>,
+    area: WindowControlArea,
+    height: Pixels,
+) -> impl IntoElement {
     let is_close = matches!(area, WindowControlArea::Close);
 
     div()
@@ -393,7 +407,6 @@ fn caption_button(icon: &str, area: WindowControlArea, height: Pixels) -> impl I
         .justify_center()
         .w(px(46.))
         .h(height)
-        .text_size(px(WINDOWS_ICON_SIZE))
         .text_color(rgb(0x999999))
         .hover(move |s: gpui::StyleRefinement| {
             if is_close {
@@ -409,7 +422,18 @@ fn caption_button(icon: &str, area: WindowControlArea, height: Pixels) -> impl I
                 s.bg(rgb(0x444444)).text_color(rgb(0xffffff))
             }
         })
-        .child(icon.to_string())
+        .on_click(move |_event, window, _cx| match area {
+            WindowControlArea::Close => window.remove_window(),
+            WindowControlArea::Max => window.zoom_window(),
+            WindowControlArea::Min => window.minimize_window(),
+            _ => {}
+        })
+        .child(
+            gpui::svg()
+                .path(icon_path)
+                .size(px(10.))
+                .text_color(rgb(0x999999)),
+        )
 }
 
 #[cfg(target_os = "macos")]
@@ -425,7 +449,11 @@ fn set_window_level(window: &Window, pinned: bool) {
             let ns_view = appkit.ns_view.as_ptr() as *mut Object;
             unsafe {
                 let ns_window: *mut Object = msg_send![ns_view, window];
-                let level = if pinned { NSFLOATING_WINDOW_LEVEL } else { NSNORMAL_WINDOW_LEVEL };
+                let level = if pinned {
+                    NSFLOATING_WINDOW_LEVEL
+                } else {
+                    NSNORMAL_WINDOW_LEVEL
+                };
                 let () = msg_send![ns_window, setLevel: level];
             }
         }
@@ -485,5 +513,3 @@ fn set_window_level(_window: &Window, pinned: bool) {
         ])
         .spawn();
 }
-
-
