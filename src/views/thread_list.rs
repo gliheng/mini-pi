@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use gpui::{
-    Bounds, BoxShadow, Context, FocusHandle, Focusable, Hsla, IntoElement, ParentElement, Render,
-    SharedString, Styled, Window, div, linear_color_stop, linear_gradient, point, prelude::*, px,
-    rgb, size, svg,
+    AnyWindowHandle, Bounds, BoxShadow, Context, FocusHandle, Focusable, Hsla, IntoElement,
+    ParentElement, Render, SharedString, Styled, Window, div, linear_color_stop, linear_gradient,
+    point, prelude::*, px, rgb, size, svg,
 };
 
 use crate::core::actions::CloseWindow;
@@ -67,18 +67,41 @@ impl Render for ThreadItem {
             .items_center()
             .gap_2()
             .on_click(cx.listener(move |this, _, _, cx| {
+                let thread_id = this.thread.id;
                 let thread_meta = (*this.thread).clone();
                 let store = this.store.clone();
                 let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
-                cx.open_window(custom_window_options(Some(bounds)), move |window, cx| {
-                    cx.new(|cx| {
-                        let chat = ChatWindow::new(cx, Some(&thread_meta), store.clone());
-                        let input_handle = chat.chat_input.read(cx).focus_handle(cx);
-                        window.focus(&input_handle);
-                        chat
+
+                let existing_window: Option<AnyWindowHandle> = cx
+                    .update_global::<AppStore, _>(|app_store, _| {
+                        app_store.thread_windows.get(&thread_id).copied()
+                    });
+
+                if let Some(handle) = existing_window {
+                    let still_open = handle.update(cx, |_view: gpui::AnyView, window: &mut Window, _app: &mut gpui::App| {
+                        window.activate_window();
+                    });
+                    if still_open.is_ok() {
+                        return;
+                    }
+                    cx.update_global::<AppStore, _>(|app_store, _| {
+                        app_store.thread_windows.remove(&thread_id);
+                    });
+                }
+
+                let handle = cx
+                    .open_window(custom_window_options(Some(bounds)), move |window, cx| {
+                        cx.new(|cx| {
+                            let chat = ChatWindow::new(cx, Some(&thread_meta), store.clone());
+                            let input_handle = chat.chat_input.read(cx).focus_handle(cx);
+                            window.focus(&input_handle);
+                            chat
+                        })
                     })
-                })
-                .unwrap();
+                    .unwrap();
+                cx.update_global::<AppStore, _>(|app_store, _| {
+                    app_store.thread_windows.insert(thread_id, handle.into());
+                });
             }))
             .on_hover(cx.listener(move |this, hovered: &bool, _, _cx| {
                 this.hovered = *hovered;

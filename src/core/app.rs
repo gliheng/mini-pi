@@ -1,8 +1,8 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use gpui::{
-    Bounds, Global, TitlebarOptions, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
-    WindowOptions, point, px,
+    AnyWindowHandle, Bounds, Global, TitlebarOptions, WindowBackgroundAppearance, WindowBounds,
+    WindowDecorations, WindowOptions, point, px,
 };
 
 use crate::config::app_config::AppConfig;
@@ -11,6 +11,7 @@ use crate::data::store::Store;
 pub struct AppStore {
     pub store: Arc<Store>,
     pub config: AppConfig,
+    pub thread_windows: HashMap<i64, AnyWindowHandle>,
 }
 
 impl Global for AppStore {}

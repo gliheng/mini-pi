@@ -6,7 +6,7 @@ mod ui;
 mod utils;
 mod views;
 
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use gpui::{App, AppContext, Application, Bounds, KeyBinding, px, size};
 
@@ -29,7 +29,11 @@ fn main() {
     Application::new()
         .with_assets(Assets { base: assets_dir })
         .run(|cx: &mut App| {
-            cx.set_global(AppStore { store, config });
+            cx.set_global(AppStore {
+                store,
+                config,
+                thread_windows: HashMap::new(),
+            });
 
             cx.on_action(quit);
             cx.bind_keys([
