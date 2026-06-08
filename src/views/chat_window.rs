@@ -1216,9 +1216,15 @@ impl Render for ChatWindow {
                     .track_scroll(&self.scroll_handle)
                     .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, window, _cx| {
                         let delta = event.delta.pixel_delta(window.line_height());
-                        // If user scrolls up (positive delta) while locked, cancel the lock
                         if this.scroll_locked && delta.y > gpui::px(0.) {
                             this.scroll_locked = false;
+                        }
+                        if !this.scroll_locked {
+                            let offset_y = this.scroll_handle.offset().y;
+                            let max_y = this.scroll_handle.max_offset().height;
+                            if offset_y.abs() >= max_y - gpui::px(5.) {
+                                this.scroll_locked = true;
+                            }
                         }
                     }))
                     .flex()
