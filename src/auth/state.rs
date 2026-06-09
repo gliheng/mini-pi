@@ -107,3 +107,59 @@ pub fn agent_dir() -> PathBuf {
     let _ = std::fs::create_dir_all(&dir);
     dir
 }
+
+pub fn is_first_run() -> bool {
+    let agent = agent_dir();
+    if !agent.exists() {
+        return true;
+    }
+    let Ok(entries) = std::fs::read_dir(&agent) else {
+        return true;
+    };
+    entries.count() == 0
+}
+
+pub fn pi_agent_source_dir() -> Option<PathBuf> {
+    let dir = dirs::home_dir()?.join(".pi").join("agent");
+    if dir.exists() { Some(dir) } else { None }
+}
+
+pub fn list_pi_agent_json_files() -> Vec<(String, PathBuf)> {
+    let Some(source) = pi_agent_source_dir() else {
+        return Vec::new();
+    };
+    let mut files = Vec::new();
+    collect_json_files(&source, &source, &mut files);
+    files
+}
+
+fn collect_json_files(base: &PathBuf, current: &PathBuf, out: &mut Vec<(String, PathBuf)>) {
+    let Ok(entries) = std::fs::read_dir(current) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_json_files(base, &path, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("json") {
+            let rel = path.strip_prefix(base).unwrap_or(&path).to_string_lossy().to_string();
+            out.push((rel, path));
+        }
+    }
+}
+
+pub fn import_from_pi_agent() -> Result<usize, std::io::Error> {
+    let files = list_pi_agent_json_files();
+    if files.is_empty() {
+        return Ok(0);
+    }
+    let target = agent_dir();
+    let mut imported = 0;
+    for (rel, src) in files {
+        let dst = target.join(&rel);
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(&src, &dst)?;
+        imported += 1;
+    }
+    Ok(imported)
+}

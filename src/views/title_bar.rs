@@ -138,6 +138,7 @@ impl Render for TitleBar {
             .border_color(rgb(0x333333))
             .flex()
             .flex_row()
+            .gap_1()
             .items_center()
             .justify_between()
             .on_mouse_down_out(cx.listener(|this: &mut Self, _, _, _| {

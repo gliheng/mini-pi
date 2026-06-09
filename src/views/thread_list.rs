@@ -7,7 +7,7 @@ use gpui::{
     BorrowAppContext,
 };
 
-use crate::auth::state::AuthState;
+use crate::auth::state::{self, AuthState};
 use crate::core::actions::CloseWindow;
 use crate::core::app::{AppStore, custom_window_options};
 use crate::data::store::{Store, ThreadMeta};
@@ -259,6 +259,8 @@ pub struct ThreadList {
     pub thread_items: Vec<gpui::Entity<ThreadItem>>,
     pub store: Arc<Store>,
     pub show_user_panel: bool,
+    pub show_import_prompt: bool,
+    pub import_result: Option<Result<usize, String>>,
     pub sync_status: settings_sync::SyncStatus,
     pub _subscription: gpui::Subscription,
     pub _titlebar_subscription: gpui::Subscription,
@@ -325,6 +327,9 @@ impl ThreadList {
                 cx.notify();
             });
 
+        let is_first = state::is_first_run();
+        let has_pi_settings = !state::list_pi_agent_json_files().is_empty();
+
         Self {
             title_bar,
             user_panel,
@@ -332,6 +337,8 @@ impl ThreadList {
             thread_items,
             store,
             show_user_panel: false,
+            show_import_prompt: is_first && has_pi_settings,
+            import_result: None,
             sync_status: settings_sync::SyncStatus::Idle,
             _subscription: subscription,
             _titlebar_subscription: titlebar_subscription,
@@ -366,6 +373,132 @@ impl ThreadList {
                 .copied()
                 .unwrap_or(usize::MAX)
         });
+    }
+
+    fn render_import_prompt(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let files = state::list_pi_agent_json_files();
+        let file_names: String = files.iter().map(|(name, _)| format!("  • {}", name)).collect::<Vec<_>>().join("\n");
+
+        let mut prompt = div()
+            .id("import-prompt")
+            .mx_3()
+            .mt_3()
+            .mb_2()
+            .px_4()
+            .py_3()
+            .rounded_lg()
+            .bg(rgb(0x252525))
+            .border_1()
+            .border_color(rgb(0x4f46e5))
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        svg()
+                            .path("folder.svg")
+                            .size(px(16.))
+                            .text_color(rgb(0x818cf8)),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(rgb(0xe0e0e0))
+                            .child("Import Settings"),
+                    ),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(0x888888))
+                    .child(format!(
+                        "Detected settings from ~/.pi/agent/.\nFound {} JSON file(s):\n{}",
+                        files.len(),
+                        file_names
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id("import-btn")
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .px_3()
+                            .py_2()
+                            .rounded_md()
+                            .bg(rgb(0x4f46e5))
+                            .cursor_pointer()
+                            .text_color(rgb(0xffffff))
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .hover(|style| style.bg(rgb(0x6366f1)))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                match state::import_from_pi_agent() {
+                                    Ok(count) => {
+                                        this.import_result = Some(Ok(count));
+                                        this.show_import_prompt = false;
+                                    }
+                                    Err(e) => {
+                                        this.import_result = Some(Err(e.to_string()));
+                                    }
+                                }
+                                cx.notify();
+                            }))
+                            .child("Import"),
+                    )
+                    .child(
+                        div()
+                            .id("skip-import-btn")
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .px_3()
+                            .py_2()
+                            .rounded_md()
+                            .bg(rgb(0x333333))
+                            .cursor_pointer()
+                            .text_color(rgb(0x888888))
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .hover(|style| style.bg(rgb(0x444444)))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_import_prompt = false;
+                                cx.notify();
+                            }))
+                            .child("Skip"),
+                    ),
+            );
+        if self.import_result.is_some() {
+            let msg = match self.import_result.as_ref().unwrap() {
+                Ok(count) => format!("Imported {} file(s) successfully", count),
+                Err(e) => format!("Import failed: {}", e),
+            };
+            let color = if self.import_result.as_ref().unwrap().is_ok() {
+                rgb(0x22c55e)
+            } else {
+                rgb(0xef4444)
+            };
+            prompt = prompt.child(
+                div()
+                    .text_xs()
+                    .text_color(color)
+                    .child(msg),
+            );
+        }
+        prompt
     }
 }
 
@@ -405,6 +538,9 @@ impl Render for ThreadList {
             .size_full()
             .bg(rgb(0x1a1a1a))
             .child(self.title_bar.clone())
+            .when(self.show_import_prompt, |el| {
+                el.child(self.render_import_prompt(cx))
+            })
             .child(
                 div()
                     .id("thread-list")

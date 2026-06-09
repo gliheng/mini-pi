@@ -223,7 +223,7 @@ chat_input,
                         .and_then(|id| this.workspaces.iter().find(|ws| ws.id == id))
                         .map(|ws| PathBuf::from(&ws.path));
                     if let Some(dir) = workspace_dir {
-                        let _ = opener::open(&dir);
+                        cx.reveal_path(&dir);
                     }
                 }
             },

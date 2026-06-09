@@ -16,7 +16,6 @@ rusqlite = { version = "0.33", features = ["bundled"] }
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
-opener = "0.7"
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 sha2 = "0.10"
 base64 = "0.22"

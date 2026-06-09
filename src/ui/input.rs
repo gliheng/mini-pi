@@ -509,7 +509,7 @@ impl Element for TextElement {
         let (display_text, text_color) = if content.is_empty() {
             (input.placeholder.clone(), hsla(0., 0., 1., 0.3))
         } else if input.password_mode {
-            let bullets: SharedString = "•".repeat(content.len()).into();
+            let bullets: SharedString = std::iter::repeat('*').take(content.chars().count()).collect::<String>().into();
             (bullets, hsla(0., 0., 1., 1.))
         } else {
             (content, hsla(0., 0., 1., 1.))
@@ -633,7 +633,6 @@ impl Render for TextInput {
         div()
             .key_context("TextInput")
             .w_full()
-            .h(px(28.))
             .track_focus(&self.focus_handle(cx))
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::backspace))
