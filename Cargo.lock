@@ -3237,20 +3237,24 @@ dependencies = [
 name = "mini-pi"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "chrono",
  "dirs 6.0.0",
  "futures",
  "gpui",
  "objc",
  "opener",
+ "percent-encoding",
  "pulldown-cmark",
  "raw-window-handle",
  "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "smol",
  "unicode-segmentation",
+ "url",
  "uuid",
 ]
 

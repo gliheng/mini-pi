@@ -1,14 +1,17 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyWindowHandle, Bounds, BoxShadow, Context, FocusHandle, Focusable, Hsla, IntoElement,
-    ParentElement, Render, SharedString, Styled, Window, div, linear_color_stop, linear_gradient,
-    point, prelude::*, px, rgb, size, svg,
+    AnyWindowHandle, Bounds, BoxShadow, Context, FocusHandle, Focusable, Hsla,
+    IntoElement, ParentElement, Render, SharedString, Styled, Window, div,
+    linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size, svg,
+    BorrowAppContext,
 };
 
+use crate::auth::state::AuthState;
 use crate::core::actions::CloseWindow;
 use crate::core::app::{AppStore, custom_window_options};
 use crate::data::store::{Store, ThreadMeta};
+use crate::sync::settings_sync;
 use crate::utils::format::format_relative_time;
 use crate::views::chat_window::ChatWindow;
 use crate::views::title_bar::{TitleBar, TitleBarEvent, TitleBarVariant};
@@ -256,6 +259,7 @@ pub struct ThreadList {
     pub thread_items: Vec<gpui::Entity<ThreadItem>>,
     pub store: Arc<Store>,
     pub show_user_panel: bool,
+    pub sync_status: settings_sync::SyncStatus,
     pub _subscription: gpui::Subscription,
     pub _titlebar_subscription: gpui::Subscription,
     pub _user_panel_subscription: gpui::Subscription,
@@ -275,7 +279,7 @@ impl ThreadList {
             cx.notify();
         });
 
-        let user_panel = cx.new(|_| UserPanel::new());
+        let user_panel = cx.new(|cx| UserPanel::new(cx));
 
         let titlebar_subscription =
             cx.subscribe(&title_bar, move |this, _, _event: &TitleBarEvent, cx| {
@@ -286,6 +290,38 @@ impl ThreadList {
         let user_panel_subscription =
             cx.subscribe(&user_panel, move |this, _, _event: &UserPanelEvent, cx| {
                 this.show_user_panel = false;
+                match _event {
+                    UserPanelEvent::AuthStateChanged => {
+                        let auth = cx.global::<AppStore>().auth.clone();
+                        if let AuthState::LoggedIn(_) = &auth {
+                            let session = cx.global::<AppStore>().session.clone();
+                            if let Some(s) = session {
+                                let access_token = s.access_token.clone();
+                                let user_id = s.user.id.clone();
+                                cx.spawn(async move |weak, cx| {
+                                    let result = smol::unblock(move || {
+                                        settings_sync::sync_changes(&access_token, &user_id)
+                                    }).await;
+                                    let _ = weak.update(cx, |this, cx| {
+                                        match result {
+                                            Ok(meta) => {
+                                                this.sync_status = settings_sync::SyncStatus::Synced;
+                                                cx.update_global(|app: &mut AppStore, _| {
+                                                    app.sync_meta = meta;
+                                                });
+                                            }
+                                            Err(e) => {
+                                                this.sync_status = settings_sync::SyncStatus::Error(e);
+                                            }
+                                        }
+                                        cx.notify();
+                                    });
+                                }).detach();
+                            }
+                        }
+                    }
+                    UserPanelEvent::BackPressed => {}
+                }
                 cx.notify();
             });
 
@@ -296,6 +332,7 @@ impl ThreadList {
             thread_items,
             store,
             show_user_panel: false,
+            sync_status: settings_sync::SyncStatus::Idle,
             _subscription: subscription,
             _titlebar_subscription: titlebar_subscription,
             _user_panel_subscription: user_panel_subscription,

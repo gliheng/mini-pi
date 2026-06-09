@@ -1,9 +1,11 @@
-use gpui::prelude::FluentBuilder;
 use gpui::{
-    div, px, rgb, AppContext, Context, EventEmitter, Hsla, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,
-    Window, WindowControlArea,
+    div, px, rgb, AppContext, Context, EventEmitter, Hsla, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Pixels, Render, SharedString,
+    StatefulInteractiveElement, Styled, Window, WindowControlArea,
+    prelude::FluentBuilder,
 };
+use crate::auth::state::AuthState;
+use crate::core::app::AppStore;
 #[cfg(target_os = "macos")]
 use objc::{msg_send, sel, sel_impl};
 
@@ -294,6 +296,8 @@ impl Render for TitleBar {
             }
             TitleBarVariant::Home => {
                 let avatar_active = self.avatar_active;
+                let auth = cx.global::<AppStore>().auth.clone();
+                let is_logged_in = matches!(&auth, AuthState::LoggedIn(_));
                 bar = bar.child(
                     div()
                         .id("titlebar-avatar")
@@ -315,7 +319,9 @@ impl Render for TitleBar {
                                 .justify_center()
                                 .size(px(26.))
                                 .rounded_full()
-                                .bg(if avatar_active {
+                                .bg(if !is_logged_in {
+                                    rgb(0x333333)
+                                } else if avatar_active {
                                     rgb(0x4f46e5)
                                 } else {
                                     rgb(0x6366f1)
@@ -327,10 +333,24 @@ impl Render for TitleBar {
                                     Into::<Hsla>::into(rgb(0x6366f1)).alpha(0.0)
                                 })
                                 .cursor_pointer()
-                                .text_color(rgb(0xffffff))
+                                .text_color(if is_logged_in { rgb(0xffffff) } else { rgb(0x888888) })
                                 .text_size(px(11.))
                                 .font_weight(gpui::FontWeight::BOLD)
-                                .child("JD")
+                                .when(is_logged_in, |el| {
+                                    let initials: String = match &auth {
+                                        AuthState::LoggedIn(user) => user.email.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".to_string()),
+                                        _ => "?".to_string(),
+                                    };
+                                    el.child(initials)
+                                })
+                                .when(!is_logged_in, |el| {
+                                    el.child(
+                                        gpui::svg()
+                                            .path("account.svg")
+                                            .size(px(14.))
+                                            .text_color(rgb(0x888888)),
+                                    )
+                                })
                                 .hover(|style| style.bg(rgb(0x4f46e5)).border_color(rgb(0x818cf8)))
                                 .tooltip(|_, cx| {
                                     cx.new(|_| TitleBarTooltip {

@@ -40,6 +40,7 @@ pub struct TextInput {
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
+    password_mode: bool,
 }
 
 impl TextInput {
@@ -54,7 +55,13 @@ impl TextInput {
             last_layout: None,
             last_bounds: None,
             is_selecting: false,
+            password_mode: false,
         }
+    }
+
+    pub fn with_password_mode(mut self) -> Self {
+        self.password_mode = true;
+        self
     }
 
     pub fn content(&self) -> &SharedString {
@@ -501,6 +508,9 @@ impl Element for TextElement {
 
         let (display_text, text_color) = if content.is_empty() {
             (input.placeholder.clone(), hsla(0., 0., 1., 0.3))
+        } else if input.password_mode {
+            let bullets: SharedString = "•".repeat(content.len()).into();
+            (bullets, hsla(0., 0., 1., 1.))
         } else {
             (content, hsla(0., 0., 1., 1.))
         };

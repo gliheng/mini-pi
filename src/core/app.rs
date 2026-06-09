@@ -5,13 +5,18 @@ use gpui::{
     WindowBounds, WindowDecorations, WindowOptions,
 };
 
+use crate::auth::state::{AuthState, SupabaseSession};
 use crate::config::app_config::AppConfig;
 use crate::data::store::Store;
+use crate::sync::settings_sync::SyncMeta;
 
 pub struct AppStore {
     pub store: Arc<Store>,
     pub config: AppConfig,
     pub thread_windows: HashMap<i64, AnyWindowHandle>,
+    pub auth: AuthState,
+    pub session: Option<SupabaseSession>,
+    pub sync_meta: SyncMeta,
 }
 
 impl Global for AppStore {}

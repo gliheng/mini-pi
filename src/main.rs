@@ -1,7 +1,9 @@
+mod auth;
 mod config;
 mod core;
 mod data;
 mod rpc;
+mod sync;
 mod ui;
 mod utils;
 mod views;
@@ -10,11 +12,13 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use gpui::{App, AppContext, Application, Bounds, KeyBinding, px, size};
 
+use crate::auth::state::{self, AuthState};
 use crate::config::app_config::AppConfig;
 use crate::core::actions::Quit;
 use crate::core::app::{AppStore, custom_window_options};
 use crate::core::assets::Assets;
 use crate::data::store::Store;
+use crate::sync::settings_sync;
 use crate::views::thread_list::ThreadList;
 
 fn quit(_: &Quit, cx: &mut App) {
@@ -26,6 +30,46 @@ fn main() {
     let config = AppConfig::load();
     let assets_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
 
+    let (auth, session) = match state::load_session() {
+        Some(session) => {
+            if session.is_expired() {
+                match crate::auth::supabase::refresh_session(&session.refresh_token) {
+                    Ok(new_session) => {
+                        let user = new_session.user.clone();
+                        let _ = state::save_session(&new_session);
+                        (AuthState::LoggedIn(user), Some(new_session))
+                    }
+                    Err(_) => {
+                        let _ = state::clear_session();
+                        (AuthState::LoggedOut, None)
+                    }
+                }
+            } else {
+                match crate::auth::supabase::get_user(&session.access_token) {
+                    Ok(user) => (AuthState::LoggedIn(user), Some(session)),
+                    Err(_) => {
+                        let _ = state::clear_session();
+                        (AuthState::LoggedOut, None)
+                    }
+                }
+            }
+        }
+        None => (AuthState::LoggedOut, None),
+    };
+
+    let sync_meta = settings_sync::load_sync_meta();
+
+    if auth.is_logged_in() {
+        if let Some(ref sess) = session {
+            let _ = state::agent_dir();
+            let access_token = sess.access_token.clone();
+            let user_id = sess.user.id.clone();
+            let _ = std::thread::spawn(move || {
+                let _ = settings_sync::sync_changes(&access_token, &user_id);
+            });
+        }
+    }
+
     Application::new()
         .with_assets(Assets { base: assets_dir })
         .run(|cx: &mut App| {
@@ -33,6 +77,9 @@ fn main() {
                 store,
                 config,
                 thread_windows: HashMap::new(),
+                auth,
+                session,
+                sync_meta,
             });
 
             cx.on_action(quit);

@@ -154,6 +154,10 @@ impl PiRpc {
             std::fs::create_dir_all(dir).map_err(PiRpcError::Io)?;
             cmd.current_dir(dir);
         }
+        if let Some(home) = dirs::home_dir() {
+            cmd.env("PI_CODING_AGENT_DIR", home.join(".mini-pi/agent"));
+            cmd.env("PI_CODING_AGENT_SESSION_DIR", home.join(".mini-pi/sessions"));
+        }
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());

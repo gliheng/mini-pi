@@ -1,3 +1,3 @@
 use gpui::actions;
 
-actions!(mini_pi, [CloseWindow, Quit, SendMessage]);
+actions!(mini_pi, [CloseWindow, Quit, SendMessage, Login, Logout, SignUp]);
