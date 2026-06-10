@@ -41,6 +41,7 @@ pub struct ChatWindow {
     pub store: Arc<Store>,
     pub pi: Option<PiRpc>,
     pub at_mention_scroll_handle: ScrollHandle,
+    pub command_scroll_handle: ScrollHandle,
     pub _pi_task: Option<Task<()>>,
     pub selected_model: Option<String>,
     pub thinking_level: Option<String>,
@@ -156,6 +157,7 @@ chat_input,
             markdown_displays: vec![],
             scroll_handle: ScrollHandle::new(),
             at_mention_scroll_handle: ScrollHandle::new(),
+            command_scroll_handle: ScrollHandle::new(),
             scroll_locked: true,
             scrollbar_drag_offset_y: None,
             workspaces,
@@ -408,6 +410,10 @@ chat_input,
             };
 
         eprintln!("[mini-pi] pi spawned with session {}", self.session_file);
+
+        if let Err(e) = rpc.send_get_commands(None) {
+            eprintln!("[mini-pi] failed to send get_commands: {}", e);
+        }
 
         if restoring {
             eprintln!("[mini-pi] restoring session, requesting message history");
@@ -744,7 +750,39 @@ chat_input,
                 eprintln!("[mini-pi] pi process disconnected");
                 self.state = ChatState::Error("Pi agent process disconnected".into());
             }
-            BridgeEvent::Response { .. } => {}
+            BridgeEvent::Response { command, success, data, .. } => {
+                if command == "get_commands" && success {
+                    if let Some(ref data_val) = data {
+                        if let Some(commands) = data_val.get("commands") {
+                            if let Some(arr) = commands.as_array() {
+                                let items: Vec<crate::ui::chat_input::CommandItem> = arr
+                                    .iter()
+                                    .filter_map(|cmd| {
+                                        let name = cmd.get("name")?.as_str()?.to_string();
+                                        let description = cmd
+                                            .get("description")
+                                            .and_then(|d| d.as_str())
+                                            .map(|s| s.to_string());
+                                        let source = cmd
+                                            .get("source")
+                                            .and_then(|s| s.as_str())
+                                            .unwrap_or("unknown")
+                                            .to_string();
+                                        Some(crate::ui::chat_input::CommandItem {
+                                            name,
+                                            description,
+                                            source,
+                                        })
+                                    })
+                                    .collect();
+                                self.chat_input.update(cx, |ci, cx| {
+                                    ci.set_commands(items, cx);
+                                });
+                            }
+                        }
+                    }
+                }
+            }
             BridgeEvent::MessagesLoaded { messages } => {
                 eprintln!("[mini-pi] loaded {} messages from history", messages.len());
                 for msg in messages {
@@ -1169,6 +1207,120 @@ chat_input,
                     },
                 )
                 .size_full(),
+            )
+    }
+
+    fn render_command_popup(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let chat_input = self.chat_input.read(cx);
+        let items = chat_input.slash_command_items();
+        let highlighted = chat_input.slash_command_highlighted();
+
+        if !items.is_empty() && highlighted < items.len() {
+            self.command_scroll_handle.scroll_to_item(highlighted);
+        }
+
+        div()
+            .relative()
+            .px_3()
+            .pb_1()
+            .child(
+                div()
+                    .id("command-overlay")
+                    .absolute()
+                    .occlude()
+                    .top(px(-5000.))
+                    .left(px(-5000.))
+                    .w(px(10000.))
+                    .h(px(10000.))
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, _, cx| {
+                        this.chat_input.update(cx, |ci, cx| ci.close_popup(cx));
+                    })),
+            )
+            .child(
+                div()
+                    .id("command-popup")
+                    .track_scroll(&self.command_scroll_handle)
+                    .absolute()
+                    .occlude()
+                    .bottom(px(0.))
+                    .left(px(12.))
+                    .right(px(12.))
+                    .max_h(px(240.))
+                    .overflow_y_scroll()
+                    .bg(rgb(0x1e1e1e))
+                    .border_1()
+                    .border_color(rgb(0x3b82f6))
+                    .rounded_md()
+                    .py_1()
+                    .shadow(vec![gpui::BoxShadow {
+                        color: gpui::rgba(0x000000aa).into(),
+                        offset: gpui::point(px(0.), px(4.)),
+                        blur_radius: px(12.),
+                        spread_radius: px(0.),
+                    }])
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
+                    .children(items.iter().enumerate().map(|(idx, item)| {
+                        let is_highlighted = idx == highlighted;
+                        let label: SharedString = format!("/{}", item.name).into();
+                        let detail: SharedString = item.description.clone().unwrap_or_default().into();
+                        let source_label: SharedString = (match item.source.as_str() {
+                            "extension" => "Extension",
+                            "prompt" => "Prompt",
+                            "skill" => "Skill",
+                            _ => &item.source,
+                        }).to_string().into();
+                        let item_idx = idx;
+                        div()
+                            .id(SharedString::from(format!("command-{}", idx)))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .px_3()
+                            .py_1p5()
+                            .cursor_pointer()
+                            .when(is_highlighted, |s| s.bg(rgb(0x2a2a2a)))
+                            .hover(|style| style.bg(rgb(0x2a2a2a)))
+                            .child(
+                                div()
+                                    .w(px(160.))
+                                    .overflow_hidden()
+                                    .text_sm()
+                                    .text_color(if is_highlighted { rgb(0xffffff) } else { rgb(0xcccccc) })
+                                    .child(
+                                        div()
+                                            .whitespace_nowrap()
+                                            .text_ellipsis()
+                                            .child(label),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.))
+                                    .text_xs()
+                                    .text_color(rgb(0x666666))
+                                    .line_clamp(2)
+                                    .when(!detail.is_empty(), |s| s.child(detail)),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .px_1()
+                                    .py_0p5()
+                                    .rounded_sm()
+                                    .bg(rgb(0x333333))
+                                    .text_color(rgb(0x888888))
+                                    .child(source_label),
+                            )
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.chat_input.update(cx, |ci, cx| {
+                                    ci.select_command_at(item_idx, cx);
+                                });
+                            }))
+                    })),
             )
     }
 }
@@ -1608,8 +1760,11 @@ impl Render for ChatWindow {
                 div()
                     .px_3()
                     .pb_3()
-                    .when(self.chat_input.read(cx).is_popup_visible(), |this| {
+                    .when(self.chat_input.read(cx).is_at_popup_visible(), |this| {
                         this.child(self.render_at_mention_popup(cx))
+                    })
+                    .when(self.chat_input.read(cx).is_command_popup_visible(), |this| {
+                        this.child(self.render_command_popup(cx))
                     })
                     .child(
                         div()

@@ -42,6 +42,13 @@ pub struct MentionItem {
 }
 
 #[derive(Clone, Debug)]
+pub struct CommandItem {
+    pub name: String,
+    pub description: Option<String>,
+    pub source: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct AtMentionParse {
     pub query: String,
     pub replace_range: Range<usize>,
@@ -76,6 +83,13 @@ pub struct ChatInput {
     pub workspace_name: Option<String>,
     pub just_selected_mention: bool,
     cached_workspace_id: Option<i64>,
+
+    pub slash_command_active: bool,
+    slash_command_query: String,
+    slash_command_replace_range: Range<usize>,
+    pub slash_command_highlighted: usize,
+    pub slash_command_items: Vec<CommandItem>,
+    available_commands: Vec<CommandItem>,
 }
 
 impl EventEmitter<ChatInputEvent> for ChatInput {}
@@ -104,6 +118,12 @@ impl ChatInput {
             workspace_name: None,
             just_selected_mention: false,
             cached_workspace_id: None,
+            slash_command_active: false,
+            slash_command_query: String::new(),
+            slash_command_replace_range: 0..0,
+            slash_command_highlighted: 0,
+            slash_command_items: Vec::new(),
+            available_commands: Vec::new(),
         }
     }
 
@@ -112,7 +132,15 @@ impl ChatInput {
     }
 
     pub fn is_popup_visible(&self) -> bool {
+        self.is_at_popup_visible() || self.is_command_popup_visible()
+    }
+
+    pub fn is_at_popup_visible(&self) -> bool {
         self.at_mention_active && !self.mention_items.is_empty()
+    }
+
+    pub fn is_command_popup_visible(&self) -> bool {
+        self.slash_command_active && !self.slash_command_items.is_empty()
     }
 
     pub fn popup_items(&self) -> &[MentionItem] {
@@ -121,6 +149,14 @@ impl ChatInput {
 
     pub fn popup_highlighted(&self) -> usize {
         self.at_mention_highlighted
+    }
+
+    pub fn slash_command_items(&self) -> &[CommandItem] {
+        &self.slash_command_items
+    }
+
+    pub fn slash_command_highlighted(&self) -> usize {
+        self.slash_command_highlighted
     }
 
     pub fn is_just_selected_mention(&self) -> bool {
@@ -174,21 +210,50 @@ impl ChatInput {
                 input.file_cache = mention_items;
                 input.file_cache_loaded = true;
                 input.file_cache_loading = false;
-                input.update_at_mention(cx);
+                input.update_popups(cx);
             })
             .ok();
         })
         .detach();
     }
 
-    pub fn update_at_mention(&mut self, _cx: &mut Context<Self>) {
+    pub fn set_commands(&mut self, commands: Vec<CommandItem>, cx: &mut Context<Self>) {
+        self.available_commands = commands;
+        self.update_popups(cx);
+    }
+
+    pub fn update_popups(&mut self, _cx: &mut Context<Self>) {
+        let cursor = self.cursor_offset();
+
+        // First check slash command
+        if let Some(parse) = parse_slash_command(&self.content, cursor) {
+            self.slash_command_query = parse.query.clone();
+            self.slash_command_replace_range = parse.replace_range.clone();
+
+            let filtered = filter_command_items(&self.available_commands, &parse.query);
+            self.slash_command_active = !filtered.is_empty();
+            self.slash_command_items = filtered;
+
+            if self.slash_command_highlighted >= self.slash_command_items.len() {
+                self.slash_command_highlighted = 0;
+            }
+
+            // Close at mention
+            self.at_mention_active = false;
+            self.mention_items.clear();
+            return;
+        } else {
+            self.slash_command_active = false;
+            self.slash_command_items.clear();
+        }
+
+        // Then check at mention
         if self.workspace_dir.is_none() {
             self.at_mention_active = false;
             self.mention_items.clear();
             return;
         }
 
-        let cursor = self.cursor_offset();
         if let Some(parse) = parse_at_mention(&self.content, cursor) {
             self.at_mention_query = parse.query.clone();
             self.at_mention_replace_range = parse.replace_range.clone();
@@ -226,6 +291,18 @@ impl ChatInput {
                     self.at_mention_highlighted - 1
                 };
             }
+        } else if !self.slash_command_items.is_empty() {
+            let len = self.slash_command_items.len();
+            if direction > 0 {
+                self.slash_command_highlighted =
+                    (self.slash_command_highlighted + 1) % len;
+            } else if direction < 0 {
+                self.slash_command_highlighted = if self.slash_command_highlighted == 0 {
+                    len - 1
+                } else {
+                    self.slash_command_highlighted - 1
+                };
+            }
         }
         cx.notify();
     }
@@ -247,7 +324,7 @@ impl ChatInput {
             self.at_mention_active = false;
             self.mention_items.clear();
             self.just_selected_mention = true;
-            self.update_at_mention(cx);
+            self.update_popups(cx);
         } else {
             self.at_mention_active = false;
             self.mention_items.clear();
@@ -262,9 +339,37 @@ impl ChatInput {
         }
     }
 
+    pub fn select_highlighted_command(&mut self, cx: &mut Context<Self>) {
+        if let Some(item) = self.slash_command_items.get(self.slash_command_highlighted) {
+            let insertion = format!("/{} ", item.name);
+            let range = self.slash_command_replace_range.clone();
+            if range.start <= self.content.len() && range.end <= self.content.len() {
+                self.replace_range(range, &insertion, cx);
+            } else {
+                let start = range.start.min(self.content.len());
+                self.replace_range(start..self.content.len(), &insertion, cx);
+            }
+            self.slash_command_active = false;
+            self.slash_command_items.clear();
+        } else {
+            self.slash_command_active = false;
+            self.slash_command_items.clear();
+        }
+        cx.notify();
+    }
+
+    pub fn select_command_at(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index < self.slash_command_items.len() {
+            self.slash_command_highlighted = index;
+            self.select_highlighted_command(cx);
+        }
+    }
+
     pub fn close_popup(&mut self, cx: &mut Context<Self>) {
         self.at_mention_active = false;
         self.mention_items.clear();
+        self.slash_command_active = false;
+        self.slash_command_items.clear();
         cx.notify();
     }
 
@@ -532,7 +637,7 @@ impl ChatInput {
         self.last_layout = None;
         self.last_bounds = None;
         self.is_selecting = false;
-        self.update_at_mention(cx);
+        self.update_popups(cx);
         cx.notify();
     }
 
@@ -546,6 +651,8 @@ impl ChatInput {
         self.is_selecting = false;
         self.at_mention_active = false;
         self.mention_items.clear();
+        self.slash_command_active = false;
+        self.slash_command_items.clear();
         self.just_selected_mention = false;
         cx.notify();
     }
@@ -617,7 +724,7 @@ impl EntityInputHandler for ChatInput {
                 .into();
         self.selected_range = start + new_text.len()..start + new_text.len();
         self.marked_range.take();
-        self.update_at_mention(cx);
+        self.update_popups(cx);
         cx.emit(ChatInputEvent::Change);
         cx.notify();
     }
@@ -653,7 +760,7 @@ impl EntityInputHandler for ChatInput {
             .map(|new_range| (new_range.start + start).min(self.content.len())..(new_range.end + end).min(self.content.len()))
             .unwrap_or_else(|| start + new_text.len()..start + new_text.len());
 
-        self.update_at_mention(cx);
+        self.update_popups(cx);
         cx.emit(ChatInputEvent::Change);
         cx.notify();
     }
@@ -870,7 +977,6 @@ impl Element for ChatInputElement {
 
 impl Render for ChatInput {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let popup_active = self.at_mention_active && !self.mention_items.is_empty();
         div()
             .key_context("ChatInput")
             .w_full()
@@ -893,7 +999,9 @@ impl Render for ChatInput {
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-                if popup_active {
+                let at_popup_active = this.at_mention_active && !this.mention_items.is_empty();
+                let command_popup_active = this.slash_command_active && !this.slash_command_items.is_empty();
+                if at_popup_active || command_popup_active {
                     match event.keystroke.key.as_str() {
                         "up" => {
                             this.navigate_popup(-1, cx);
@@ -904,7 +1012,11 @@ impl Render for ChatInput {
                             window.prevent_default();
                         }
                         "enter" | "tab" => {
-                            this.select_highlighted_mention(cx);
+                            if at_popup_active {
+                                this.select_highlighted_mention(cx);
+                            } else {
+                                this.select_highlighted_command(cx);
+                            }
                             window.prevent_default();
                         }
                         "escape" => {
@@ -995,5 +1107,73 @@ fn filter_mention_items(items: &[MentionItem], query: &str) -> Vec<MentionItem> 
         })
         .collect();
     matches.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.relative_path.cmp(&b.0.relative_path)));
+    matches.into_iter().take(50).map(|(item, _)| item).collect()
+}
+
+fn parse_slash_command(content: &str, cursor: usize) -> Option<AtMentionParse> {
+    if cursor == 0 {
+        return None;
+    }
+
+    let text_before_cursor = &content[..cursor];
+
+    let slash_pos = text_before_cursor.rfind('/')?;
+
+    // '/' must be at the start of a line (string start or after \n or \r)
+    if slash_pos > 0 {
+        let ch_before = content.as_bytes().get(slash_pos - 1).copied()?;
+        if ch_before != b'\n' && ch_before != b'\r' {
+            return None;
+        }
+    }
+
+    let after_slash = &text_before_cursor[slash_pos + 1..];
+    if after_slash.starts_with(' ') {
+        return None;
+    }
+
+    let query = if after_slash.is_empty() {
+        String::new()
+    } else {
+        let end = after_slash
+            .find(|c: char| c.is_whitespace())
+            .unwrap_or(after_slash.len());
+        after_slash[..end].to_string()
+    };
+
+    let replace_start = slash_pos;
+    let replace_end = slash_pos + 1 + query.len();
+
+    Some(AtMentionParse {
+        query,
+        replace_range: replace_start..replace_end,
+    })
+}
+
+fn filter_command_items(items: &[CommandItem], query: &str) -> Vec<CommandItem> {
+    if query.is_empty() {
+        return items.iter().take(50).cloned().collect();
+    }
+    let q = query.to_lowercase();
+    let mut matches: Vec<(CommandItem, usize)> = items
+        .iter()
+        .filter_map(|item| {
+            let name_lower = item.name.to_lowercase();
+            let desc_lower = item.description.as_deref().unwrap_or("").to_lowercase();
+            if name_lower.contains(&q) || desc_lower.contains(&q) {
+                let score = if name_lower.starts_with(&q) {
+                    100
+                } else if name_lower.contains(&q) {
+                    50
+                } else {
+                    10
+                };
+                Some((item.clone(), score))
+            } else {
+                None
+            }
+        })
+        .collect();
+    matches.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.name.cmp(&b.0.name)));
     matches.into_iter().take(50).map(|(item, _)| item).collect()
 }

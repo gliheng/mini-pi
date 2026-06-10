@@ -312,6 +312,12 @@ impl PiRpc {
         self.write_json(&cmd)
     }
 
+    pub fn send_get_commands(&mut self, request_id: Option<&str>) -> Result<(), PiRpcError> {
+        let mut cmd = serde_json::json!({ "type": "get_commands" });
+        add_request_id(&mut cmd, request_id);
+        self.write_json(&cmd)
+    }
+
     // ------------------------------------------------------------------
     // Model
     // ------------------------------------------------------------------
