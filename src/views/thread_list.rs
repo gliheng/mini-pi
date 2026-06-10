@@ -14,6 +14,7 @@ use crate::data::store::{Store, ThreadMeta};
 use crate::sync::settings_sync;
 use crate::utils::format::format_relative_time;
 use crate::views::chat_window::ChatWindow;
+use crate::views::import_prompt::{ImportPrompt, ImportPromptEvent};
 use crate::views::title_bar::{TitleBar, TitleBarEvent, TitleBarVariant};
 use crate::views::user_panel::{UserPanel, UserPanelEvent};
 
@@ -255,16 +256,17 @@ impl Render for ThreadItem {
 pub struct ThreadList {
     pub title_bar: gpui::Entity<TitleBar>,
     pub user_panel: gpui::Entity<UserPanel>,
+    pub import_prompt: gpui::Entity<ImportPrompt>,
     pub focus_handle: FocusHandle,
     pub thread_items: Vec<gpui::Entity<ThreadItem>>,
     pub store: Arc<Store>,
     pub show_user_panel: bool,
     pub show_import_prompt: bool,
-    pub import_result: Option<Result<usize, String>>,
     pub sync_status: settings_sync::SyncStatus,
     pub _subscription: gpui::Subscription,
     pub _titlebar_subscription: gpui::Subscription,
     pub _user_panel_subscription: gpui::Subscription,
+    pub _import_prompt_subscription: gpui::Subscription,
 }
 
 impl ThreadList {
@@ -282,6 +284,7 @@ impl ThreadList {
         });
 
         let user_panel = cx.new(|cx| UserPanel::new(cx));
+        let import_prompt = cx.new(|_| ImportPrompt::new());
 
         let titlebar_subscription =
             cx.subscribe(&title_bar, move |this, _, _event: &TitleBarEvent, cx| {
@@ -327,22 +330,37 @@ impl ThreadList {
                 cx.notify();
             });
 
+        let import_prompt_subscription =
+            cx.subscribe(&import_prompt, move |this, _, event: &ImportPromptEvent, _cx| {
+                match event {
+                    ImportPromptEvent::ImportRequested => {
+                        this.show_import_prompt = false;
+                    }
+                    ImportPromptEvent::SkipRequested => {
+                        this.show_import_prompt = false;
+                    }
+                }
+                _cx.notify();
+            });
+
         let is_first = state::is_first_run();
-        let has_pi_settings = !state::list_pi_agent_json_files().is_empty();
+        let has_pi_settings = import_prompt.read(cx).has_files();
+        let show_import_prompt = is_first && has_pi_settings;
 
         Self {
             title_bar,
             user_panel,
+            import_prompt,
             focus_handle: cx.focus_handle(),
             thread_items,
             store,
             show_user_panel: false,
-            show_import_prompt: is_first && has_pi_settings,
-            import_result: None,
+            show_import_prompt,
             sync_status: settings_sync::SyncStatus::Idle,
             _subscription: subscription,
             _titlebar_subscription: titlebar_subscription,
             _user_panel_subscription: user_panel_subscription,
+            _import_prompt_subscription: import_prompt_subscription,
         }
     }
 
@@ -373,132 +391,6 @@ impl ThreadList {
                 .copied()
                 .unwrap_or(usize::MAX)
         });
-    }
-
-    fn render_import_prompt(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let files = state::list_pi_agent_json_files();
-        let file_names: String = files.iter().map(|(name, _)| format!("  • {}", name)).collect::<Vec<_>>().join("\n");
-
-        let mut prompt = div()
-            .id("import-prompt")
-            .mx_3()
-            .mt_3()
-            .mb_2()
-            .px_4()
-            .py_3()
-            .rounded_lg()
-            .bg(rgb(0x252525))
-            .border_1()
-            .border_color(rgb(0x4f46e5))
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        svg()
-                            .path("folder.svg")
-                            .size(px(16.))
-                            .text_color(rgb(0x818cf8)),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(rgb(0xe0e0e0))
-                            .child("Import Settings"),
-                    ),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(0x888888))
-                    .child(format!(
-                        "Detected settings from ~/.pi/agent/.\nFound {} JSON file(s):\n{}",
-                        files.len(),
-                        file_names
-                    )),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .child(
-                        div()
-                            .id("import-btn")
-                            .flex_1()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px_3()
-                            .py_2()
-                            .rounded_md()
-                            .bg(rgb(0x4f46e5))
-                            .cursor_pointer()
-                            .text_color(rgb(0xffffff))
-                            .text_xs()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .hover(|style| style.bg(rgb(0x6366f1)))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                match state::import_from_pi_agent() {
-                                    Ok(count) => {
-                                        this.import_result = Some(Ok(count));
-                                        this.show_import_prompt = false;
-                                    }
-                                    Err(e) => {
-                                        this.import_result = Some(Err(e.to_string()));
-                                    }
-                                }
-                                cx.notify();
-                            }))
-                            .child("Import"),
-                    )
-                    .child(
-                        div()
-                            .id("skip-import-btn")
-                            .flex_1()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px_3()
-                            .py_2()
-                            .rounded_md()
-                            .bg(rgb(0x333333))
-                            .cursor_pointer()
-                            .text_color(rgb(0x888888))
-                            .text_xs()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .hover(|style| style.bg(rgb(0x444444)))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.show_import_prompt = false;
-                                cx.notify();
-                            }))
-                            .child("Skip"),
-                    ),
-            );
-        if self.import_result.is_some() {
-            let msg = match self.import_result.as_ref().unwrap() {
-                Ok(count) => format!("Imported {} file(s) successfully", count),
-                Err(e) => format!("Import failed: {}", e),
-            };
-            let color = if self.import_result.as_ref().unwrap().is_ok() {
-                rgb(0x22c55e)
-            } else {
-                rgb(0xef4444)
-            };
-            prompt = prompt.child(
-                div()
-                    .text_xs()
-                    .text_color(color)
-                    .child(msg),
-            );
-        }
-        prompt
     }
 }
 
@@ -538,9 +430,6 @@ impl Render for ThreadList {
             .size_full()
             .bg(rgb(0x1a1a1a))
             .child(self.title_bar.clone())
-            .when(self.show_import_prompt, |el| {
-                el.child(self.render_import_prompt(cx))
-            })
             .child(
                 div()
                     .id("thread-list")
@@ -638,5 +527,8 @@ impl Render for ThreadList {
                             }),
                     ),
             )
+            .when(self.show_import_prompt, |el| {
+                el.child(self.import_prompt.clone())
+            })
     }
 }
