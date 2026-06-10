@@ -8,21 +8,27 @@ use std::io::{Error, ErrorKind};
 /// - `CLOUDFLARE_GATEWAY_ID` - AI Gateway ID
 pub fn generate_title(content: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let api_key = std::env::var("CLOUDFLARE_API_KEY").map_err(|_| {
-        Box::new(Error::new(ErrorKind::NotFound, "CLOUDFLARE_API_KEY env var not set"))
-            as Box<dyn std::error::Error + Send + Sync>
+        Box::new(Error::new(
+            ErrorKind::NotFound,
+            "CLOUDFLARE_API_KEY env var not set",
+        )) as Box<dyn std::error::Error + Send + Sync>
     })?;
     let account_id = std::env::var("CLOUDFLARE_ACCOUNT_ID").map_err(|_| {
-        Box::new(Error::new(ErrorKind::NotFound, "CLOUDFLARE_ACCOUNT_ID env var not set"))
-            as Box<dyn std::error::Error + Send + Sync>
+        Box::new(Error::new(
+            ErrorKind::NotFound,
+            "CLOUDFLARE_ACCOUNT_ID env var not set",
+        )) as Box<dyn std::error::Error + Send + Sync>
     })?;
     let gateway_id = std::env::var("CLOUDFLARE_GATEWAY_ID").map_err(|_| {
-        Box::new(Error::new(ErrorKind::NotFound, "CLOUDFLARE_GATEWAY_ID env var not set"))
-            as Box<dyn std::error::Error + Send + Sync>
+        Box::new(Error::new(
+            ErrorKind::NotFound,
+            "CLOUDFLARE_GATEWAY_ID env var not set",
+        )) as Box<dyn std::error::Error + Send + Sync>
     })?;
 
     let client = reqwest::blocking::Client::new();
 
-    const SYSTEM_PROMPT: &str = include_str!("../../prompts/title_generator.txt");
+    const SYSTEM_PROMPT: &str = include_str!("../../assets/prompts/title_generator.txt");
 
     let body = serde_json::json!({
         "model": "deepseek/deepseek-v4-flash",
