@@ -139,9 +139,12 @@ impl PiRpc {
         model: Option<&str>,
         workspace_dir: Option<PathBuf>,
     ) -> Result<(Self, futures::channel::mpsc::UnboundedReceiver<BridgeEvent>), PiRpcError> {
-        let mut cmd = Command::new("pi");
+        let program = if cfg!(windows) { "pi.cmd" } else { "pi" };
+        let mut cmd = Command::new(program);
         if let Some(model_str) = model {
-            if let Some((provider, model_id)) = crate::config::model_config::parse_model_id(model_str) {
+            if let Some((provider, model_id)) =
+                crate::config::model_config::parse_model_id(model_str)
+            {
                 cmd.arg("--provider").arg(provider);
                 cmd.arg("--model").arg(model_id);
             } else {
@@ -156,7 +159,10 @@ impl PiRpc {
         }
         if let Some(home) = dirs::home_dir() {
             cmd.env("PI_CODING_AGENT_DIR", home.join(".mini-pi/agent"));
-            cmd.env("PI_CODING_AGENT_SESSION_DIR", home.join(".mini-pi/sessions"));
+            cmd.env(
+                "PI_CODING_AGENT_SESSION_DIR",
+                home.join(".mini-pi/sessions"),
+            );
         }
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
