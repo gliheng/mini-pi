@@ -1,17 +1,15 @@
-use gpui::{
-    div, px, rgb, AppContext, Context, EventEmitter, Hsla, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Pixels, Render, SharedString,
-    StatefulInteractiveElement, Styled, Window, WindowControlArea,
-    prelude::FluentBuilder,
-};
 use crate::auth::state::AuthState;
 use crate::core::app::AppStore;
+use gpui::{
+    AppContext, Context, EventEmitter, Hsla, InteractiveElement, IntoElement, MouseButton,
+    ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled, Window,
+    WindowControlArea, div, prelude::FluentBuilder, px, rgb,
+};
 #[cfg(target_os = "macos")]
 use objc::{msg_send, sel, sel_impl};
 
 const TRAFFIC_LIGHT_LEFT_PADDING: f32 = 78.0;
 const TITLE_BAR_MIN_HEIGHT: f32 = 34.0;
-const WINDOWS_ICON_SIZE: f32 = 10.0;
 
 struct TitleBarTooltip {
     label: SharedString,
@@ -266,7 +264,7 @@ impl Render for TitleBar {
                         .items_center()
                         .h_full()
                         .flex_shrink_0()
-                        .pr(px(8.0))
+                        .pr(px(4.0))
                         .child(
                             div()
                                 .id("export-button")
@@ -334,12 +332,21 @@ impl Render for TitleBar {
                                     Into::<Hsla>::into(rgb(0x6366f1)).alpha(0.0)
                                 })
                                 .cursor_pointer()
-                                .text_color(if is_logged_in { rgb(0xffffff) } else { rgb(0x888888) })
+                                .text_color(if is_logged_in {
+                                    rgb(0xffffff)
+                                } else {
+                                    rgb(0x888888)
+                                })
                                 .text_size(px(11.))
                                 .font_weight(gpui::FontWeight::BOLD)
                                 .when(is_logged_in, |el| {
                                     let initials: String = match &auth {
-                                        AuthState::LoggedIn(user) => user.email.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".to_string()),
+                                        AuthState::LoggedIn(user) => user
+                                            .email
+                                            .chars()
+                                            .next()
+                                            .map(|c| c.to_uppercase().to_string())
+                                            .unwrap_or_else(|| "?".to_string()),
                                         _ => "?".to_string(),
                                     };
                                     el.child(initials)
@@ -380,7 +387,6 @@ impl Render for TitleBar {
                     .items_center()
                     .h_full()
                     .flex_shrink_0()
-                    .gap(px(8.0))
                     .when(controls.minimize, |el| {
                         el.child(caption_button_svg(
                             "minimize.svg",
@@ -493,7 +499,7 @@ fn set_window_level(window: &Window, pinned: bool) {
     const SWP_NOMOVE: u32 = 0x0002;
     const SWP_SHOWWINDOW: u32 = 0x0040;
 
-    extern "system" {
+    unsafe extern "system" {
         fn SetWindowPos(
             hwnd: HWND,
             hwnd_insert_after: HWND,
