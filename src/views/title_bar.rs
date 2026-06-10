@@ -46,7 +46,6 @@ pub enum TitleBarEvent {
 pub struct TitleBar {
     pub title: SharedString,
     pub variant: TitleBarVariant,
-    pub avatar_active: bool,
     pub pinned: bool,
     should_move: bool,
 }
@@ -56,7 +55,6 @@ impl TitleBar {
         Self {
             title: title.into(),
             variant,
-            avatar_active: false,
             pinned: false,
             should_move: false,
         }
@@ -294,7 +292,7 @@ impl Render for TitleBar {
                 );
             }
             TitleBarVariant::Home => {
-                let avatar_active = self.avatar_active;
+                let user_panel_active = cx.global::<AppStore>().user_panel_active;
                 let auth = cx.global::<AppStore>().auth.clone();
                 let is_logged_in = matches!(&auth, AuthState::LoggedIn(_));
                 bar = bar.child(
@@ -320,13 +318,13 @@ impl Render for TitleBar {
                                 .rounded_full()
                                 .bg(if !is_logged_in {
                                     rgb(0x333333)
-                                } else if avatar_active {
+                                } else if user_panel_active {
                                     rgb(0x4f46e5)
                                 } else {
                                     rgb(0x6366f1)
                                 })
                                 .border_2()
-                                .border_color(if avatar_active {
+                                .border_color(if user_panel_active {
                                     Into::<Hsla>::into(rgb(0x818cf8))
                                 } else {
                                     Into::<Hsla>::into(rgb(0x6366f1)).alpha(0.0)
@@ -366,8 +364,7 @@ impl Render for TitleBar {
                                     })
                                     .into()
                                 })
-                                .on_click(cx.listener(|this: &mut Self, _, _, cx| {
-                                    this.avatar_active = !this.avatar_active;
+                                .on_click(cx.listener(|_this: &mut Self, _, _, cx| {
                                     cx.emit(TitleBarEvent::ToggleUserPanel);
                                 })),
                         ),

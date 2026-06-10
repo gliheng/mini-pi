@@ -17,6 +17,7 @@ pub struct AppStore {
     pub auth: AuthState,
     pub session: Option<SupabaseSession>,
     pub sync_meta: SyncMeta,
+    pub user_panel_active: bool,
 }
 
 impl Global for AppStore {}

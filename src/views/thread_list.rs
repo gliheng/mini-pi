@@ -260,7 +260,6 @@ pub struct ThreadList {
     pub focus_handle: FocusHandle,
     pub thread_items: Vec<gpui::Entity<ThreadItem>>,
     pub store: Arc<Store>,
-    pub show_user_panel: bool,
     pub show_import_prompt: bool,
     pub sync_status: settings_sync::SyncStatus,
     pub _subscription: gpui::Subscription,
@@ -287,14 +286,17 @@ impl ThreadList {
         let import_prompt = cx.new(|_| ImportPrompt::new());
 
         let titlebar_subscription =
-            cx.subscribe(&title_bar, move |this, _, _event: &TitleBarEvent, cx| {
-                this.show_user_panel = !this.show_user_panel;
-                cx.notify();
+            cx.subscribe(&title_bar, move |_this, _, _event: &TitleBarEvent, cx| {
+                cx.update_global(|app: &mut AppStore, _| {
+                    app.user_panel_active = !app.user_panel_active;
+                });
             });
 
         let user_panel_subscription =
-            cx.subscribe(&user_panel, move |this, _, _event: &UserPanelEvent, cx| {
-                this.show_user_panel = false;
+            cx.subscribe(&user_panel, move |_this, _, _event: &UserPanelEvent, cx| {
+                cx.update_global(|app: &mut AppStore, _| {
+                    app.user_panel_active = false;
+                });
                 match _event {
                     UserPanelEvent::AuthStateChanged => {
                         let auth = cx.global::<AppStore>().auth.clone();
@@ -354,7 +356,6 @@ impl ThreadList {
             focus_handle: cx.focus_handle(),
             thread_items,
             store,
-            show_user_panel: false,
             show_import_prompt,
             sync_status: settings_sync::SyncStatus::Idle,
             _subscription: subscription,
@@ -396,11 +397,7 @@ impl ThreadList {
 
 impl Render for ThreadList {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.title_bar.update(cx, |title_bar, _cx| {
-            title_bar.avatar_active = self.show_user_panel;
-        });
-
-        if self.show_user_panel {
+        if cx.global::<AppStore>().user_panel_active {
             return div()
                 .track_focus(&self.focus_handle)
                 .on_action(|_: &CloseWindow, window, _| {

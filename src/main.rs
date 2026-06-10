@@ -80,6 +80,7 @@ fn main() {
                 auth,
                 session,
                 sync_meta,
+                user_panel_active: false,
             });
 
             cx.on_action(quit);
