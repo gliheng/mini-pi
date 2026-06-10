@@ -16,19 +16,29 @@ pub enum UserPanelEvent {
     AuthStateChanged,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum AuthDialog {
+    Login,
+    Signup,
+}
+
 pub struct UserPanel {
     pub email_input: gpui::Entity<TextInput>,
     pub password_input: gpui::Entity<TextInput>,
+    pub confirm_password_input: gpui::Entity<TextInput>,
     pub auth_error: Option<String>,
     pub sync_status: settings_sync::SyncStatus,
+    pub auth_dialog: Option<AuthDialog>,
     pub _email_sub: gpui::Subscription,
     pub _password_sub: gpui::Subscription,
+    pub _confirm_password_sub: gpui::Subscription,
 }
 
 impl UserPanel {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let email_input = cx.new(|cx| TextInput::new(cx, "Email"));
         let password_input = cx.new(|cx| TextInput::new(cx, "Password").with_password_mode());
+        let confirm_password_input = cx.new(|cx| TextInput::new(cx, "Confirm Password").with_password_mode());
 
         let _email_sub = cx.observe(&email_input, |_, _, cx| {
             cx.notify();
@@ -36,14 +46,20 @@ impl UserPanel {
         let _password_sub = cx.observe(&password_input, |_, _, cx| {
             cx.notify();
         });
+        let _confirm_password_sub = cx.observe(&confirm_password_input, |_, _, cx| {
+            cx.notify();
+        });
 
         Self {
             email_input,
             password_input,
+            confirm_password_input,
             auth_error: None,
             sync_status: settings_sync::SyncStatus::Idle,
+            auth_dialog: None,
             _email_sub,
             _password_sub,
+            _confirm_password_sub,
         }
     }
 }
@@ -53,10 +69,16 @@ impl EventEmitter<UserPanelEvent> for UserPanel {}
 impl Render for UserPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let auth = cx.global::<AppStore>().auth.clone();
+        if auth.is_logged_in() && self.auth_dialog.is_some() {
+            self.auth_dialog = None;
+        }
+
         let email_val = self.email_input.read(cx).content().clone();
         let password_val = self.password_input.read(cx).content().clone();
+        let is_logging_in = matches!(auth, AuthState::LoggingIn);
+        let error_msg: Option<SharedString> = self.auth_error.clone().map(|s| s.into());
 
-        div()
+        let content = div()
             .id("user-panel-content")
             .flex_1()
             .overflow_y_scroll()
@@ -80,7 +102,185 @@ impl Render for UserPanel {
                     .size(px(48.))
                     .text_color(rgb(0x6366f1)),
             )
-            .child(render_auth_content(self, &auth, &email_val, &password_val, cx))
+            .child(render_auth_content(self, &auth, cx));
+
+        if let Some(dialog) = self.auth_dialog {
+            let confirm_password_val = self.confirm_password_input.read(cx).content().clone();
+
+            let (title, subtitle): (SharedString, SharedString) = match dialog {
+                AuthDialog::Login => ("Sign In".into(), "Sign in to sync your agent settings across devices".into()),
+                AuthDialog::Signup => ("Create Account".into(), "Sign up to sync your agent settings across devices".into()),
+            };
+
+            let form_fields = div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(render_email_field(self))
+                .child(render_password_field(self))
+                .when(dialog == AuthDialog::Signup, |el: gpui::Div| {
+                    el.child(render_confirm_password_field(self))
+                })
+                .when(error_msg.is_some(), |el: gpui::Div| {
+                    el.child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(0xfca5a5))
+                            .child(error_msg.unwrap_or_default()),
+                    )
+                })
+                .when(is_logging_in, |el: gpui::Div| {
+                    el.child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .px_4()
+                            .py_3()
+                            .rounded_lg()
+                            .bg(rgb(0x4f46e5))
+                            .text_color(rgb(0xffffff))
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child("Signing in..."),
+                    )
+                })
+                .when(!is_logging_in && dialog == AuthDialog::Login, |el: gpui::Div| {
+                    el.child(render_login_button(email_val.clone(), password_val.clone(), cx))
+                })
+                .when(!is_logging_in && dialog == AuthDialog::Signup, |el: gpui::Div| {
+                    el.child(render_signup_submit_button(email_val.clone(), password_val.clone(), confirm_password_val.clone(), cx))
+                });
+
+            div()
+                .id("user-panel")
+                .flex()
+                .flex_col()
+                .size_full()
+                .relative()
+                .child(content)
+                .child(
+                    div()
+                        .id("auth-dialog-overlay")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .bg(gpui::rgba(0x00000099))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.auth_dialog = None;
+                            this.auth_error = None;
+                            cx.notify();
+                        }))
+                        .child(
+                            div()
+                                .id("auth-dialog-card")
+                                .mx_8()
+                                .w(px(360.))
+                                .flex()
+                                .flex_col()
+                                .gap_4()
+                                .px_6()
+                                .py_6()
+                                .rounded_xl()
+                                .bg(rgb(0x1f1f1f))
+                                .border_1()
+                                .border_color(rgb(0x333333))
+                                .on_click(|_, _, cx| {
+                                    cx.stop_propagation();
+                                })
+                                .child(
+                                    div()
+                                        .text_xl()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(rgb(0xe0e0e0))
+                                        .child(title),
+                                )
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(rgb(0x888888))
+                                        .child(subtitle),
+                                )
+                                .child(form_fields)
+                                .child(
+                                    div()
+                                        .id("auth-dialog-close-btn")
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .px_4()
+                                        .py_2()
+                                        .rounded_lg()
+                                        .bg(rgb(0x252525))
+                                        .border_1()
+                                        .border_color(rgb(0x444444))
+                                        .cursor_pointer()
+                                        .text_color(rgb(0x888888))
+                                        .text_sm()
+                                        .hover(|style| style.bg(rgb(0x333333)))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.auth_dialog = None;
+                                            this.auth_error = None;
+                                            cx.notify();
+                                        }))
+                                        .child("Cancel"),
+                                )
+                                .when(!is_logging_in && dialog == AuthDialog::Login, |el| {
+                                    el.child(
+                                        div()
+                                            .id("switch-to-signup")
+                                            .w_full()
+                                            .flex()
+                                            .flex_row()
+                                            .justify_end()
+                                            .cursor_pointer()
+                                            .text_color(rgb(0x6366f1))
+                                            .text_xs()
+                                            .hover(|style| style.text_color(rgb(0x818cf8)))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.auth_error = None;
+                                                this.auth_dialog = Some(AuthDialog::Signup);
+                                                cx.notify();
+                                            }))
+                                            .child("Create Account"),
+                                    )
+                                })
+                                .when(!is_logging_in && dialog == AuthDialog::Signup, |el| {
+                                    el.child(
+                                        div()
+                                            .id("switch-to-login")
+                                            .w_full()
+                                            .flex()
+                                            .flex_row()
+                                            .justify_end()
+                                            .cursor_pointer()
+                                            .text_color(rgb(0x6366f1))
+                                            .text_xs()
+                                            .hover(|style| style.text_color(rgb(0x818cf8)))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.auth_error = None;
+                                                this.auth_dialog = Some(AuthDialog::Login);
+                                                cx.notify();
+                                            }))
+                                            .child("Sign In"),
+                                    )
+                                }),
+                        )
+                )
+        } else {
+            div()
+                .id("user-panel")
+                .flex()
+                .flex_col()
+                .size_full()
+                .child(content)
+        }
     }
 }
 
@@ -109,8 +309,6 @@ fn render_back_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
 fn render_auth_content(
     panel: &UserPanel,
     auth: &AuthState,
-    email_val: &SharedString,
-    password_val: &SharedString,
     cx: &mut Context<UserPanel>,
 ) -> impl IntoElement {
     match auth {
@@ -238,25 +436,44 @@ fn render_auth_content(
                 .child(render_logout_button(cx))
         }
         _ => {
-            let is_logging_in = matches!(auth, AuthState::LoggingIn);
-            let error_msg: Option<SharedString> = panel.auth_error.clone().map(|s| s.into());
-
             div()
                 .w_full()
                 .flex()
                 .flex_col()
                 .items_center()
-                .gap_4()
+                .gap_6()
                 .child(
                     div()
-                        .text_xl()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(rgb(0xe0e0e0))
-                        .child("Welcome to Mini Pi"),
+                        .id("login-dialog-btn")
+                        .w_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .gap_2()
+                        .px_4()
+                        .py_3()
+                        .rounded_lg()
+                        .bg(rgb(0x6366f1))
+                        .cursor_pointer()
+                        .text_color(rgb(0xffffff))
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .hover(|style| style.bg(rgb(0x4f46e5)))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.auth_dialog = Some(AuthDialog::Login);
+                            cx.notify();
+                        }))
+                        .child(
+                            gpui::svg()
+                                .path("login.svg")
+                                .size(px(16.))
+                                .text_color(rgb(0xffffff)),
+                        )
+                        .child("Sign In"),
                 )
                 .child(
                     div()
-                        .text_sm()
+                        .text_xs()
                         .text_color(rgb(0x888888))
                         .child("Sign in to sync your agent settings"),
                 )
@@ -265,38 +482,20 @@ fn render_auth_content(
                         .w_full()
                         .flex()
                         .flex_col()
-                        .gap_3()
-                        .child(render_email_field(panel))
-                        .child(render_password_field(panel))
-                        .when(error_msg.is_some(), |el: gpui::Div| {
-                            el.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(0xfca5a5))
-                                    .child(error_msg.unwrap_or_default()),
-                            )
-                        })
-                        .when(is_logging_in, |el: gpui::Div| {
-                            el.child(
-                                div()
-                                    .w_full()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .px_4()
-                                    .py_3()
-                                    .rounded_lg()
-                                    .bg(rgb(0x4f46e5))
-                                    .text_color(rgb(0xffffff))
-                                    .text_sm()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child("Signing in..."),
-                            )
-                        })
-                        .when(!is_logging_in, |el: gpui::Div| {
-                            el.child(render_login_button(email_val.clone(), password_val.clone(), cx))
-                                .child(render_signup_button(email_val.clone(), password_val.clone(), cx))
-                        }),
+                        .gap_2()
+                        .child(
+                            div()
+                                .px_2()
+                                .py_1()
+                                .text_xs()
+                                .text_color(rgb(0x888888))
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child("SETTINGS"),
+                        )
+                        .child(settings_row("Notifications", "notifications.svg"))
+                        .child(settings_row("Appearance", "appearance.svg"))
+                        .child(settings_row("Keyboard Shortcuts", "keyboard.svg"))
+                        .child(settings_row("About", "about.svg")),
                 )
         }
     }
@@ -415,13 +614,40 @@ fn render_login_button(
         .child("Sign In")
 }
 
-fn render_signup_button(
+fn render_confirm_password_field(panel: &UserPanel) -> impl IntoElement {
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .text_xs()
+                .text_color(rgb(0x888888))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .child("CONFIRM PASSWORD"),
+        )
+        .child(
+            div()
+                .w_full()
+                .px_3()
+                .py_2()
+                .rounded_lg()
+                .bg(rgb(0x252525))
+                .border_1()
+                .border_color(rgb(0x444444))
+                .child(panel.confirm_password_input.clone()),
+        )
+}
+
+fn render_signup_submit_button(
     email_val: SharedString,
     password_val: SharedString,
+    confirm_password_val: SharedString,
     cx: &mut Context<UserPanel>,
 ) -> impl IntoElement {
     div()
-        .id("signup-button")
+        .id("signup-submit-button")
         .w_full()
         .flex()
         .items_center()
@@ -429,20 +655,24 @@ fn render_signup_button(
         .px_4()
         .py_3()
         .rounded_lg()
-        .bg(rgb(0x252525))
-        .border_1()
-        .border_color(rgb(0x444444))
+        .bg(rgb(0x6366f1))
         .cursor_pointer()
-        .text_color(rgb(0xcccccc))
+        .text_color(rgb(0xffffff))
         .text_sm()
         .font_weight(gpui::FontWeight::SEMIBOLD)
-        .hover(|style| style.bg(rgb(0x333333)))
+        .hover(|style| style.bg(rgb(0x4f46e5)))
         .on_click(cx.listener(move |this, _, _, cx| {
             this.auth_error = None;
             let email = email_val.to_string();
             let password = password_val.to_string();
+            let confirm = confirm_password_val.to_string();
             if email.is_empty() || password.is_empty() {
                 this.auth_error = Some("Email and password are required".to_string());
+                cx.notify();
+                return;
+            }
+            if password != confirm {
+                this.auth_error = Some("Passwords do not match".to_string());
                 cx.notify();
                 return;
             }

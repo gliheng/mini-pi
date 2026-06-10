@@ -55,10 +55,10 @@ impl From<std::io::Error> for SupabaseAuthError {
 
 #[derive(Deserialize)]
 struct AuthResponse {
-    access_token: String,
-    refresh_token: String,
+    access_token: Option<String>,
+    refresh_token: Option<String>,
     expires_in: Option<i64>,
-    user: AuthUserResponse,
+    user: Option<AuthUserResponse>,
 }
 
 #[derive(Deserialize)]
@@ -101,16 +101,22 @@ pub fn signup(email: &str, password: &str) -> Result<SupabaseSession, SupabaseAu
     let expires_in = auth_resp.expires_in.unwrap_or(3600);
     let expires_at = chrono::Utc::now().timestamp() + expires_in;
 
-    Ok(SupabaseSession {
-        access_token: auth_resp.access_token,
-        refresh_token: auth_resp.refresh_token,
-        expires_at,
-        user: SupabaseUser {
-            id: auth_resp.user.id,
-            email: auth_resp.user.email,
-            created_at: auth_resp.user.created_at,
-        },
-    })
+    match (auth_resp.access_token, auth_resp.user) {
+        (Some(access_token), Some(user)) => Ok(SupabaseSession {
+            access_token,
+            refresh_token: auth_resp.refresh_token.unwrap_or_default(),
+            expires_at,
+            user: SupabaseUser {
+                id: user.id,
+                email: user.email,
+                created_at: user.created_at,
+            },
+        }),
+        _ => Err(SupabaseAuthError::Api {
+            msg: "Please check your email to confirm your account, then sign in.".to_string(),
+            status: 200,
+        }),
+    }
 }
 
 pub fn login(email: &str, password: &str) -> Result<SupabaseSession, SupabaseAuthError> {
@@ -149,14 +155,15 @@ pub fn login(email: &str, password: &str) -> Result<SupabaseSession, SupabaseAut
     let expires_in = auth_resp.expires_in.unwrap_or(3600);
     let expires_at = chrono::Utc::now().timestamp() + expires_in;
 
+    let user = auth_resp.user.unwrap();
     Ok(SupabaseSession {
-        access_token: auth_resp.access_token,
-        refresh_token: auth_resp.refresh_token,
+        access_token: auth_resp.access_token.unwrap(),
+        refresh_token: auth_resp.refresh_token.unwrap_or_default(),
         expires_at,
         user: SupabaseUser {
-            id: auth_resp.user.id,
-            email: auth_resp.user.email,
-            created_at: auth_resp.user.created_at,
+            id: user.id,
+            email: user.email,
+            created_at: user.created_at,
         },
     })
 }
@@ -198,14 +205,15 @@ pub fn refresh_session(
     let expires_in = auth_resp.expires_in.unwrap_or(3600);
     let expires_at = chrono::Utc::now().timestamp() + expires_in;
 
+    let user = auth_resp.user.unwrap();
     Ok(SupabaseSession {
-        access_token: auth_resp.access_token,
-        refresh_token: auth_resp.refresh_token,
+        access_token: auth_resp.access_token.unwrap(),
+        refresh_token: auth_resp.refresh_token.unwrap_or_default(),
         expires_at,
         user: SupabaseUser {
-            id: auth_resp.user.id,
-            email: auth_resp.user.email,
-            created_at: auth_resp.user.created_at,
+            id: user.id,
+            email: user.email,
+            created_at: user.created_at,
         },
     })
 }
