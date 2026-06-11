@@ -2,7 +2,7 @@ use std::{collections::VecDeque, ops::Range, sync::OnceLock};
 
 use gpui::{
     Context, FontStyle, FontWeight, HighlightStyle, IntoElement, ParentElement, Render,
-    SharedString, StatefulInteractiveElement, StrikethroughStyle, Styled, StyledText, UnderlineStyle, Window, div, prelude::*,
+    SharedString, StatefulInteractiveElement, StrikethroughStyle, Styled, StyledText, TextStyle, UnderlineStyle, Window, div, prelude::*,
     px, rgb,
 };
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
@@ -822,6 +822,18 @@ fn render_styled_inlines(inlines: &[InlineNode], theme: &MarkdownTheme) -> Style
     StyledText::new(text).with_highlights(highlights)
 }
 
+fn render_styled_inlines_with_size(
+    inlines: &[InlineNode],
+    theme: &MarkdownTheme,
+    font_size: gpui::Pixels,
+) -> StyledText {
+    let (text, highlights) = build_styled_inline_text(inlines, theme);
+    let mut style = TextStyle::default();
+    style.font_size = gpui::AbsoluteLength::Pixels(font_size);
+    style.color = theme.text_primary;
+    StyledText::new(text).with_default_highlights(&style, highlights)
+}
+
 fn render_inlines_text(inlines: &[InlineNode]) -> String {
     let mut result = String::new();
     for inline in inlines {
@@ -893,22 +905,22 @@ fn render_block(block: &BlockNode, theme: &MarkdownTheme) -> gpui::AnyElement {
             }
         }
         BlockNode::Heading { level, inlines } => {
-            let font_size = match level {
-                HeadingLevel::H1 => px(22.),
-                HeadingLevel::H2 => px(20.),
-                HeadingLevel::H3 => px(18.),
-                HeadingLevel::H4 => px(16.),
-                HeadingLevel::H5 => px(15.),
-                HeadingLevel::H6 => px(14.),
+            let (font_size, weight) = match level {
+                HeadingLevel::H1 => (px(26.), FontWeight(700.0)),
+                HeadingLevel::H2 => (px(22.), FontWeight(700.0)),
+                HeadingLevel::H3 => (px(19.), FontWeight(700.0)),
+                HeadingLevel::H4 => (px(16.), FontWeight(600.0)),
+                HeadingLevel::H5 => (px(14.), FontWeight(600.0)),
+                HeadingLevel::H6 => (px(13.), FontWeight(600.0)),
             };
             div()
                 .w_full()
-                .mt_1()
+                .mt_2()
                 .mb_1()
-                .font_weight(FontWeight(700.0))
                 .text_size(font_size)
+                .font_weight(weight)
                 .text_color(theme.heading_color)
-                .child(render_styled_inlines(inlines, theme))
+                .child(render_styled_inlines_with_size(inlines, theme, font_size))
                 .into_any_element()
         }
         BlockNode::CodeBlock { language, code } => {
@@ -1124,7 +1136,6 @@ impl Render for MarkdownRenderer {
         div()
             .flex()
             .flex_col()
-            .gap_1()
             .w_full()
             .text_color(theme.text_primary)
             .children(render_blocks(blocks, &theme))
@@ -1269,6 +1280,54 @@ mod tests {
             italic_cell.iter().any(|inline| matches!(inline, InlineNode::Emphasis { .. })),
             "Expected italic cell to contain Emphasis inline node, got: {:?}", italic_cell
         );
+    }
+
+    #[test]
+    fn heading_levels_are_distinct() {
+        let blocks = parse_markdown("# H1\n\n## H2\n\n### H3\n\n#### H4\n\n##### H5\n\n###### H6");
+        let levels: Vec<_> = blocks
+            .iter()
+            .filter_map(|b| match b {
+                BlockNode::Heading { level, .. } => Some(*level),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(levels.len(), 6, "expected 6 heading blocks");
+        assert_eq!(levels, vec![
+            HeadingLevel::H1,
+            HeadingLevel::H2,
+            HeadingLevel::H3,
+            HeadingLevel::H4,
+            HeadingLevel::H5,
+            HeadingLevel::H6,
+        ], "heading levels should be distinct");
+    }
+
+    #[test]
+    fn heading_font_sizes_are_distinct() {
+        let sizes: Vec<f32> = [
+            HeadingLevel::H1,
+            HeadingLevel::H2,
+            HeadingLevel::H3,
+            HeadingLevel::H4,
+            HeadingLevel::H5,
+            HeadingLevel::H6,
+        ]
+        .iter()
+        .map(|level| match level {
+            HeadingLevel::H1 => 22.0,
+            HeadingLevel::H2 => 20.0,
+            HeadingLevel::H3 => 18.0,
+            HeadingLevel::H4 => 16.0,
+            HeadingLevel::H5 => 15.0,
+            HeadingLevel::H6 => 14.0,
+        })
+        .collect();
+        // All sizes must be distinct
+        let mut unique = sizes.clone();
+        unique.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        unique.dedup();
+        assert_eq!(unique.len(), 6, "all 6 heading font sizes must be distinct");
     }
 
     #[test]
