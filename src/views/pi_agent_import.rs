@@ -7,17 +7,17 @@ use gpui::{
 use crate::auth::state;
 
 #[derive(Clone)]
-pub enum ImportPromptEvent {
+pub enum PiAgentImportEvent {
     ImportRequested,
     SkipRequested,
 }
 
-pub struct ImportPrompt {
+pub struct PiAgentImport {
     files: Vec<(String, std::path::PathBuf)>,
     import_result: Option<Result<usize, String>>,
 }
 
-impl ImportPrompt {
+impl PiAgentImport {
     pub fn new() -> Self {
         Self {
             files: state::list_pi_agent_json_files(),
@@ -41,9 +41,9 @@ impl ImportPrompt {
     }
 }
 
-impl EventEmitter<ImportPromptEvent> for ImportPrompt {}
+impl EventEmitter<PiAgentImportEvent> for PiAgentImport {}
 
-impl Render for ImportPrompt {
+impl Render for PiAgentImport {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         let file_names: String = self
             .files
@@ -68,7 +68,7 @@ impl Render for ImportPrompt {
                     .h_full()
                     .bg(gpui::hsla(0.0, 0.0, 0.0, 0.65))
                     .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _window, cx| {
-                        cx.emit(ImportPromptEvent::SkipRequested);
+                        cx.emit(PiAgentImportEvent::SkipRequested);
                     })),
             )
             .child(
@@ -150,7 +150,7 @@ impl Render for ImportPrompt {
                                             .hover(|style| style.bg(rgb(0x6366f1)))
                                             .on_click(cx.listener(|this: &mut Self, _, _, cx| {
                                                 this.run_import();
-                                                cx.emit(ImportPromptEvent::ImportRequested);
+                                                cx.emit(PiAgentImportEvent::ImportRequested);
                                                 cx.notify();
                                             }))
                                             .child("Import"),
@@ -172,7 +172,7 @@ impl Render for ImportPrompt {
                                             .font_weight(gpui::FontWeight::SEMIBOLD)
                                             .hover(|style| style.bg(rgb(0x444444)))
                                             .on_click(cx.listener(|_this: &mut Self, _, _, cx| {
-                                                cx.emit(ImportPromptEvent::SkipRequested);
+                                                cx.emit(PiAgentImportEvent::SkipRequested);
                                             }))
                                             .child("Skip"),
                                     ),

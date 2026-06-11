@@ -14,7 +14,7 @@ use crate::data::store::{Store, ThreadMeta};
 use crate::sync::settings_sync;
 use crate::utils::format::format_relative_time;
 use crate::views::chat_window::ChatWindow;
-use crate::views::import_prompt::{ImportPrompt, ImportPromptEvent};
+use crate::views::pi_agent_import::{PiAgentImport, PiAgentImportEvent};
 use crate::views::title_bar::{TitleBar, TitleBarEvent, TitleBarVariant};
 use crate::views::user_panel::{UserPanel, UserPanelEvent};
 
@@ -256,7 +256,7 @@ impl Render for ThreadItem {
 pub struct ThreadList {
     pub title_bar: gpui::Entity<TitleBar>,
     pub user_panel: gpui::Entity<UserPanel>,
-    pub import_prompt: gpui::Entity<ImportPrompt>,
+    pub import_prompt: gpui::Entity<PiAgentImport>,
     pub focus_handle: FocusHandle,
     pub thread_items: Vec<gpui::Entity<ThreadItem>>,
     pub store: Arc<Store>,
@@ -282,7 +282,7 @@ impl ThreadList {
         });
 
         let user_panel = cx.new(|cx| UserPanel::new(cx));
-        let import_prompt = cx.new(|_| ImportPrompt::new());
+        let import_prompt = cx.new(|_| PiAgentImport::new());
 
         let titlebar_subscription =
             cx.subscribe(&title_bar, move |_this, _, _event: &TitleBarEvent, cx| {
@@ -333,12 +333,12 @@ impl ThreadList {
             });
 
         let import_prompt_subscription =
-            cx.subscribe(&import_prompt, move |this, _, event: &ImportPromptEvent, _cx| {
+            cx.subscribe(&import_prompt, move |this, _, event: &PiAgentImportEvent, _cx| {
                 match event {
-                    ImportPromptEvent::ImportRequested => {
+                    PiAgentImportEvent::ImportRequested => {
                         this.show_import_prompt = false;
                     }
-                    ImportPromptEvent::SkipRequested => {
+                    PiAgentImportEvent::SkipRequested => {
                         this.show_import_prompt = false;
                     }
                 }
