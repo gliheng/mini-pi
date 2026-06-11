@@ -1065,7 +1065,7 @@ chat_input,
                     .overflow_y_scroll()
                     .bg(rgb(0x1e1e1e))
                     .border_1()
-                    .border_color(rgb(0x3b82f6))
+                    .border_color(rgb(0x6366f1))
                     .rounded_md()
                     .py_1()
                     .shadow(vec![gpui::BoxShadow {
@@ -1102,7 +1102,7 @@ chat_input,
                                 svg()
                                     .path(icon)
                                     .size(px(14.))
-                                    .text_color(if is_highlighted { rgb(0x3b82f6) } else { rgb(0x888888) }),
+                                    .text_color(if is_highlighted { rgb(0x6366f1) } else { rgb(0x888888) }),
                             )
                             .child(
                                 div()
@@ -1268,7 +1268,7 @@ chat_input,
                     .overflow_y_scroll()
                     .bg(rgb(0x1e1e1e))
                     .border_1()
-                    .border_color(rgb(0x3b82f6))
+                    .border_color(rgb(0x6366f1))
                     .rounded_md()
                     .py_1()
                     .shadow(vec![gpui::BoxShadow {
@@ -1540,7 +1540,7 @@ impl Render for ChatWindow {
                                                                         .rounded_md()
                                                                         .when(is_user, |this| {
                                                                             this.px_3()
-                                                                                .bg(rgb(0x3b82f6))
+                                                                                .bg(rgb(0x6366f1))
                                                                                 .text_color(rgb(0xffffff))
                                                                         })
                                                                         .when(matches!(msg.role, Role::Assistant), |this| {
@@ -1740,7 +1740,7 @@ impl Render for ChatWindow {
                                 .px_2()
                                 .py_0p5()
                                 .rounded_md()
-                                .bg(if is_selected { rgb(0x3b82f6) } else { rgb(0x2a2a2a) })
+                                .bg(if is_selected { rgb(0x6366f1) } else { rgb(0x2a2a2a) })
                                 .text_color(if is_selected { rgb(0xffffff) } else { rgb(0xaaaaaa) })
                                 .text_xs()
                                 .cursor_pointer()
@@ -1818,7 +1818,7 @@ impl Render for ChatWindow {
                                             .items_center()
                                             .justify_center()
                                             .size(px(28.))
-                                            .bg(if is_disabled { rgb(0x666666) } else { rgb(0x3b82f6) })
+                                            .bg(if is_disabled { rgb(0x666666) } else { rgb(0x6366f1) })
                                             .rounded_md()
                                             .text_color(rgb(0xffffff))
                                             .when(!is_disabled, |this| this.cursor_pointer())
