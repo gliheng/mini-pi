@@ -20,7 +20,7 @@ use crate::core::app::AppStore;
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::data::store::{Store, ThreadMeta, WorkspaceMeta};
 use crate::rpc::pi_rpc::{BridgeEvent, PiRpc};
-use crate::ui::chat_input::ChatInput;
+use crate::ui::text_area::TextArea;
 use crate::ui::dropdown::{Direction, Dropdown, DropdownEvent, DropdownItem};
 use crate::ui::loader::{loader, text_loader};
 use crate::ui::markdown::MarkdownRenderer;
@@ -35,7 +35,7 @@ pub struct ChatWindow {
     pub session_file: String,
     pub title_bar: gpui::Entity<TitleBar>,
     pub messages: Vec<Message>,
-    pub chat_input: gpui::Entity<ChatInput>,
+    pub chat_input: gpui::Entity<TextArea>,
     pub focus_handle: FocusHandle,
     pub state: ChatState,
     pub store: Arc<Store>,
@@ -70,7 +70,7 @@ impl ChatWindow {
                 }
             })
             .unwrap_or_else(|| "New Thread".into());
-        let chat_input = cx.new(|cx| ChatInput::new(cx, "Type a message..."));
+        let chat_input = cx.new(|cx| TextArea::new(cx, "Type a message..."));
         let title_bar = cx.new(|_| TitleBar::new(title.clone(), TitleBarVariant::Chat));
 
         let session_file: String =
@@ -774,7 +774,7 @@ chat_input,
                     if let Some(ref data_val) = data {
                         if let Some(commands) = data_val.get("commands") {
                             if let Some(arr) = commands.as_array() {
-                                let items: Vec<crate::ui::chat_input::CommandItem> = arr
+                                let items: Vec<crate::ui::text_area::CommandItem> = arr
                                     .iter()
                                     .filter_map(|cmd| {
                                         let name = cmd.get("name")?.as_str()?.to_string();
@@ -787,7 +787,7 @@ chat_input,
                                             .and_then(|s| s.as_str())
                                             .unwrap_or("unknown")
                                             .to_string();
-                                        Some(crate::ui::chat_input::CommandItem {
+                                        Some(crate::ui::text_area::CommandItem {
                                             name,
                                             description,
                                             source,

@@ -1,5 +1,6 @@
 use std::ops::Range;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, ElementInputHandler,
@@ -13,7 +14,7 @@ use unicode_segmentation::*;
 use crate::utils::file_scanner;
 
 actions!(
-    chat_input,
+    text_area,
     [
         Backspace,
         Delete,
@@ -55,12 +56,12 @@ pub struct AtMentionParse {
 }
 
 #[derive(Clone, Debug)]
-pub enum ChatInputEvent {
+pub enum TextAreaEvent {
     Change,
     AtMentionChanged,
 }
 
-pub struct ChatInput {
+pub struct TextArea {
     pub focus_handle: FocusHandle,
     pub content: SharedString,
     pub placeholder: SharedString,
@@ -70,6 +71,9 @@ pub struct ChatInput {
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
+    cursor_visible: bool,
+    blink_enabled: bool,
+    blink_epoch: usize,
 
     pub enable_at_mention: bool,
     pub at_mention_active: bool,
@@ -94,9 +98,9 @@ pub struct ChatInput {
     available_commands: Vec<CommandItem>,
 }
 
-impl EventEmitter<ChatInputEvent> for ChatInput {}
+impl EventEmitter<TextAreaEvent> for TextArea {}
 
-impl ChatInput {
+impl TextArea {
     pub fn new(cx: &mut Context<Self>, placeholder: impl Into<SharedString>) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
@@ -108,6 +112,9 @@ impl ChatInput {
             last_layout: None,
             last_bounds: None,
             is_selecting: false,
+            cursor_visible: true,
+            blink_enabled: false,
+            blink_epoch: 0,
             enable_at_mention: true,
             at_mention_active: false,
             at_mention_query: String::new(),
@@ -408,6 +415,7 @@ impl ChatInput {
         self.last_layout = None;
         self.last_bounds = None;
         self.is_selecting = false;
+        self.pause_blinking(cx);
         cx.notify();
     }
 
@@ -547,6 +555,7 @@ impl ChatInput {
 
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         self.selected_range = offset..offset;
+        self.pause_blinking(cx);
         cx.notify()
     }
 
@@ -586,6 +595,7 @@ impl ChatInput {
             self.selection_reversed = !self.selection_reversed;
             self.selected_range = self.selected_range.end..self.selected_range.start;
         }
+        self.pause_blinking(cx);
         cx.notify()
     }
 
@@ -653,6 +663,7 @@ impl ChatInput {
         self.last_layout = None;
         self.last_bounds = None;
         self.is_selecting = false;
+        self.pause_blinking(cx);
         self.update_popups(cx);
         cx.notify();
     }
@@ -665,6 +676,9 @@ impl ChatInput {
         self.last_layout = None;
         self.last_bounds = None;
         self.is_selecting = false;
+        self.cursor_visible = true;
+        self.blink_enabled = false;
+        self.blink_epoch += 1;
         self.at_mention_active = false;
         self.mention_items.clear();
         self.slash_command_active = false;
@@ -672,9 +686,67 @@ impl ChatInput {
         self.just_selected_mention = false;
         cx.notify();
     }
+
+    fn enable_blinking(&mut self, cx: &mut Context<Self>) {
+        if self.blink_enabled {
+            return;
+        }
+        self.blink_enabled = true;
+        self.blink_epoch += 1;
+        let epoch = self.blink_epoch;
+        self.cursor_visible = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_millis(530)).await;
+            this.update(cx, |this, cx| this.blink_cursor(epoch, cx)).ok();
+        })
+        .detach();
+    }
+
+    fn disable_blinking(&mut self, _cx: &mut Context<Self>) {
+        self.blink_enabled = false;
+        self.blink_epoch += 1;
+        self.cursor_visible = true;
+    }
+
+    fn pause_blinking(&mut self, cx: &mut Context<Self>) {
+        if !self.blink_enabled {
+            return;
+        }
+        self.cursor_visible = true;
+        cx.notify();
+        self.blink_epoch += 1;
+        let epoch = self.blink_epoch;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_millis(500)).await;
+            this.update(cx, |this, cx| this.resume_blinking(epoch, cx)).ok();
+        })
+        .detach();
+    }
+
+    fn resume_blinking(&mut self, epoch: usize, cx: &mut Context<Self>) {
+        if self.blink_enabled && self.blink_epoch == epoch {
+            self.blink_cursor(epoch, cx);
+        }
+    }
+
+    fn blink_cursor(&mut self, epoch: usize, cx: &mut Context<Self>) {
+        if !self.blink_enabled || self.blink_epoch != epoch {
+            return;
+        }
+        self.cursor_visible = !self.cursor_visible;
+        cx.notify();
+        self.blink_epoch += 1;
+        let next_epoch = self.blink_epoch;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_millis(530)).await;
+            this.update(cx, |this, cx| this.blink_cursor(next_epoch, cx)).ok();
+        })
+        .detach();
+    }
 }
 
-impl EntityInputHandler for ChatInput {
+impl EntityInputHandler for TextArea {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
@@ -741,7 +813,7 @@ impl EntityInputHandler for ChatInput {
         self.selected_range = start + new_text.len()..start + new_text.len();
         self.marked_range.take();
         self.update_popups(cx);
-        cx.emit(ChatInputEvent::Change);
+        cx.emit(TextAreaEvent::Change);
         cx.notify();
     }
 
@@ -777,7 +849,7 @@ impl EntityInputHandler for ChatInput {
             .unwrap_or_else(|| start + new_text.len()..start + new_text.len());
 
         self.update_popups(cx);
-        cx.emit(ChatInputEvent::Change);
+        cx.emit(TextAreaEvent::Change);
         cx.notify();
     }
 
@@ -816,8 +888,8 @@ impl EntityInputHandler for ChatInput {
     }
 }
 
-struct ChatInputElement {
-    input: Entity<ChatInput>,
+struct TextAreaElement {
+    input: Entity<TextArea>,
 }
 
 struct PrepaintState {
@@ -826,7 +898,7 @@ struct PrepaintState {
     selection: Option<PaintQuad>,
 }
 
-impl IntoElement for ChatInputElement {
+impl IntoElement for TextAreaElement {
     type Element = Self;
 
     fn into_element(self) -> Self::Element {
@@ -834,7 +906,7 @@ impl IntoElement for ChatInputElement {
     }
 }
 
-impl Element for ChatInputElement {
+impl Element for TextAreaElement {
     type RequestLayoutState = ();
     type PrepaintState = PrepaintState;
 
@@ -922,16 +994,18 @@ impl Element for ChatInputElement {
 
         let cursor_pos = line.x_for_index(cursor);
         let (selection, cursor) = if selected_range.is_empty() {
-            (
-                None,
+            let cursor = if input.cursor_visible {
                 Some(fill(
                     Bounds::new(
                         point(bounds.left() + cursor_pos, bounds.top()),
                         size(px(2.), bounds.bottom() - bounds.top()),
                     ),
                     hsla(200. / 360., 0.8, 0.7, 1.),
-                )),
-            )
+                ))
+            } else {
+                None
+            };
+            (None, cursor)
         } else {
             (
                 Some(fill(
@@ -991,10 +1065,16 @@ impl Element for ChatInputElement {
     }
 }
 
-impl Render for ChatInput {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl Render for TextArea {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_focused = self.focus_handle.is_focused(window);
+        if is_focused && !self.blink_enabled {
+            self.enable_blinking(cx);
+        } else if !is_focused && self.blink_enabled {
+            self.disable_blinking(cx);
+        }
         div()
-            .key_context("ChatInput")
+            .key_context("TextArea")
             .w_full()
             .h(px(28.))
             .track_focus(&self.focus_handle(cx))
@@ -1048,11 +1128,11 @@ impl Render for ChatInput {
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .line_height(px(20.))
             .text_size(px(14.))
-            .child(div().size_full().child(ChatInputElement { input: cx.entity() }))
+            .child(div().size_full().child(TextAreaElement { input: cx.entity() }))
     }
 }
 
-impl Focusable for ChatInput {
+impl Focusable for TextArea {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }

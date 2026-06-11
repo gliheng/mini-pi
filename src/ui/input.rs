@@ -1,4 +1,5 @@
 use std::ops::Range;
+use std::time::Duration;
 
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
@@ -41,6 +42,9 @@ pub struct TextInput {
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
     password_mode: bool,
+    cursor_visible: bool,
+    blink_enabled: bool,
+    blink_epoch: usize,
 }
 
 impl TextInput {
@@ -56,6 +60,9 @@ impl TextInput {
             last_bounds: None,
             is_selecting: false,
             password_mode: false,
+            cursor_visible: true,
+            blink_enabled: false,
+            blink_epoch: 0,
         }
     }
 
@@ -204,6 +211,7 @@ impl TextInput {
 
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         self.selected_range = offset..offset;
+        self.pause_blinking(cx);
         cx.notify()
     }
 
@@ -243,6 +251,7 @@ impl TextInput {
             self.selection_reversed = !self.selection_reversed;
             self.selected_range = self.selected_range.end..self.selected_range.start;
         }
+        self.pause_blinking(cx);
         cx.notify()
     }
 
@@ -307,6 +316,7 @@ impl TextInput {
         self.last_layout = None;
         self.last_bounds = None;
         self.is_selecting = false;
+        self.pause_blinking(cx);
         cx.notify();
     }
 
@@ -318,6 +328,67 @@ impl TextInput {
         self.last_layout = None;
         self.last_bounds = None;
         self.is_selecting = false;
+        self.cursor_visible = true;
+        self.blink_enabled = false;
+        self.blink_epoch += 1;
+    }
+
+    fn enable_blinking(&mut self, cx: &mut Context<Self>) {
+        if self.blink_enabled {
+            return;
+        }
+        self.blink_enabled = true;
+        self.blink_epoch += 1;
+        let epoch = self.blink_epoch;
+        self.cursor_visible = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_millis(530)).await;
+            this.update(cx, |this, cx| this.blink_cursor(epoch, cx)).ok();
+        })
+        .detach();
+    }
+
+    fn disable_blinking(&mut self, _cx: &mut Context<Self>) {
+        self.blink_enabled = false;
+        self.blink_epoch += 1;
+        self.cursor_visible = true;
+    }
+
+    fn pause_blinking(&mut self, cx: &mut Context<Self>) {
+        if !self.blink_enabled {
+            return;
+        }
+        self.cursor_visible = true;
+        cx.notify();
+        self.blink_epoch += 1;
+        let epoch = self.blink_epoch;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_millis(500)).await;
+            this.update(cx, |this, cx| this.resume_blinking(epoch, cx)).ok();
+        })
+        .detach();
+    }
+
+    fn resume_blinking(&mut self, epoch: usize, cx: &mut Context<Self>) {
+        if self.blink_enabled && self.blink_epoch == epoch {
+            self.blink_cursor(epoch, cx);
+        }
+    }
+
+    fn blink_cursor(&mut self, epoch: usize, cx: &mut Context<Self>) {
+        if !self.blink_enabled || self.blink_epoch != epoch {
+            return;
+        }
+        self.cursor_visible = !self.cursor_visible;
+        cx.notify();
+        self.blink_epoch += 1;
+        let next_epoch = self.blink_epoch;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_millis(530)).await;
+            this.update(cx, |this, cx| this.blink_cursor(next_epoch, cx)).ok();
+        })
+        .detach();
     }
 }
 
@@ -378,6 +449,7 @@ impl EntityInputHandler for TextInput {
                 .into();
         self.selected_range = range.start + new_text.len()..range.start + new_text.len();
         self.marked_range.take();
+        self.pause_blinking(cx);
         cx.notify();
     }
 
@@ -557,16 +629,18 @@ impl Element for TextElement {
 
         let cursor_pos = line.x_for_index(cursor);
         let (selection, cursor) = if selected_range.is_empty() {
-            (
-                None,
+            let cursor = if input.cursor_visible {
                 Some(fill(
                     Bounds::new(
                         point(bounds.left() + cursor_pos, bounds.top()),
                         size(px(2.), bounds.bottom() - bounds.top()),
                     ),
                     hsla(200. / 360., 0.8, 0.7, 1.),
-                )),
-            )
+                ))
+            } else {
+                None
+            };
+            (None, cursor)
         } else {
             (
                 Some(fill(
@@ -629,7 +703,13 @@ impl Element for TextElement {
 }
 
 impl Render for TextInput {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_focused = self.focus_handle.is_focused(window);
+        if is_focused && !self.blink_enabled {
+            self.enable_blinking(cx);
+        } else if !is_focused && self.blink_enabled {
+            self.disable_blinking(cx);
+        }
         div()
             .key_context("TextInput")
             .w_full()

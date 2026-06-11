@@ -1,8 +1,8 @@
-use std::{collections::VecDeque, ops::Range, sync::OnceLock};
+use std::{collections::VecDeque, ops::Range, sync::{Arc, OnceLock}};
 
 use gpui::{
-    Context, FontStyle, FontWeight, HighlightStyle, IntoElement, ParentElement, Render,
-    SharedString, StatefulInteractiveElement, StrikethroughStyle, Styled, StyledText, TextStyle, UnderlineStyle, Window, div, prelude::*,
+    Context, FontStyle, FontWeight, HighlightStyle, Image, ImageFormat, IntoElement, ParentElement, Render,
+    SharedString, StatefulInteractiveElement, StrikethroughStyle, Styled, StyledImage, StyledText, TextStyle, UnderlineStyle, Window, div, img, prelude::*,
     px, rgb,
 };
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
@@ -887,6 +887,227 @@ fn render_inlines_text(inlines: &[InlineNode]) -> String {
     result
 }
 
+fn decode_data_url_image(url: &str) -> Option<Arc<Image>> {
+    let data_url = url.strip_prefix("data:")?;
+    let (mime_info, data) = data_url.split_once(',')?;
+    let (mime_type, encoding) = mime_info.split_once(';')?;
+    let format = ImageFormat::from_mime_type(mime_type)?;
+    if encoding != "base64" {
+        return None;
+    }
+    let bytes = base64::Engine::decode(&base64::prelude::BASE64_STANDARD, data).ok()?;
+    Some(Arc::new(Image::from_bytes(format, bytes)))
+}
+
+fn image_source_from_url(url: &str) -> Option<gpui::ImageSource> {
+    if url.starts_with("data:") {
+        let image = decode_data_url_image(url)?;
+        Some(gpui::ImageSource::Image(image))
+    } else {
+        Some(url.into())
+    }
+}
+
+fn inlines_contain_image(inlines: &[InlineNode]) -> bool {
+    inlines.iter().any(|inline| {
+        matches!(inline, InlineNode::Image { .. })
+            || match inline {
+                InlineNode::Emphasis { children }
+                | InlineNode::Strong { children }
+                | InlineNode::Strikethrough { children }
+                | InlineNode::Link { children } => inlines_contain_image(children),
+                _ => false,
+            }
+    })
+}
+
+/// Renders inline nodes as a sequence of GPUI elements, mixing StyledText
+/// with img() elements for images (like Zed's markdown renderer).
+fn render_inlines_as_elements(
+    inlines: &[InlineNode],
+    theme: &MarkdownTheme,
+    base_text_style: Option<TextStyle>,
+) -> Vec<gpui::AnyElement> {
+    let mut elements: Vec<gpui::AnyElement> = Vec::new();
+    let mut text = String::new();
+    let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
+
+    fn flush_text(
+        text: &mut String,
+        highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
+        elements: &mut Vec<gpui::AnyElement>,
+        base_text_style: &Option<TextStyle>,
+    ) {
+        if text.is_empty() {
+            return;
+        }
+        let styled = if let Some(style) = base_text_style {
+            StyledText::new(std::mem::take(text)).with_default_highlights(style, std::mem::take(highlights))
+        } else {
+            StyledText::new(std::mem::take(text)).with_highlights(std::mem::take(highlights))
+        };
+        elements.push(styled.into_any_element());
+    }
+
+    fn collect(
+        inlines: &[InlineNode],
+        active_style: HighlightStyle,
+        text: &mut String,
+        highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
+        elements: &mut Vec<gpui::AnyElement>,
+        theme: &MarkdownTheme,
+        base_text_style: &Option<TextStyle>,
+    ) {
+        for inline in inlines {
+            match inline {
+                InlineNode::Text { text: inline_text } => {
+                    append_highlighted_text(text, highlights, inline_text, active_style);
+                }
+                InlineNode::Code { code } => {
+                    let style = active_style.highlight(HighlightStyle {
+                        color: Some(theme.code_inline_text),
+                        background_color: Some(theme.code_inline_bg),
+                        ..Default::default()
+                    });
+                    append_padded_segment(text, highlights, code, style);
+                }
+                InlineNode::Emphasis { children } => {
+                    append_padded_children_to_elements(
+                        text, highlights, elements, children,
+                        active_style.highlight(FontStyle::Italic.into()),
+                        theme, base_text_style,
+                    );
+                }
+                InlineNode::Strong { children } => {
+                    append_padded_children_to_elements(
+                        text, highlights, elements, children,
+                        active_style.highlight(FontWeight(700.0).into()),
+                        theme, base_text_style,
+                    );
+                }
+                InlineNode::Strikethrough { children } => {
+                    append_padded_children_to_elements(
+                        text, highlights, elements, children,
+                        active_style.highlight(HighlightStyle {
+                            strikethrough: Some(StrikethroughStyle::default()),
+                            ..Default::default()
+                        }),
+                        theme, base_text_style,
+                    );
+                }
+                InlineNode::Link { children } => {
+                    append_padded_children_to_elements(
+                        text, highlights, elements, children,
+                        active_style.highlight(HighlightStyle {
+                            color: Some(theme.link_color),
+                            underline: Some(UnderlineStyle {
+                                thickness: px(1.),
+                                color: Some(theme.link_underline),
+                                wavy: false,
+                            }),
+                            ..Default::default()
+                        }),
+                        theme, base_text_style,
+                    );
+                }
+                InlineNode::Image { alt, url } => {
+                    flush_text(text, highlights, elements, base_text_style);
+                    let alt_text = if alt.is_empty() {
+                        format!("[Image: {url}]")
+                    } else {
+                        format!("[Image: {alt}]")
+                    };
+                    let fallback_bg = theme.code_inline_bg;
+                    let fallback_color = theme.image_text;
+                    let image_element = if let Some(source) = image_source_from_url(url) {
+                        div()
+                            .min_w_0()
+                            .max_w_full()
+                            .child(
+                                img(source)
+                                    .max_w_full()
+                                    .rounded_md()
+                                    .with_fallback(move || {
+                                        div()
+                                            .px_2()
+                                            .py_1()
+                                            .rounded_md()
+                                            .bg(fallback_bg)
+                                            .text_color(fallback_color)
+                                            .text_xs()
+                                            .child(alt_text.clone())
+                                            .into_any_element()
+                                    }),
+                            )
+                            .into_any_element()
+                    } else {
+                        div()
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .bg(fallback_bg)
+                            .text_color(fallback_color)
+                            .text_xs()
+                            .child(alt_text)
+                            .into_any_element()
+                    };
+                    elements.push(image_element);
+                }
+                InlineNode::SoftBreak => {
+                    append_highlighted_text(text, highlights, " ", active_style);
+                }
+                InlineNode::HardBreak => {
+                    append_highlighted_text(text, highlights, "\n", active_style);
+                }
+                InlineNode::InlineHtml { html } => {
+                    append_padded_segment(text, highlights, html, active_style);
+                }
+                InlineNode::TaskMarker { checked } => {
+                    append_highlighted_text(
+                        text,
+                        highlights,
+                        if *checked { "[x] " } else { "[ ] " },
+                        active_style.highlight(HighlightStyle::color(if *checked {
+                            theme.task_checked
+                        } else {
+                            theme.task_unchecked
+                        })),
+                    );
+                }
+            }
+        }
+    }
+
+    fn append_padded_children_to_elements(
+        text: &mut String,
+        highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
+        elements: &mut Vec<gpui::AnyElement>,
+        children: &[InlineNode],
+        style: HighlightStyle,
+        theme: &MarkdownTheme,
+        base_text_style: &Option<TextStyle>,
+    ) {
+        if children.is_empty() {
+            return;
+        }
+        append_inline_padding(text, highlights, style);
+        collect(children, style, text, highlights, elements, theme, base_text_style);
+        append_inline_padding(text, highlights, style);
+    }
+
+    collect(
+        inlines,
+        HighlightStyle::default(),
+        &mut text,
+        &mut highlights,
+        &mut elements,
+        theme,
+        &base_text_style,
+    );
+    flush_text(&mut text, &mut highlights, &mut elements, &base_text_style);
+    elements
+}
+
 fn render_blocks(blocks: &[BlockNode], theme: &MarkdownTheme) -> Vec<gpui::AnyElement> {
     blocks.iter().map(|block| render_block(block, theme)).collect()
 }
@@ -896,6 +1117,15 @@ fn render_block(block: &BlockNode, theme: &MarkdownTheme) -> gpui::AnyElement {
         BlockNode::Paragraph { inlines } => {
             if inlines.is_empty() {
                 div().h(px(4.)).into_any_element()
+            } else if inlines_contain_image(inlines) {
+                div()
+                    .w_full()
+                    .text_left()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .children(render_inlines_as_elements(inlines, theme, None))
+                    .into_any_element()
             } else {
                 div()
                     .w_full()
@@ -913,15 +1143,28 @@ fn render_block(block: &BlockNode, theme: &MarkdownTheme) -> gpui::AnyElement {
                 HeadingLevel::H5 => (px(14.), FontWeight(600.0)),
                 HeadingLevel::H6 => (px(13.), FontWeight(600.0)),
             };
-            div()
+            let heading = div()
                 .w_full()
                 .mt_2()
                 .mb_1()
                 .text_size(font_size)
                 .font_weight(weight)
-                .text_color(theme.heading_color)
-                .child(render_styled_inlines_with_size(inlines, theme, font_size))
-                .into_any_element()
+                .text_color(theme.heading_color);
+            if inlines_contain_image(inlines) {
+                let mut style = TextStyle::default();
+                style.font_size = gpui::AbsoluteLength::Pixels(font_size);
+                style.color = theme.heading_color;
+                heading
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .children(render_inlines_as_elements(inlines, theme, Some(style)))
+                    .into_any_element()
+            } else {
+                heading
+                    .child(render_styled_inlines_with_size(inlines, theme, font_size))
+                    .into_any_element()
+            }
         }
         BlockNode::CodeBlock { language, code } => {
             let lang_label = language
@@ -1315,9 +1558,9 @@ mod tests {
         ]
         .iter()
         .map(|level| match level {
-            HeadingLevel::H1 => 22.0,
-            HeadingLevel::H2 => 20.0,
-            HeadingLevel::H3 => 18.0,
+            HeadingLevel::H1 => 18.0,
+            HeadingLevel::H2 => 17.0,
+            HeadingLevel::H3 => 16.0,
             HeadingLevel::H4 => 16.0,
             HeadingLevel::H5 => 15.0,
             HeadingLevel::H6 => 14.0,
