@@ -261,7 +261,6 @@ pub struct ThreadList {
     pub thread_items: Vec<gpui::Entity<ThreadItem>>,
     pub store: Arc<Store>,
     pub show_import_prompt: bool,
-    pub sync_status: settings_sync::SyncStatus,
     pub _subscription: gpui::Subscription,
     pub _titlebar_subscription: gpui::Subscription,
     pub _user_panel_subscription: gpui::Subscription,
@@ -303,25 +302,26 @@ impl ThreadList {
                         if let AuthState::LoggedIn(_) = &auth {
                             let session = cx.global::<AppStore>().session.clone();
                             if let Some(s) = session {
+                                cx.update_global(|app: &mut AppStore, _| {
+                                    app.sync_status = settings_sync::SyncStatus::Syncing;
+                                });
+                                cx.notify();
                                 let access_token = s.access_token.clone();
                                 let user_id = s.user.id.clone();
-                                cx.spawn(async move |weak, cx| {
+                                cx.spawn(async move |_, cx| {
                                     let result = smol::unblock(move || {
                                         settings_sync::sync_changes(&access_token, &user_id)
                                     }).await;
-                                    let _ = weak.update(cx, |this, cx| {
+                                    let _ = cx.update_global(|app: &mut AppStore, _| {
                                         match result {
                                             Ok(meta) => {
-                                                this.sync_status = settings_sync::SyncStatus::Synced;
-                                                cx.update_global(|app: &mut AppStore, _| {
-                                                    app.sync_meta = meta;
-                                                });
+                                                app.sync_meta = meta;
+                                                app.sync_status = settings_sync::SyncStatus::Synced;
                                             }
                                             Err(e) => {
-                                                this.sync_status = settings_sync::SyncStatus::Error(e);
+                                                app.sync_status = settings_sync::SyncStatus::Error(e);
                                             }
                                         }
-                                        cx.notify();
                                     });
                                 }).detach();
                             }
@@ -357,7 +357,6 @@ impl ThreadList {
             thread_items,
             store,
             show_import_prompt,
-            sync_status: settings_sync::SyncStatus::Idle,
             _subscription: subscription,
             _titlebar_subscription: titlebar_subscription,
             _user_panel_subscription: user_panel_subscription,

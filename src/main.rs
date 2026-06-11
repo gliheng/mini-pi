@@ -59,29 +59,41 @@ fn main() {
 
     let sync_meta = settings_sync::load_sync_meta();
 
-    if auth.is_logged_in() {
-        if let Some(ref sess) = session {
-            let _ = state::agent_dir();
-            let access_token = sess.access_token.clone();
-            let user_id = sess.user.id.clone();
-            let _ = std::thread::spawn(move || {
-                let _ = settings_sync::sync_changes(&access_token, &user_id);
-            });
-        }
-    }
-
     Application::new()
         .with_assets(Assets { base: assets_dir })
-        .run(|cx: &mut App| {
+        .run(move |cx: &mut App| {
             cx.set_global(AppStore {
-                store,
+                store: store.clone(),
                 config,
                 thread_windows: HashMap::new(),
-                auth,
-                session,
+                auth: auth.clone(),
+                session: session.clone(),
                 sync_meta,
+                sync_status: settings_sync::SyncStatus::Idle,
                 user_panel_active: false,
             });
+
+            if auth.is_logged_in() {
+                if let Some(ref sess) = session {
+                    let _ = state::agent_dir();
+                    let access_token = sess.access_token.clone();
+                    let user_id = sess.user.id.clone();
+                    cx.spawn(async move |cx| {
+                        let result = smol::unblock(move || {
+                            settings_sync::sync_changes(&access_token, &user_id)
+                        }).await;
+                        let _ = cx.update_global(|app: &mut AppStore, _| {
+                            app.sync_status = match result {
+                                Ok(meta) => {
+                                    app.sync_meta = meta;
+                                    settings_sync::SyncStatus::Synced
+                                }
+                                Err(e) => settings_sync::SyncStatus::Error(e),
+                            };
+                        });
+                    }).detach();
+                }
+            }
 
             cx.on_action(quit);
             cx.bind_keys([

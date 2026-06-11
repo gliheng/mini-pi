@@ -8,7 +8,7 @@ use gpui::{
 use crate::auth::state::{AuthState, SupabaseSession};
 use crate::config::app_config::AppConfig;
 use crate::data::store::Store;
-use crate::sync::settings_sync::SyncMeta;
+use crate::sync::settings_sync::{SyncMeta, SyncStatus};
 
 pub struct AppStore {
     pub store: Arc<Store>,
@@ -17,6 +17,7 @@ pub struct AppStore {
     pub auth: AuthState,
     pub session: Option<SupabaseSession>,
     pub sync_meta: SyncMeta,
+    pub sync_status: SyncStatus,
     pub user_panel_active: bool,
 }
 

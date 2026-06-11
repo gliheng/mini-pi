@@ -27,7 +27,6 @@ pub struct UserPanel {
     pub password_input: gpui::Entity<TextInput>,
     pub confirm_password_input: gpui::Entity<TextInput>,
     pub auth_error: Option<String>,
-    pub sync_status: settings_sync::SyncStatus,
     pub auth_dialog: Option<AuthDialog>,
     pub _email_sub: gpui::Subscription,
     pub _password_sub: gpui::Subscription,
@@ -55,7 +54,6 @@ impl UserPanel {
             password_input,
             confirm_password_input,
             auth_error: None,
-            sync_status: settings_sync::SyncStatus::Idle,
             auth_dialog: None,
             _email_sub,
             _password_sub,
@@ -307,7 +305,7 @@ fn render_back_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
 }
 
 fn render_auth_content(
-    panel: &UserPanel,
+    _panel: &UserPanel,
     auth: &AuthState,
     cx: &mut Context<UserPanel>,
 ) -> impl IntoElement {
@@ -320,7 +318,8 @@ fn render_auth_content(
                 .map(|c| c.to_uppercase().to_string())
                 .unwrap_or_else(|| "?".to_string());
             let threads_count = cx.global::<AppStore>().store.list_threads().map(|t| t.len()).unwrap_or(0);
-            let sync_label: SharedString = match &panel.sync_status {
+            let sync_status = cx.global::<AppStore>().sync_status.clone();
+            let sync_label: SharedString = match &sync_status {
                 settings_sync::SyncStatus::Idle => "Not synced".into(),
                 settings_sync::SyncStatus::Syncing => "Syncing...".into(),
                 settings_sync::SyncStatus::Synced => "Synced".into(),
@@ -410,7 +409,8 @@ fn render_auth_content(
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .child("SYNC"),
                         )
-                        .child(sync_row("Agent Settings", &sync_label)),
+                        .child(sync_row("Agent Settings", &sync_label))
+                        .child(render_sync_button(cx)),
                 )
                 .child(
                     div()
@@ -745,6 +745,62 @@ fn render_logout_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
         .child("Sign Out")
 }
 
+fn render_sync_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
+    let sync_status = cx.global::<AppStore>().sync_status.clone();
+    let is_syncing = sync_status == settings_sync::SyncStatus::Syncing;
+    let label: SharedString = if is_syncing {
+        "Syncing...".into()
+    } else {
+        "Sync Now".into()
+    };
+
+    div()
+        .id("sync-button")
+        .w_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .px_4()
+        .py_3()
+        .rounded_lg()
+        .bg(if is_syncing { rgb(0x333333) } else { rgb(0x4f46e5) })
+        .cursor_pointer()
+        .text_color(if is_syncing { rgb(0x888888) } else { rgb(0xffffff) })
+        .text_sm()
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .when(!is_syncing, |el| {
+            el.hover(|style| style.bg(rgb(0x4338ca)))
+        })
+        .on_click(cx.listener(|_this, _, _, cx| {
+            let session = cx.global::<AppStore>().session.clone();
+            if let Some(s) = session {
+                cx.update_global(|app: &mut AppStore, _| {
+                    app.sync_status = settings_sync::SyncStatus::Syncing;
+                });
+                cx.notify();
+                let access_token = s.access_token.clone();
+                let user_id = s.user.id.clone();
+                cx.spawn(async move |_, cx| {
+                    let result = smol::unblock(move || {
+                        settings_sync::sync_changes(&access_token, &user_id)
+                    }).await;
+                    let _ = cx.update_global(|app: &mut AppStore, _| {
+                        match result {
+                            Ok(meta) => {
+                                app.sync_meta = meta;
+                                app.sync_status = settings_sync::SyncStatus::Synced;
+                            }
+                            Err(e) => {
+                                app.sync_status = settings_sync::SyncStatus::Error(e);
+                            }
+                        }
+                    });
+                }).detach();
+            }
+        }))
+        .child(label)
+}
+
 fn sync_row(
     label: impl Into<SharedString>,
     status_label: &SharedString,
@@ -778,19 +834,18 @@ fn sync_row(
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap_2()
                 .child(
                     div()
                         .text_sm()
                         .text_color(rgb(0xe0e0e0))
                         .child(label),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(status_color)
-                        .child(status_label.clone()),
                 ),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(status_color)
+                .child(status_label.clone()),
         )
 }
 
