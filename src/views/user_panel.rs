@@ -586,12 +586,13 @@ fn render_login_button(
                 app.auth = AuthState::LoggingIn;
             });
             cx.notify();
+            let store = cx.global::<AppStore>().store.clone();
             cx.spawn(async move |weak, cx| {
                 let result = smol::unblock(move || supabase::login(&email, &password)).await;
                 let _ = weak.update(cx, |this, cx| {
                     match result {
                         Ok(session) => {
-                            let _ = state::save_session(&session);
+                            let _ = state::save_session(&store, &session);
                             let user = session.user.clone();
                             cx.update_global(|app: &mut AppStore, _| {
                                 app.auth = AuthState::LoggedIn(user);
@@ -680,12 +681,13 @@ fn render_signup_submit_button(
                 app.auth = AuthState::LoggingIn;
             });
             cx.notify();
+            let store = cx.global::<AppStore>().store.clone();
             cx.spawn(async move |weak, cx| {
                 let result = smol::unblock(move || supabase::signup(&email, &password)).await;
                 let _ = weak.update(cx, |this, cx| {
                     match result {
                         Ok(session) => {
-                            let _ = state::save_session(&session);
+                            let _ = state::save_session(&store, &session);
                             let user = session.user.clone();
                             cx.update_global(|app: &mut AppStore, _| {
                                 app.auth = AuthState::LoggedIn(user);
@@ -717,6 +719,7 @@ fn render_logout_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
         .justify_center()
         .px_4()
         .py_3()
+        .mb_6()
         .rounded_lg()
         .bg(rgb(0x7f1d1d))
         .cursor_pointer()
@@ -727,10 +730,11 @@ fn render_logout_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
         .on_click(cx.listener(|this, _, _, cx| {
             this.auth_error = None;
             let session = cx.global::<AppStore>().session.clone();
+            let store = cx.global::<AppStore>().store.clone();
             if let Some(s) = session {
                 let _ = supabase::logout(&s.access_token);
             }
-            let _ = state::clear_session();
+            let _ = state::clear_session(&store);
             cx.update_global(|app: &mut AppStore, _| {
                 app.auth = AuthState::LoggedOut;
                 app.session = None;

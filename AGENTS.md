@@ -24,7 +24,7 @@ The application spawns the `pi` binary as a subprocess and communicates with it 
 ```
 src/
   main.rs              — App bootstrap, global key bindings, initial window
-  auth/                — Supabase authentication (signup, login, refresh, session file)
+  auth/                — Supabase authentication (signup, login, refresh, session storage)
   config/              — App config (JSON) and hardcoded model list
   core/                — GPUI globals (AppStore), actions, assets, window options
   data/                — SQLite store with migrations, ThreadMeta/WorkspaceMeta, data models
@@ -70,7 +70,7 @@ cargo build --release
 - **Sessions:** `~/.mini-pi/sessions/*.jsonl` — conversation history files
 - **Agent config:** `~/.mini-pi/agent/` — imported from `~/.pi/agent/` on first run
 - **App config:** `~/.config/mini-pi/config.json`
-- **Auth session:** `~/.mini-pi/auth.json` (permissions set to `0o600` on Unix)
+- **Auth session:** Stored in the `user_settings` table of `~/.mini-pi/mini-pi.db`
 - **Sync metadata:** `~/.mini-pi/sync_meta.json`
 
 ### Database Migrations
@@ -79,6 +79,7 @@ Migrations are defined as a static slice of `(name, sql)` tuples in `src/data/st
 
 - `001_init` — creates `threads` table
 - `002_workspaces` — creates `workspaces` table
+- `003_user_settings` — creates `user_settings` key-value table
 
 ### Process Model
 
@@ -126,7 +127,7 @@ cargo test
 ## Security Considerations
 
 - The Supabase anonymous key and URL are hardcoded in `src/auth/supabase.rs`.
-- Auth tokens are stored in plaintext JSON at `~/.mini-pi/auth.json` with restricted Unix permissions (`0o600`).
+- Auth tokens are stored in plaintext JSON inside the `config` table of the local SQLite database (`~/.mini-pi/mini-pi.db`).
 - Agent configuration and chat sessions are stored locally in the user's home directory.
 - Cloudflare API credentials are read from environment variables only.
 

@@ -30,17 +30,17 @@ fn main() {
     let config = AppConfig::load();
     let assets_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
 
-    let (auth, session) = match state::load_session() {
+    let (auth, session) = match state::load_session(&store) {
         Some(session) => {
             if session.is_expired() {
                 match crate::auth::supabase::refresh_session(&session.refresh_token) {
                     Ok(new_session) => {
                         let user = new_session.user.clone();
-                        let _ = state::save_session(&new_session);
+                        let _ = state::save_session(&store, &new_session);
                         (AuthState::LoggedIn(user), Some(new_session))
                     }
                     Err(_) => {
-                        let _ = state::clear_session();
+                        let _ = state::clear_session(&store);
                         (AuthState::LoggedOut, None)
                     }
                 }
@@ -48,7 +48,7 @@ fn main() {
                 match crate::auth::supabase::get_user(&session.access_token) {
                     Ok(user) => (AuthState::LoggedIn(user), Some(session)),
                     Err(_) => {
-                        let _ = state::clear_session();
+                        let _ = state::clear_session(&store);
                         (AuthState::LoggedOut, None)
                     }
                 }

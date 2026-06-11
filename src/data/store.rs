@@ -46,6 +46,15 @@ const MIGRATIONS: &[(&str, &str)] = &[
         );
         ",
     ),
+    (
+        "003_user_settings",
+        "
+        CREATE TABLE user_settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        ",
+    ),
 ];
 
 impl Store {
@@ -102,6 +111,34 @@ impl Store {
 
     pub fn sessions_dir(&self) -> &PathBuf {
         &self.sessions_dir
+    }
+
+    pub fn set_user_setting(&self, key: &str, value: &str) -> Result<(), StoreError> {
+        self.conn
+            .execute(
+                "INSERT INTO user_settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![key, value],
+            )
+            .map_err(StoreError::Rusqlite)?;
+        Ok(())
+    }
+
+    pub fn get_user_setting(&self, key: &str) -> Result<Option<String>, StoreError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT value FROM user_settings WHERE key = ?1")
+            .map_err(StoreError::Rusqlite)?;
+        stmt.query_row(params![key], |row| row.get::<_, String>(0))
+            .optional()
+            .map_err(StoreError::Rusqlite)
+    }
+
+    pub fn delete_user_setting(&self, key: &str) -> Result<(), StoreError> {
+        self.conn
+            .execute("DELETE FROM user_settings WHERE key = ?1", params![key])
+            .map_err(StoreError::Rusqlite)?;
+        Ok(())
     }
 
     pub fn create_thread(&self, title: &str, preview: &str) -> Result<ThreadMeta, StoreError> {

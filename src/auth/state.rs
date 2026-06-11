@@ -1,3 +1,4 @@
+use crate::data::store::Store;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -62,39 +63,49 @@ impl SupabaseSession {
     }
 }
 
-pub fn auth_file_path() -> PathBuf {
+fn auth_file_path() -> PathBuf {
     let dir = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".mini-pi");
     dir.join("auth.json")
 }
 
-pub fn save_session(session: &SupabaseSession) -> Result<(), std::io::Error> {
-    let path = auth_file_path();
-    let content = serde_json::to_string_pretty(session)?;
-    std::fs::write(&path, content)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(0o600);
-        std::fs::set_permissions(&path, perms)?;
-    }
-    Ok(())
+pub fn save_session(store: &Store, session: &SupabaseSession) -> Result<(), crate::data::store::StoreError> {
+    let content = serde_json::to_string_pretty(session)
+        .map_err(|e| crate::data::store::StoreError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+    store.set_user_setting("supabase_session", &content)
 }
 
-pub fn load_session() -> Option<SupabaseSession> {
-    let path = auth_file_path();
-    if !path.exists() {
+pub fn load_session(store: &Store) -> Option<SupabaseSession> {
+    // Try database first.
+    if let Ok(Some(db_value)) = store.get_user_setting("supabase_session") {
+        if let Ok(session) = serde_json::from_str::<SupabaseSession>(&db_value) {
+            // Clean up legacy file if it still exists.
+            let legacy = auth_file_path();
+            if legacy.exists() {
+                let _ = std::fs::remove_file(&legacy);
+            }
+            return Some(session);
+        }
+    }
+
+    // One-time migration: fall back to legacy auth.json.
+    let legacy = auth_file_path();
+    if !legacy.exists() {
         return None;
     }
-    let content = std::fs::read_to_string(&path).ok()?;
-    serde_json::from_str(&content).ok()
+    let content = std::fs::read_to_string(&legacy).ok()?;
+    let session: SupabaseSession = serde_json::from_str(&content).ok()?;
+    let _ = save_session(store, &session);
+    let _ = std::fs::remove_file(&legacy);
+    Some(session)
 }
 
-pub fn clear_session() -> Result<(), std::io::Error> {
-    let path = auth_file_path();
-    if path.exists() {
-        std::fs::remove_file(path)?;
+pub fn clear_session(store: &Store) -> Result<(), crate::data::store::StoreError> {
+    store.delete_user_setting("supabase_session")?;
+    let legacy = auth_file_path();
+    if legacy.exists() {
+        let _ = std::fs::remove_file(&legacy);
     }
     Ok(())
 }
