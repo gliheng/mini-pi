@@ -1,6 +1,6 @@
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -9,7 +9,6 @@ use crate::utils::format::truncate_str;
 
 pub struct PiRpc {
     stdin: std::process::ChildStdin,
-    _child: Child,
 }
 
 // ---------------------------------------------------------------------------
@@ -215,13 +214,11 @@ impl PiRpc {
                     }
                 }
             }
-            log!("reader thread exiting");
+            log!("reader thread exiting, waiting for child to reap");
+            let _ = child.wait();
         });
 
-        let pi_rpc = Self {
-            stdin,
-            _child: child,
-        };
+        let pi_rpc = Self { stdin };
 
         Ok((pi_rpc, rx))
     }

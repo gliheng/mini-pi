@@ -56,6 +56,7 @@ pub struct ChatWindow {
     pub selected_workspace_id: Option<i64>,
     pub show_workspace_manager: bool,
     pub workspace_manager: gpui::Entity<WorkspaceManager>,
+    pub pi_restart_count: u32,
 }
 
 impl ChatWindow {
@@ -164,6 +165,7 @@ chat_input,
             selected_workspace_id,
             show_workspace_manager: false,
             workspace_manager: workspace_manager.clone(),
+            pi_restart_count: 0,
         };
 
         if is_restoring {
@@ -447,6 +449,7 @@ chat_input,
 
         self.pi = Some(rpc);
         self._pi_task = Some(task);
+        self.pi_restart_count = 0;
         cx.notify();
         true
     }
@@ -748,7 +751,23 @@ chat_input,
             }
             BridgeEvent::Disconnected => {
                 eprintln!("[mini-pi] pi process disconnected");
-                self.state = ChatState::Error("Pi agent process disconnected".into());
+                self.pi = None;
+                if self.pi_restart_count < 1 {
+                    self.pi_restart_count += 1;
+                    eprintln!(
+                        "[mini-pi] attempting to restart pi (attempt {})",
+                        self.pi_restart_count
+                    );
+                    if !self.spawn_pi(false, cx) {
+                        self.state = ChatState::Error(
+                            "Pi agent disconnected and could not be restarted.".into(),
+                        );
+                    }
+                } else {
+                    self.state = ChatState::Error(
+                        "Pi agent disconnected and could not be restarted.".into(),
+                    );
+                }
             }
             BridgeEvent::Response { command, success, data, .. } => {
                 if command == "get_commands" && success {

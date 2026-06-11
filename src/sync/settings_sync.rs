@@ -1,9 +1,27 @@
 use crate::auth::state;
 use crate::auth::supabase;
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+fn with_sync_lock<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let lock_path = state::agent_dir().join(".sync.lock");
+    let lock_file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|e| format!("failed to open sync lock: {}", e))?;
+    lock_file
+        .lock_exclusive()
+        .map_err(|e| format!("failed to acquire sync lock: {}", e))?;
+    let result = f();
+    let _ = lock_file.unlock();
+    result
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct SyncMeta {
@@ -99,102 +117,64 @@ pub fn pull_from_remote(
     access_token: &str,
     user_id: &str,
 ) -> Result<SyncMeta, String> {
-    let agent_dir = state::agent_dir();
-    let remote_files = supabase::list_files(access_token, user_id).map_err(|e| e.to_string())?;
+    with_sync_lock(|| {
+        let agent_dir = state::agent_dir();
+        let remote_files = supabase::list_files(access_token, user_id).map_err(|e| e.to_string())?;
 
-    let mut meta = SyncMeta::default();
+        let mut meta = SyncMeta::default();
 
-    for file in &remote_files {
-        if file.name.ends_with('/') {
-            continue;
+        for file in &remote_files {
+            if file.name.ends_with('/') {
+                continue;
+            }
+
+            let relative_path = file
+                .name
+                .strip_prefix(&format!("{}/", user_id))
+                .unwrap_or(&file.name)
+                .to_string();
+
+            let data = supabase::download_file(access_token, user_id, &relative_path)
+                .map_err(|e| e.to_string())?;
+
+            let local_path = agent_dir.join(&relative_path);
+            if let Some(parent) = local_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            std::fs::write(&local_path, &data).map_err(|e| e.to_string())?;
+
+            let hash = file_hash(&data);
+            let now = chrono::Utc::now().to_rfc3339();
+            meta.files.insert(
+                relative_path,
+                FileSyncInfo {
+                    hash,
+                    last_synced: now,
+                },
+            );
         }
 
-        let relative_path = file
-            .name
-            .strip_prefix(&format!("{}/", user_id))
-            .unwrap_or(&file.name)
-            .to_string();
-
-        let data = supabase::download_file(access_token, user_id, &relative_path)
-            .map_err(|e| e.to_string())?;
-
-        let local_path = agent_dir.join(&relative_path);
-        if let Some(parent) = local_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        std::fs::write(&local_path, &data).map_err(|e| e.to_string())?;
-
-        let hash = file_hash(&data);
-        let now = chrono::Utc::now().to_rfc3339();
-        meta.files.insert(
-            relative_path,
-            FileSyncInfo {
-                hash,
-                last_synced: now,
-            },
-        );
-    }
-
-    let _ = save_sync_meta(&meta);
-    Ok(meta)
+        let _ = save_sync_meta(&meta);
+        Ok(meta)
+    })
 }
 
 pub fn push_to_remote(
     access_token: &str,
     user_id: &str,
 ) -> Result<SyncMeta, String> {
-    let local_files = scan_agent_files();
-    let mut meta = SyncMeta::default();
+    with_sync_lock(|| {
+        let local_files = scan_agent_files();
+        let mut meta = SyncMeta::default();
 
-    for (relative_path, full_path) in &local_files {
-        let data = std::fs::read(full_path).map_err(|e| e.to_string())?;
-        let content_type = content_type_for(relative_path);
-
-        supabase::upload_file(access_token, user_id, relative_path, content_type, &data)
-            .map_err(|e| e.to_string())?;
-
-        let hash = file_hash(&data);
-        let now = chrono::Utc::now().to_rfc3339();
-        meta.files.insert(
-            relative_path.clone(),
-            FileSyncInfo {
-                hash,
-                last_synced: now,
-            },
-        );
-    }
-
-    let _ = save_sync_meta(&meta);
-    Ok(meta)
-}
-
-pub fn sync_changes(
-    access_token: &str,
-    user_id: &str,
-) -> Result<SyncMeta, String> {
-    let mut meta = load_sync_meta();
-    let local_files = scan_agent_files();
-
-    let local_map: HashMap<String, PathBuf> = local_files.into_iter().collect();
-
-    let mut changed = false;
-
-    for (relative_path, full_path) in &local_map {
-        let data = match std::fs::read(full_path) {
-            Ok(d) => d,
-            Err(_) => continue,
-        };
-        let hash = file_hash(&data);
-
-        let needs_upload = match meta.files.get(relative_path) {
-            Some(info) => info.hash != hash,
-            None => true,
-        };
-
-        if needs_upload {
+        for (relative_path, full_path) in &local_files {
+            let data = std::fs::read(full_path).map_err(|e| e.to_string())?;
             let content_type = content_type_for(relative_path);
+
             supabase::upload_file(access_token, user_id, relative_path, content_type, &data)
                 .map_err(|e| e.to_string())?;
+
+            let hash = file_hash(&data);
             let now = chrono::Utc::now().to_rfc3339();
             meta.files.insert(
                 relative_path.clone(),
@@ -203,57 +183,44 @@ pub fn sync_changes(
                     last_synced: now,
                 },
             );
-            changed = true;
         }
-    }
 
-    let remote_files = supabase::list_files(access_token, user_id).map_err(|e| e.to_string())?;
-    let remote_set: std::collections::HashSet<String> = remote_files
-        .iter()
-        .map(|f| {
-            f.name
-                .strip_prefix(&format!("{}/", user_id))
-                .unwrap_or(&f.name)
-                .to_string()
-        })
-        .collect();
+        let _ = save_sync_meta(&meta);
+        Ok(meta)
+    })
+}
 
-    let local_set: std::collections::HashSet<String> =
-        local_map.keys().cloned().collect();
+pub fn sync_changes(
+    access_token: &str,
+    user_id: &str,
+) -> Result<SyncMeta, String> {
+    with_sync_lock(|| {
+        let mut meta = load_sync_meta();
+        let local_files = scan_agent_files();
 
-    for remote_file in &remote_set {
-        if !local_set.contains(remote_file) {
-            let data = supabase::download_file(access_token, user_id, remote_file)
-                .map_err(|e| e.to_string())?;
-            let local_path = state::agent_dir().join(remote_file);
-            if let Some(parent) = local_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            std::fs::write(&local_path, &data).map_err(|e| e.to_string())?;
+        let local_map: HashMap<String, PathBuf> = local_files.into_iter().collect();
+
+        let mut changed = false;
+
+        for (relative_path, full_path) in &local_map {
+            let data = match std::fs::read(full_path) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
             let hash = file_hash(&data);
-            let now = chrono::Utc::now().to_rfc3339();
-            meta.files.insert(
-                remote_file.clone(),
-                FileSyncInfo {
-                    hash,
-                    last_synced: now,
-                },
-            );
-            changed = true;
-        }
-    }
 
-    for local_only in &local_set {
-        if !remote_set.contains(local_only) {
-            if let Some(full_path) = local_map.get(local_only) {
-                let data = std::fs::read(full_path).map_err(|e| e.to_string())?;
-                let content_type = content_type_for(local_only);
-                supabase::upload_file(access_token, user_id, local_only, content_type, &data)
+            let needs_upload = match meta.files.get(relative_path) {
+                Some(info) => info.hash != hash,
+                None => true,
+            };
+
+            if needs_upload {
+                let content_type = content_type_for(relative_path);
+                supabase::upload_file(access_token, user_id, relative_path, content_type, &data)
                     .map_err(|e| e.to_string())?;
-                let hash = file_hash(&data);
                 let now = chrono::Utc::now().to_rfc3339();
                 meta.files.insert(
-                    local_only.clone(),
+                    relative_path.clone(),
                     FileSyncInfo {
                         hash,
                         last_synced: now,
@@ -262,11 +229,68 @@ pub fn sync_changes(
                 changed = true;
             }
         }
-    }
 
-    if changed {
-        let _ = save_sync_meta(&meta);
-    }
+        let remote_files = supabase::list_files(access_token, user_id).map_err(|e| e.to_string())?;
+        let remote_set: std::collections::HashSet<String> = remote_files
+            .iter()
+            .map(|f| {
+                f.name
+                    .strip_prefix(&format!("{}/", user_id))
+                    .unwrap_or(&f.name)
+                    .to_string()
+            })
+            .collect();
 
-    Ok(meta)
+        let local_set: std::collections::HashSet<String> =
+            local_map.keys().cloned().collect();
+
+        for remote_file in &remote_set {
+            if !local_set.contains(remote_file) {
+                let data = supabase::download_file(access_token, user_id, remote_file)
+                    .map_err(|e| e.to_string())?;
+                let local_path = state::agent_dir().join(remote_file);
+                if let Some(parent) = local_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                std::fs::write(&local_path, &data).map_err(|e| e.to_string())?;
+                let hash = file_hash(&data);
+                let now = chrono::Utc::now().to_rfc3339();
+                meta.files.insert(
+                    remote_file.clone(),
+                    FileSyncInfo {
+                        hash,
+                        last_synced: now,
+                    },
+                );
+                changed = true;
+            }
+        }
+
+        for local_only in &local_set {
+            if !remote_set.contains(local_only) {
+                if let Some(full_path) = local_map.get(local_only) {
+                    let data = std::fs::read(full_path).map_err(|e| e.to_string())?;
+                    let content_type = content_type_for(local_only);
+                    supabase::upload_file(access_token, user_id, local_only, content_type, &data)
+                        .map_err(|e| e.to_string())?;
+                    let hash = file_hash(&data);
+                    let now = chrono::Utc::now().to_rfc3339();
+                    meta.files.insert(
+                        local_only.clone(),
+                        FileSyncInfo {
+                            hash,
+                            last_synced: now,
+                        },
+                    );
+                    changed = true;
+                }
+            }
+        }
+
+        if changed {
+            let _ = save_sync_meta(&meta);
+        }
+
+        Ok(meta)
+    })
 }
