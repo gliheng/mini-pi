@@ -71,6 +71,7 @@ pub struct ChatInput {
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
 
+    pub enable_at_mention: bool,
     pub at_mention_active: bool,
     at_mention_query: String,
     at_mention_replace_range: Range<usize>,
@@ -84,6 +85,7 @@ pub struct ChatInput {
     pub just_selected_mention: bool,
     cached_workspace_id: Option<i64>,
 
+    pub enable_slash_commands: bool,
     pub slash_command_active: bool,
     slash_command_query: String,
     slash_command_replace_range: Range<usize>,
@@ -106,6 +108,7 @@ impl ChatInput {
             last_layout: None,
             last_bounds: None,
             is_selecting: false,
+            enable_at_mention: true,
             at_mention_active: false,
             at_mention_query: String::new(),
             at_mention_replace_range: 0..0,
@@ -118,6 +121,7 @@ impl ChatInput {
             workspace_name: None,
             just_selected_mention: false,
             cached_workspace_id: None,
+            enable_slash_commands: true,
             slash_command_active: false,
             slash_command_query: String::new(),
             slash_command_replace_range: 0..0,
@@ -125,6 +129,16 @@ impl ChatInput {
             slash_command_items: Vec::new(),
             available_commands: Vec::new(),
         }
+    }
+
+    pub fn with_at_mention(mut self, enabled: bool) -> Self {
+        self.enable_at_mention = enabled;
+        self
+    }
+
+    pub fn with_slash_commands(mut self, enabled: bool) -> Self {
+        self.enable_slash_commands = enabled;
+        self
     }
 
     pub fn content(&self) -> &SharedString {
@@ -226,29 +240,31 @@ impl ChatInput {
         let cursor = self.cursor_offset();
 
         // First check slash command
-        if let Some(parse) = parse_slash_command(&self.content, cursor) {
-            self.slash_command_query = parse.query.clone();
-            self.slash_command_replace_range = parse.replace_range.clone();
+        if self.enable_slash_commands {
+            if let Some(parse) = parse_slash_command(&self.content, cursor) {
+                self.slash_command_query = parse.query.clone();
+                self.slash_command_replace_range = parse.replace_range.clone();
 
-            let filtered = filter_command_items(&self.available_commands, &parse.query);
-            self.slash_command_active = !filtered.is_empty();
-            self.slash_command_items = filtered;
+                let filtered = filter_command_items(&self.available_commands, &parse.query);
+                self.slash_command_active = !filtered.is_empty();
+                self.slash_command_items = filtered;
 
-            if self.slash_command_highlighted >= self.slash_command_items.len() {
-                self.slash_command_highlighted = 0;
+                if self.slash_command_highlighted >= self.slash_command_items.len() {
+                    self.slash_command_highlighted = 0;
+                }
+
+                // Close at mention
+                self.at_mention_active = false;
+                self.mention_items.clear();
+                return;
+            } else {
+                self.slash_command_active = false;
+                self.slash_command_items.clear();
             }
-
-            // Close at mention
-            self.at_mention_active = false;
-            self.mention_items.clear();
-            return;
-        } else {
-            self.slash_command_active = false;
-            self.slash_command_items.clear();
         }
 
         // Then check at mention
-        if self.workspace_dir.is_none() {
+        if !self.enable_at_mention || self.workspace_dir.is_none() {
             self.at_mention_active = false;
             self.mention_items.clear();
             return;
