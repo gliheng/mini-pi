@@ -24,6 +24,7 @@ use crate::ui::dropdown::{Direction, Dropdown, DropdownEvent, DropdownItem};
 use crate::ui::loader::{loader, text_loader};
 use crate::ui::markdown::MarkdownRenderer;
 use crate::ui::text_area::TextArea;
+use crate::ui::toast::Toast;
 use crate::utils::format::truncate_str;
 use crate::utils::llm::generate_title;
 use crate::views::reasoning::Reasoning;
@@ -63,6 +64,7 @@ pub struct ChatWindow {
     pub pending_fork: Option<(String, String)>,
     /// Set after an edited prompt is sent so entry ids are refreshed once streaming ends.
     pub refresh_entry_ids_after_streaming: bool,
+    pub toast: gpui::Entity<Toast>,
 }
 
 impl ChatWindow {
@@ -162,6 +164,7 @@ impl ChatWindow {
                 .with_direction(Direction::Up)
         });
         let workspace_manager = cx.new(|_| WorkspaceManager::new(workspaces.clone()));
+        let toast = cx.new(|_| Toast::new(""));
 
         let mut window = Self {
             thread_id: thread.map(|t| t.id),
@@ -194,6 +197,7 @@ impl ChatWindow {
             inline_edit_input: None,
             pending_fork: None,
             refresh_entry_ids_after_streaming: false,
+            toast: toast.clone(),
         };
 
         if is_restoring {
@@ -211,6 +215,12 @@ impl ChatWindow {
 
         // Subscribe to chat input events (re-render on changes)
         cx.observe(&window.chat_input, |_, _, cx| {
+            cx.notify();
+        })
+        .detach();
+
+        // Re-render when the toast visibility/message changes
+        cx.observe(&window.toast, |_, _, cx| {
             cx.notify();
         })
         .detach();
@@ -1066,6 +1076,14 @@ impl ChatWindow {
                         if let Some(ref data_val) = data {
                             if let Some(path) = data_val.get("path").and_then(|p| p.as_str()) {
                                 eprintln!("[mini-pi] session exported to: {}", path);
+                                let path_buf = PathBuf::from(path);
+                                self.toast.update(cx, |toast, _cx| {
+                                    toast.set_message(format!("Exported to: {}", path));
+                                    toast.set_action("Open", path_buf);
+                                });
+                                self.toast.update(cx, |toast, cx| {
+                                    toast.show_for(std::time::Duration::from_secs(3), cx);
+                                });
                             }
                         }
                     } else {
@@ -2350,6 +2368,20 @@ impl Render for ChatWindow {
             )
             .when(self.show_workspace_manager, |this| {
                 this.child(self.workspace_manager.clone())
+            })
+            .when(self.toast.read(cx).visible, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .top(px(48.))
+                        .left(px(0.))
+                        .right(px(0.))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_center()
+                        .child(self.toast.clone()),
+                )
             })
     }
 }
