@@ -229,8 +229,8 @@ impl ChatWindow {
                         .map(|s| s.read(cx).session_file.clone())
                         .unwrap_or_default();
                     cx.spawn(async move |_, cx| {
-                        if let Ok(Ok(Some(paths))) = rx.await {
-                            if let Some(dir) = paths.first() {
+                        if let Ok(Ok(Some(paths))) = rx.await
+                            && let Some(dir) = paths.first() {
                                 let file_name = session_file
                                     .rsplit_once('.')
                                     .map(|(name, _)| format!("{}.html", name))
@@ -243,7 +243,6 @@ impl ChatWindow {
                                     });
                                 }
                             }
-                        }
                     })
                     .detach();
                 }
@@ -412,8 +411,8 @@ impl ChatWindow {
             prompt: None,
         });
         cx.spawn(async move |weak, cx| {
-            if let Ok(Ok(Some(paths))) = rx.await {
-                if let Some(path) = paths.first() {
+            if let Ok(Ok(Some(paths))) = rx.await
+                && let Some(path) = paths.first() {
                     let name = path
                         .file_name()
                         .and_then(|n| n.to_str())
@@ -443,7 +442,6 @@ impl ChatWindow {
                         }
                     }
                 }
-            }
         })
         .detach();
     }
@@ -465,14 +463,13 @@ impl ChatWindow {
             self.selected_workspace_id = self.workspaces.first().map(|workspace| workspace.id);
         }
         cx.update_global(|app_store: &mut AppStore, _| {
-            if let Some(ref name) = deleted_name {
-                if app_store.config.default_workspace_name.as_deref() == Some(name) {
+            if let Some(ref name) = deleted_name
+                && app_store.config.default_workspace_name.as_deref() == Some(name) {
                     app_store.config.default_workspace_name = None;
                     if let Err(e) = app_store.config.save() {
                         eprintln!("[mini-pi] failed to save config: {}", e);
                     }
                 }
-            }
         });
         self.sync_workspace_manager(cx);
         cx.notify();
@@ -735,8 +732,8 @@ impl ChatWindow {
     }
 
     fn start_edit_message(&mut self, msg_id: String, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(msg) = self.messages.iter().find(|m| m.id == msg_id) {
-            if let Some(MessagePart::Text { text, .. }) = msg.parts.first() {
+        if let Some(msg) = self.messages.iter().find(|m| m.id == msg_id)
+            && let Some(MessagePart::Text { text, .. }) = msg.parts.first() {
                 self.editing_message_id = Some(msg_id);
                 let text = text.clone();
                 let inline_input = cx.new(|cx| {
@@ -751,7 +748,6 @@ impl ChatWindow {
                 self.inline_edit_input = Some(inline_input);
                 cx.notify();
             }
-        }
     }
 
     fn render_at_mention_popup(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1140,7 +1136,7 @@ impl Render for ChatWindow {
             for (part_idx, part) in msg.parts.iter().enumerate() {
                 if let MessagePart::Reasoning { text, .. } = part {
                     if msg_idx >= self.reasoning_displays.len() {
-                        self.reasoning_displays.resize_with(msg_idx + 1, || vec![]);
+                        self.reasoning_displays.resize_with(msg_idx + 1, std::vec::Vec::new);
                     }
                     let row = &mut self.reasoning_displays[msg_idx];
                     if part_idx >= row.len() {
@@ -1173,7 +1169,7 @@ impl Render for ChatWindow {
                 if is_assistant && matches!(part, MessagePart::Text { .. }) {
                     if let MessagePart::Text { text, .. } = part {
                         if msg_idx >= self.markdown_displays.len() {
-                            self.markdown_displays.resize_with(msg_idx + 1, || vec![]);
+                            self.markdown_displays.resize_with(msg_idx + 1, std::vec::Vec::new);
                         }
                         let row = &mut self.markdown_displays[msg_idx];
                         if part_idx >= row.len() {

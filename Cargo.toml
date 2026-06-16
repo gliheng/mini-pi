@@ -23,6 +23,7 @@ url = "2"
 percent-encoding = "2"
 fs2 = "0.4"
 syntect = "5"
+linkify = "0.9"
 tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 tokio-tungstenite = "0.26"
 

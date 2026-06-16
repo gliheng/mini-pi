@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct AppConfig {
     #[serde(default)]
     pub default_model: Option<String>,
@@ -9,14 +10,6 @@ pub struct AppConfig {
     pub default_workspace_name: Option<String>,
 }
 
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            default_model: None,
-            default_workspace_name: None,
-        }
-    }
-}
 
 impl AppConfig {
     pub fn config_path() -> PathBuf {

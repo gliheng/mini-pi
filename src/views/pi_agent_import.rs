@@ -16,6 +16,12 @@ pub struct PiAgentImport {
     import_result: Option<Result<usize, String>>,
 }
 
+impl Default for PiAgentImport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PiAgentImport {
     pub fn new() -> Self {
         Self {

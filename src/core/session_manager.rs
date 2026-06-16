@@ -4,17 +4,11 @@ use gpui::Entity;
 
 use crate::core::session_handle::SessionHandle;
 
+#[derive(Default)]
 pub struct SessionManager {
     sessions: HashMap<String, Entity<SessionHandle>>,
 }
 
-impl Default for SessionManager {
-    fn default() -> Self {
-        Self {
-            sessions: HashMap::new(),
-        }
-    }
-}
 
 impl SessionManager {
     pub fn new() -> Self {

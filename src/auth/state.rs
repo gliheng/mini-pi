@@ -82,8 +82,8 @@ pub fn save_session(
 
 pub fn load_session(store: &Store) -> Option<SupabaseSession> {
     // Try database first.
-    if let Ok(Some(db_value)) = store.get_user_setting("supabase_session") {
-        if let Ok(session) = serde_json::from_str::<SupabaseSession>(&db_value) {
+    if let Ok(Some(db_value)) = store.get_user_setting("supabase_session")
+        && let Ok(session) = serde_json::from_str::<SupabaseSession>(&db_value) {
             // Clean up legacy file if it still exists.
             let legacy = auth_file_path();
             if legacy.exists() {
@@ -91,7 +91,6 @@ pub fn load_session(store: &Store) -> Option<SupabaseSession> {
             }
             return Some(session);
         }
-    }
 
     // One-time migration: fall back to legacy auth.json.
     let legacy = auth_file_path();

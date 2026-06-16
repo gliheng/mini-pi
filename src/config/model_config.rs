@@ -69,7 +69,7 @@ pub fn parse_model_id(id: &str) -> Option<(&str, &str)> {
 pub fn model_display_name(id: Option<&str>) -> SharedString {
     match id {
         Some(id) => get_model_name(id)
-            .map(|name| SharedString::from(name))
+            .map(SharedString::from)
             .unwrap_or_else(|| SharedString::from(id.to_string())),
         None => SharedString::from("Select Model"),
     }

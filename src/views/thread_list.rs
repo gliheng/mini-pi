@@ -335,7 +335,7 @@ impl ThreadList {
             cx.notify();
         });
 
-        let user_panel = cx.new(|cx| UserPanel::new(cx));
+        let user_panel = cx.new(UserPanel::new);
         let import_prompt = cx.new(|_| PiAgentImport::new());
 
         let titlebar_subscription =
@@ -470,8 +470,7 @@ impl Render for ThreadList {
 
         let (pinned, unpinned): (Vec<_>, Vec<_>) = self
             .thread_items
-            .iter()
-            .map(|item| item.clone())
+            .iter().cloned()
             .partition(|item| item.read(cx).thread.pinned);
 
         div()
@@ -500,7 +499,7 @@ impl Render for ThreadList {
                                     .child("Pinned threads"),
                             ),
                         )
-                        .children(pinned.iter().map(|item| item.clone()))
+                        .children(pinned.iter().cloned())
                     })
                     .when(!unpinned.is_empty(), |el| {
                         el.child(
@@ -510,7 +509,7 @@ impl Render for ThreadList {
                                 .bg(rgb(0x1f1f1f))
                                 .child(div().text_xs().text_color(rgb(0x888888)).child("Threads")),
                         )
-                        .children(unpinned.iter().map(|item| item.clone()))
+                        .children(unpinned.iter().cloned())
                     })
                     .when(self.thread_items.is_empty(), |el| {
                         el.items_center().justify_center().child(

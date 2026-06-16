@@ -24,19 +24,19 @@ pub fn format_relative_time(datetime_str: &str) -> String {
     let days = hours / 24;
 
     if minutes < 1 {
-        return "just now".to_string();
+        "just now".to_string()
     } else if minutes < 60 {
-        return format!(
+        format!(
             "{} minute{} ago",
             minutes,
             if minutes == 1 { "" } else { "s" }
-        );
+        )
     } else if hours < 24 {
-        return format!("{} hour{} ago", hours, if hours == 1 { "" } else { "s" });
+        format!("{} hour{} ago", hours, if hours == 1 { "" } else { "s" })
     } else if days < 7 {
-        return format!("{} day{} ago", days, if days == 1 { "" } else { "s" });
+        format!("{} day{} ago", days, if days == 1 { "" } else { "s" })
     } else {
-        return dt.format("%b %d").to_string();
+        dt.format("%b %d").to_string()
     }
 }
 

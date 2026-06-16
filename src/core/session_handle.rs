@@ -78,15 +78,14 @@ impl SessionHandle {
             store,
         };
 
-        if let Some(tid) = thread_id {
-            if let Ok(Some(thread)) = handle.store.get_thread(tid) {
+        if let Some(tid) = thread_id
+            && let Ok(Some(thread)) = handle.store.get_thread(tid) {
                 handle.title = if thread.title.is_empty() {
                     "New Thread".into()
                 } else {
                     thread.title.into()
                 };
             }
-        }
 
         handle.spawn_pi(restore_history, cx);
         handle
@@ -119,14 +118,13 @@ impl SessionHandle {
                     None,
                 );
             }
-            if let Some(ref mut rpc) = self.rpc {
-                if let Some((provider, model_id)) = parse_model_id(id) {
+            if let Some(ref mut rpc) = self.rpc
+                && let Some((provider, model_id)) = parse_model_id(id) {
                     eprintln!("[mini-pi] setting model: provider={} model={}", provider, model_id);
                     if let Err(e) = rpc.send_set_model(provider, model_id, None) {
                         eprintln!("[mini-pi] send_set_model failed: {}", e);
                     }
                 }
-            }
         }
         cx.emit(SessionEvent::Changed);
     }
@@ -146,11 +144,10 @@ impl SessionHandle {
                     None,
                 );
             }
-            if let Some(ref mut rpc) = self.rpc {
-                if let Err(e) = rpc.send_set_thinking_level(id, None) {
+            if let Some(ref mut rpc) = self.rpc
+                && let Err(e) = rpc.send_set_thinking_level(id, None) {
                     eprintln!("[mini-pi] send_set_thinking_level failed: {}", e);
                 }
-            }
         }
         cx.emit(SessionEvent::Changed);
     }
@@ -169,11 +166,10 @@ impl SessionHandle {
             return;
         }
 
-        if self.rpc.is_none() {
-            if !self.spawn_pi(false, cx) {
+        if self.rpc.is_none()
+            && !self.spawn_pi(false, cx) {
                 return;
             }
-        }
 
         self.messages.push(Message {
             id: Uuid::new_v4().to_string(),
@@ -281,11 +277,10 @@ impl SessionHandle {
         content: SharedString,
         cx: &mut Context<Self>,
     ) {
-        if self.rpc.is_none() {
-            if !self.spawn_pi(false, cx) {
+        if self.rpc.is_none()
+            && !self.spawn_pi(false, cx) {
                 return;
             }
-        }
 
         let Some(edit_idx) = self.messages.iter().position(|m| m.id == message_id) else {
             eprintln!("[mini-pi] edited message {} not found", message_id);
@@ -368,11 +363,10 @@ impl SessionHandle {
     }
 
     pub fn export_html(&mut self, output_path: &str) {
-        if let Some(ref mut rpc) = self.rpc {
-            if let Err(e) = rpc.send_export_html(Some(output_path), None) {
+        if let Some(ref mut rpc) = self.rpc
+            && let Err(e) = rpc.send_export_html(Some(output_path), None) {
                 eprintln!("[mini-pi] send_export_html failed: {}", e);
             }
-        }
     }
 
     fn spawn_pi(&mut self, restoring: bool, cx: &mut Context<Self>) -> bool {
@@ -422,11 +416,10 @@ impl SessionHandle {
             self.state = ChatState::Loading;
         }
 
-        if let Some(ref level) = self.thinking_level {
-            if let Err(e) = rpc.send_set_thinking_level(level, None) {
+        if let Some(ref level) = self.thinking_level
+            && let Err(e) = rpc.send_set_thinking_level(level, None) {
                 eprintln!("[mini-pi] send_set_thinking_level failed: {}", e);
             }
-        }
 
         let weak = cx.entity().downgrade();
         let task = cx.spawn(async move |_, cx: &mut gpui::AsyncApp| {
@@ -566,20 +559,18 @@ impl SessionHandle {
                                 ..
                             }
                         )
-                    }) {
-                        if let MessagePart::Text { text, .. } = part {
+                    })
+                        && let MessagePart::Text { text, .. } = part {
                             let new_text = format!("{}{}", text, content);
                             *text = new_text.into();
                         }
-                    }
-                } else if let Some(msg) = self.messages.last_mut() {
-                    if matches!(msg.role, Role::Assistant) {
+                } else if let Some(msg) = self.messages.last_mut()
+                    && matches!(msg.role, Role::Assistant) {
                         msg.parts.push(MessagePart::Text {
                             text: content.into(),
                             state: Some(PartState::Streaming),
                         });
                     }
-                }
             }
             BridgeEvent::ThinkingDelta { content } => {
                 if let Some(msg) = self.messages.iter_mut().find(|m| {
@@ -602,25 +593,23 @@ impl SessionHandle {
                                 ..
                             }
                         )
-                    }) {
-                        if let MessagePart::Reasoning { text, .. } = part {
+                    })
+                        && let MessagePart::Reasoning { text, .. } = part {
                             let new_text = format!("{}{}", text, content);
                             *text = new_text.into();
                         }
-                    }
-                } else if let Some(msg) = self.messages.last_mut() {
-                    if matches!(msg.role, Role::Assistant) {
+                } else if let Some(msg) = self.messages.last_mut()
+                    && matches!(msg.role, Role::Assistant) {
                         msg.parts.push(MessagePart::Reasoning {
                             text: content.into(),
                             state: Some(PartState::Streaming),
                             provider_metadata: None,
                         });
                     }
-                }
             }
             BridgeEvent::ToolStart { name, args, .. } => {
-                if let Some(msg) = self.messages.last_mut() {
-                    if matches!(msg.role, Role::Assistant) {
+                if let Some(msg) = self.messages.last_mut()
+                    && matches!(msg.role, Role::Assistant) {
                         msg.parts.push(MessagePart::ToolCall {
                             tool_call_id: SharedString::from(""),
                             name: name.into(),
@@ -632,7 +621,6 @@ impl SessionHandle {
                             state: Some(PartState::Streaming),
                         });
                     }
-                }
             }
             BridgeEvent::ToolEnd {
                 tool_name,
@@ -640,14 +628,13 @@ impl SessionHandle {
                 is_error,
                 ..
             } => {
-                if let Some(msg) = self.messages.last_mut() {
-                    if matches!(msg.role, Role::Assistant) {
+                if let Some(msg) = self.messages.last_mut()
+                    && matches!(msg.role, Role::Assistant) {
                         for part in msg.parts.iter_mut() {
-                            if let MessagePart::ToolCall { state, .. } = part {
-                                if let Some(s) = state {
+                            if let MessagePart::ToolCall { state, .. } = part
+                                && let Some(s) = state {
                                     *s = PartState::Done;
                                 }
-                            }
                         }
                         msg.parts.push(MessagePart::ToolResult {
                             tool_call_id: SharedString::from(""),
@@ -661,25 +648,23 @@ impl SessionHandle {
                             state: Some(PartState::Done),
                         });
                     }
-                }
             }
             BridgeEvent::Error { message } => {
                 self.state = ChatState::Error(message.into());
             }
             BridgeEvent::TextStart => {
-                if let Some(msg) = self.messages.last_mut() {
-                    if matches!(msg.role, Role::Assistant) {
+                if let Some(msg) = self.messages.last_mut()
+                    && matches!(msg.role, Role::Assistant) {
                         msg.parts.push(MessagePart::Text {
                             text: SharedString::from(""),
                             state: Some(PartState::Streaming),
                         });
                     }
-                }
             }
             BridgeEvent::TextEnd { .. } => {
-                if let Some(msg) = self.messages.last_mut() {
-                    if matches!(msg.role, Role::Assistant) {
-                        if let Some(part) = msg.parts.iter_mut().rev().find(|p| {
+                if let Some(msg) = self.messages.last_mut()
+                    && matches!(msg.role, Role::Assistant)
+                        && let Some(part) = msg.parts.iter_mut().rev().find(|p| {
                             matches!(
                                 p,
                                 MessagePart::Text {
@@ -687,29 +672,25 @@ impl SessionHandle {
                                     ..
                                 }
                             )
-                        }) {
-                            if let MessagePart::Text { state, .. } = part {
+                        })
+                            && let MessagePart::Text { state, .. } = part {
                                 *state = Some(PartState::Done);
                             }
-                        }
-                    }
-                }
             }
             BridgeEvent::ThinkingStart => {
-                if let Some(msg) = self.messages.last_mut() {
-                    if matches!(msg.role, Role::Assistant) {
+                if let Some(msg) = self.messages.last_mut()
+                    && matches!(msg.role, Role::Assistant) {
                         msg.parts.push(MessagePart::Reasoning {
                             text: SharedString::from(""),
                             state: Some(PartState::Streaming),
                             provider_metadata: None,
                         });
                     }
-                }
             }
             BridgeEvent::ThinkingEnd { .. } => {
-                if let Some(msg) = self.messages.last_mut() {
-                    if matches!(msg.role, Role::Assistant) {
-                        if let Some(part) = msg.parts.iter_mut().rev().find(|p| {
+                if let Some(msg) = self.messages.last_mut()
+                    && matches!(msg.role, Role::Assistant)
+                        && let Some(part) = msg.parts.iter_mut().rev().find(|p| {
                             matches!(
                                 p,
                                 MessagePart::Reasoning {
@@ -717,17 +698,14 @@ impl SessionHandle {
                                     ..
                                 }
                             )
-                        }) {
-                            if let MessagePart::Reasoning { state, .. } = part {
+                        })
+                            && let MessagePart::Reasoning { state, .. } = part {
                                 *state = Some(PartState::Done);
                             }
-                        }
-                    }
-                }
             }
             BridgeEvent::ToolCallStart { name, call_id } => {
-                if let Some(msg) = self.messages.last_mut() {
-                    if matches!(msg.role, Role::Assistant) {
+                if let Some(msg) = self.messages.last_mut()
+                    && matches!(msg.role, Role::Assistant) {
                         msg.parts.push(MessagePart::ToolCall {
                             tool_call_id: call_id.into(),
                             name: name.into(),
@@ -735,29 +713,25 @@ impl SessionHandle {
                             state: Some(PartState::Streaming),
                         });
                     }
-                }
             }
             BridgeEvent::ToolCallDelta { call_id, delta } => {
-                if let Some(msg) = self.messages.last_mut() {
-                    if matches!(msg.role, Role::Assistant) {
-                        if let Some(part) = msg.parts.iter_mut().find(|p| matches!(p, MessagePart::ToolCall { tool_call_id: id, .. } if id == &SharedString::from(call_id.clone()))) {
-                            if let MessagePart::ToolCall { args, .. } = part {
+                if let Some(msg) = self.messages.last_mut()
+                    && matches!(msg.role, Role::Assistant)
+                        && let Some(part) = msg.parts.iter_mut().find(|p| matches!(p, MessagePart::ToolCall { tool_call_id: id, .. } if id == &SharedString::from(call_id.clone())))
+                            && let MessagePart::ToolCall { args, .. } = part {
                                 let new_args = format!("{}{}", args, delta);
                                 *args = new_args.into();
                             }
-                        }
-                    }
-                }
             }
             BridgeEvent::ToolCallEnd {
                 call_id,
                 name,
                 args,
             } => {
-                if let Some(msg) = self.messages.last_mut() {
-                    if matches!(msg.role, Role::Assistant) {
-                        if let Some(part) = msg.parts.iter_mut().find(|p| matches!(p, MessagePart::ToolCall { tool_call_id: id, .. } if id == &SharedString::from(call_id.clone()))) {
-                            if let MessagePart::ToolCall { name: part_name, args: part_args, state, .. } = part {
+                if let Some(msg) = self.messages.last_mut()
+                    && matches!(msg.role, Role::Assistant)
+                        && let Some(part) = msg.parts.iter_mut().find(|p| matches!(p, MessagePart::ToolCall { tool_call_id: id, .. } if id == &SharedString::from(call_id.clone())))
+                            && let MessagePart::ToolCall { name: part_name, args: part_args, state, .. } = part {
                                 if *part_name == SharedString::from("") || *part_name == SharedString::from(name.clone()) {
                                     *part_name = name.into();
                                 }
@@ -765,15 +739,12 @@ impl SessionHandle {
                                 *part_args = args_str.into();
                                 *state = Some(PartState::Done);
                             }
-                        }
-                    }
-                }
             }
             BridgeEvent::ToolUpdate { .. } => {}
             BridgeEvent::TurnStart | BridgeEvent::TurnEnd => {}
             BridgeEvent::MessageEnd => {
-                if let Some(msg) = self.messages.last_mut() {
-                    if matches!(msg.role, Role::Assistant) {
+                if let Some(msg) = self.messages.last_mut()
+                    && matches!(msg.role, Role::Assistant) {
                         for part in msg.parts.iter_mut() {
                             match part {
                                 MessagePart::Text { state, .. }
@@ -787,7 +758,6 @@ impl SessionHandle {
                             }
                         }
                     }
-                }
             }
             BridgeEvent::ExtensionUiRequest { id, method, .. } => {
                 eprintln!(
@@ -836,9 +806,9 @@ impl SessionHandle {
                 error,
                 ..
             } => {
-                if command == "create_session" && success {
-                    if let Some(ref data_val) = data {
-                        if let Some(session_file) =
+                if command == "create_session" && success
+                    && let Some(ref data_val) = data
+                        && let Some(session_file) =
                             data_val.get("sessionFile").and_then(|s| s.as_str())
                         {
                             let file_name = std::path::Path::new(session_file)
@@ -863,8 +833,6 @@ impl SessionHandle {
                                 }
                             }
                         }
-                    }
-                }
                 if command == "fork" && !success {
                     let err = error.as_deref().unwrap_or("fork failed");
                     eprintln!("[mini-pi] fork failed: {}", err);
@@ -928,21 +896,20 @@ impl SessionHandle {
                 }
                 if command == "export_html" {
                     if success {
-                        if let Some(ref data_val) = data {
-                            if let Some(path) = data_val.get("path").and_then(|p| p.as_str()) {
+                        if let Some(ref data_val) = data
+                            && let Some(path) = data_val.get("path").and_then(|p| p.as_str()) {
                                 eprintln!("[mini-pi] session exported to: {}", path);
                             }
-                        }
                     } else {
                         let err = error.as_deref().unwrap_or("export failed");
                         eprintln!("[mini-pi] export_html failed: {}", err);
                         self.state = ChatState::Error(format!("Export failed: {}", err).into());
                     }
                 }
-                if command == "get_commands" && success {
-                    if let Some(ref data_val) = data {
-                        if let Some(commands) = data_val.get("commands") {
-                            if let Some(arr) = commands.as_array() {
+                if command == "get_commands" && success
+                    && let Some(ref data_val) = data
+                        && let Some(commands) = data_val.get("commands")
+                            && let Some(arr) = commands.as_array() {
                                 let items: Vec<CommandItem> = arr
                                     .iter()
                                     .filter_map(|cmd| {
@@ -965,9 +932,6 @@ impl SessionHandle {
                                     .collect();
                                 self.commands = items;
                             }
-                        }
-                    }
-                }
             }
         }
 
@@ -1059,9 +1023,9 @@ impl SessionHandle {
                 }
                 "tool" => {
                     for part in msg.parts {
-                        if let LoadedPart::ToolResult { name, output } = part {
-                            if let Some(last_msg) = self.messages.last_mut() {
-                                if matches!(last_msg.role, Role::Assistant) {
+                        if let LoadedPart::ToolResult { name, output } = part
+                            && let Some(last_msg) = self.messages.last_mut()
+                                && matches!(last_msg.role, Role::Assistant) {
                                     last_msg.parts.push(MessagePart::ToolResult {
                                         tool_call_id: SharedString::from(""),
                                         name: name.into(),
@@ -1069,8 +1033,6 @@ impl SessionHandle {
                                         state: Some(PartState::Done),
                                     });
                                 }
-                            }
-                        }
                     }
                 }
                 _ => {}

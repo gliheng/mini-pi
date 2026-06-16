@@ -185,11 +185,10 @@ impl PiBridge {
             std::thread::spawn(move || {
                 let reader = std::io::BufReader::new(stderr);
                 for line in reader.lines() {
-                    if let Ok(text) = line {
-                        if !text.is_empty() {
+                    if let Ok(text) = line
+                        && !text.is_empty() {
                             eprintln!("[pi-bridge] {}", text);
                         }
-                    }
                 }
             });
         }
@@ -660,8 +659,8 @@ fn add_request_id(cmd: &mut serde_json::Value, request_id: Option<&str>) {
 }
 
 fn add_images(cmd: &mut serde_json::Value, images: Option<&[ImageContent]>) {
-    if let Some(imgs) = images {
-        if !imgs.is_empty() {
+    if let Some(imgs) = images
+        && !imgs.is_empty() {
             let img_vals: Vec<serde_json::Value> = imgs
                 .iter()
                 .map(|img| {
@@ -674,7 +673,6 @@ fn add_images(cmd: &mut serde_json::Value, images: Option<&[ImageContent]>) {
                 .collect();
             cmd["images"] = serde_json::json!(img_vals);
         }
-    }
 }
 
 fn parse_bridge_message(text: &str) -> Option<(String, BridgeEvent)> {
@@ -819,11 +817,10 @@ fn parse_pi_line_value(val: &serde_json::Value) -> Option<BridgeEvent> {
 
         "tool_execution_update" => {
             let mut output = String::new();
-            if let Some(pr) = val.get("partialResult") {
-                if let Some(content) = pr.get("content") {
+            if let Some(pr) = val.get("partialResult")
+                && let Some(content) = pr.get("content") {
                     extract_text_parts(content, &mut output);
                 }
-            }
             Some(BridgeEvent::ToolUpdate {
                 call_id: val
                     .get("toolCallId")
@@ -851,11 +848,10 @@ fn parse_pi_line_value(val: &serde_json::Value) -> Option<BridgeEvent> {
                 .unwrap_or("unknown")
                 .to_string();
             let mut output = String::new();
-            if let Some(result) = val.get("result") {
-                if let Some(content) = result.get("content") {
+            if let Some(result) = val.get("result")
+                && let Some(content) = result.get("content") {
                     extract_text_parts(content, &mut output);
                 }
-            }
             let is_error = val
                 .get("isError")
                 .and_then(|e| e.as_bool())
@@ -901,8 +897,8 @@ fn parse_pi_line_value(val: &serde_json::Value) -> Option<BridgeEvent> {
             }
 
             if command == "get_messages" && success {
-                if let Some(ref data_val) = data {
-                    if data_val.get("messages").is_some() {
+                if let Some(ref data_val) = data
+                    && data_val.get("messages").is_some() {
                         return Some(BridgeEvent::Response {
                             command: command.to_string(),
                             success,
@@ -911,7 +907,6 @@ fn parse_pi_line_value(val: &serde_json::Value) -> Option<BridgeEvent> {
                             request_id: request_id.clone(),
                         });
                     }
-                }
                 log!("get_messages response missing data.messages");
             }
 

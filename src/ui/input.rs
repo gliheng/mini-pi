@@ -598,8 +598,7 @@ impl Element for TextElement {
         let (display_text, text_color) = if content.is_empty() {
             (input.placeholder.clone(), hsla(base_color.h, base_color.s, base_color.l, 0.3))
         } else if input.password_mode {
-            let bullets: SharedString = std::iter::repeat('*')
-                .take(content.chars().count())
+            let bullets: SharedString = std::iter::repeat_n('*', content.chars().count())
                 .collect::<String>()
                 .into();
             (bullets, base_color)
