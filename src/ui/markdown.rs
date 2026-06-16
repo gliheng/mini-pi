@@ -1218,6 +1218,7 @@ fn render_block(block: &BlockNode, theme: &MarkdownTheme) -> gpui::AnyElement {
             } else if inlines_contain_image(inlines) || inlines_contain_link(inlines) {
                 div()
                     .w_full()
+                    .min_w_0()
                     .text_left()
                     .flex()
                     .flex_col()
@@ -1227,6 +1228,7 @@ fn render_block(block: &BlockNode, theme: &MarkdownTheme) -> gpui::AnyElement {
             } else {
                 div()
                     .w_full()
+                    .min_w_0()
                     .text_left()
                     .child(render_styled_inlines(inlines, theme))
                     .into_any_element()
@@ -1237,6 +1239,7 @@ fn render_block(block: &BlockNode, theme: &MarkdownTheme) -> gpui::AnyElement {
             let font_size = px(font_size);
             let heading = div()
                 .w_full()
+                .min_w_0()
                 .mt_2()
                 .mb_1()
                 .text_size(font_size)
@@ -1360,6 +1363,8 @@ fn render_block(block: &BlockNode, theme: &MarkdownTheme) -> gpui::AnyElement {
                 .into_any_element()
         }
         BlockNode::BlockQuote { children } => div()
+            .w_full()
+            .min_w_0()
             .border_l_4()
             .border_color(theme.quote_border)
             .text_color(theme.quote_text)
@@ -1493,6 +1498,7 @@ impl Render for MarkdownRenderer {
             .flex()
             .flex_col()
             .w_full()
+            .min_w_0()
             .text_color(theme.text_primary)
             .children(render_blocks(blocks, &theme))
     }

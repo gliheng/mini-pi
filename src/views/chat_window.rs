@@ -1273,6 +1273,7 @@ impl Render for ChatWindow {
                                                 .flex()
                                                 .flex_col()
                                                 .w_full()
+                                                .min_w_0()
                                                 .when(is_user, |this| this.items_end())
                                                 .gap_1()
                                                 .children(msg.parts.iter().enumerate().map(|(part_idx, part)| {
@@ -1342,6 +1343,7 @@ impl Render for ChatWindow {
                                                                     .flex()
                                                                     .flex_col()
                                                                     .gap_1()
+                                                                    .when(!is_user, |this| this.w_full().min_w_0())
                                                                     .child(
                                                                         div()
                                                                             .py_2()
