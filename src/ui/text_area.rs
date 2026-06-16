@@ -946,10 +946,14 @@ impl Element for TextAreaElement {
         let cursor = input.cursor_offset();
         let style = window.text_style();
 
+        let base_color = style.color;
         let (display_text, text_color) = if content.is_empty() {
-            (input.placeholder.clone(), hsla(0., 0., 1., 0.3))
+            (
+                input.placeholder.clone(),
+                hsla(base_color.h, base_color.s, base_color.l, 0.3),
+            )
         } else {
-            (content, hsla(0., 0., 1., 1.))
+            (content, base_color)
         };
 
         let run = TextRun {
@@ -1051,8 +1055,15 @@ impl Element for TextAreaElement {
             window.paint_quad(selection)
         }
         let line = prepaint.line.take().unwrap();
-        line.paint(bounds.origin, window.line_height(), window, cx)
-            .unwrap();
+        let line_height = window.line_height();
+        let text_y = bounds.top() + (bounds.bottom() - bounds.top() - line_height) / 2.0;
+        line.paint(
+            point(bounds.origin.x, text_y),
+            line_height,
+            window,
+            cx,
+        )
+        .unwrap();
 
         if focus_handle.is_focused(window) && let Some(cursor) = prepaint.cursor.take() {
             window.paint_quad(cursor);

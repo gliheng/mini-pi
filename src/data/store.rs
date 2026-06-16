@@ -13,6 +13,7 @@ pub struct ThreadMeta {
     pub preview: String,
     pub session_file: Option<String>,
     pub model: Option<String>,
+    pub thinking_level: Option<String>,
     pub pinned: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -53,6 +54,12 @@ const MIGRATIONS: &[(&str, &str)] = &[
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+        ",
+    ),
+    (
+        "004_thinking_level",
+        "
+        ALTER TABLE threads ADD COLUMN thinking_level TEXT;
         ",
     ),
 ];
@@ -144,8 +151,8 @@ impl Store {
     pub fn create_thread(&self, title: &str, preview: &str) -> Result<ThreadMeta, StoreError> {
         self.conn
             .execute(
-                "INSERT INTO threads (title, preview) VALUES (?1, ?2)",
-                params![title, preview],
+                "INSERT INTO threads (title, preview, thinking_level) VALUES (?1, ?2, ?3)",
+                params![title, preview, Option::<&str>::None],
             )
             .map_err(StoreError::Rusqlite)?;
         let id = self.conn.last_insert_rowid();
@@ -156,7 +163,7 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, title, preview, session_file, model, pinned, created_at, updated_at \
+                "SELECT id, title, preview, session_file, model, thinking_level, pinned, created_at, updated_at \
                  FROM threads ORDER BY pinned DESC, updated_at DESC",
             )
             .map_err(StoreError::Rusqlite)?;
@@ -168,9 +175,10 @@ impl Store {
                     preview: row.get(2)?,
                     session_file: row.get(3)?,
                     model: row.get(4)?,
-                    pinned: row.get::<_, i32>(5)? != 0,
-                    created_at: row.get(6)?,
-                    updated_at: row.get(7)?,
+                    thinking_level: row.get(5)?,
+                    pinned: row.get::<_, i32>(6)? != 0,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
                 })
             })
             .map_err(StoreError::Rusqlite)?;
@@ -182,7 +190,7 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, title, preview, session_file, model, pinned, created_at, updated_at \
+                "SELECT id, title, preview, session_file, model, thinking_level, pinned, created_at, updated_at \
                  FROM threads WHERE id = ?1",
             )
             .map_err(StoreError::Rusqlite)?;
@@ -193,9 +201,10 @@ impl Store {
                 preview: row.get(2)?,
                 session_file: row.get(3)?,
                 model: row.get(4)?,
-                pinned: row.get::<_, i32>(5)? != 0,
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
+                thinking_level: row.get(5)?,
+                pinned: row.get::<_, i32>(6)? != 0,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
             })
         })
         .optional()
@@ -209,6 +218,7 @@ impl Store {
         preview: Option<&str>,
         session_file: Option<Option<&str>>,
         model: Option<Option<&str>>,
+        thinking_level: Option<Option<&str>>,
         pinned: Option<bool>,
     ) -> Result<(), StoreError> {
         if let Some(t) = title {
@@ -240,6 +250,14 @@ impl Store {
                 .execute(
                     "UPDATE threads SET model = ?1 WHERE id = ?2",
                     params![m, id],
+                )
+                .map_err(StoreError::Rusqlite)?;
+        }
+        if let Some(tl) = thinking_level {
+            self.conn
+                .execute(
+                    "UPDATE threads SET thinking_level = ?1 WHERE id = ?2",
+                    params![tl, id],
                 )
                 .map_err(StoreError::Rusqlite)?;
         }

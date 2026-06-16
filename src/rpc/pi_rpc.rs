@@ -104,6 +104,7 @@ pub enum LoadedPart {
 
 #[derive(Debug, Clone)]
 pub struct LoadedMessage {
+    pub id: Option<String>,
     pub role: String,
     pub parts: Vec<LoadedPart>,
 }
@@ -317,6 +318,30 @@ impl PiRpc {
 
     pub fn send_get_commands(&mut self, request_id: Option<&str>) -> Result<(), PiRpcError> {
         let mut cmd = serde_json::json!({ "type": "get_commands" });
+        add_request_id(&mut cmd, request_id);
+        self.write_json(&cmd)
+    }
+
+    pub fn send_fork(&mut self, entry_id: &str, request_id: Option<&str>) -> Result<(), PiRpcError> {
+        let mut cmd = serde_json::json!({
+            "type": "fork",
+            "entryId": entry_id,
+        });
+        add_request_id(&mut cmd, request_id);
+        self.write_json(&cmd)
+    }
+
+    pub fn send_clone(&mut self, request_id: Option<&str>) -> Result<(), PiRpcError> {
+        let mut cmd = serde_json::json!({ "type": "clone" });
+        add_request_id(&mut cmd, request_id);
+        self.write_json(&cmd)
+    }
+
+    pub fn send_get_fork_messages(
+        &mut self,
+        request_id: Option<&str>,
+    ) -> Result<(), PiRpcError> {
+        let mut cmd = serde_json::json!({ "type": "get_fork_messages" });
         add_request_id(&mut cmd, request_id);
         self.write_json(&cmd)
     }
@@ -742,6 +767,7 @@ fn parse_messages(messages_val: &serde_json::Value) -> Option<BridgeEvent> {
     let mut loaded = Vec::new();
 
     for msg in arr {
+        let id = msg.get("id").and_then(|i| i.as_str()).map(|s| s.to_string());
         let role = msg.get("role")?.as_str()?.to_string();
 
         match role.as_str() {
@@ -761,6 +787,7 @@ fn parse_messages(messages_val: &serde_json::Value) -> Option<BridgeEvent> {
                     text = s.to_string();
                 }
                 loaded.push(LoadedMessage {
+                    id,
                     role: "user".to_string(),
                     parts: vec![LoadedPart::Text { text }],
                 });
@@ -810,6 +837,7 @@ fn parse_messages(messages_val: &serde_json::Value) -> Option<BridgeEvent> {
                 }
                 if !parts.is_empty() {
                     loaded.push(LoadedMessage {
+                        id,
                         role: "assistant".to_string(),
                         parts,
                     });
@@ -825,6 +853,7 @@ fn parse_messages(messages_val: &serde_json::Value) -> Option<BridgeEvent> {
                     extract_text_parts(content, &mut output);
                 }
                 loaded.push(LoadedMessage {
+                    id,
                     role: "tool".to_string(),
                     parts: vec![LoadedPart::ToolResult {
                         name: tool_name.to_string(),
@@ -840,6 +869,7 @@ fn parse_messages(messages_val: &serde_json::Value) -> Option<BridgeEvent> {
                 let output = msg.get("output").and_then(|o| o.as_str()).unwrap_or("");
                 let exit_code = msg.get("exitCode").and_then(|c| c.as_i64()).unwrap_or(-1);
                 loaded.push(LoadedMessage {
+                    id,
                     role: "bash".to_string(),
                     parts: vec![LoadedPart::ToolResult {
                         name: "bash".to_string(),

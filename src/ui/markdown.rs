@@ -1,7 +1,7 @@
 use std::{collections::VecDeque, ops::Range, sync::{Arc, OnceLock}};
 
 use gpui::{
-    Context, FontStyle, FontWeight, HighlightStyle, Image, ImageFormat, IntoElement, ParentElement, Render,
+    ClipboardItem, Context, FontStyle, FontWeight, HighlightStyle, Image, ImageFormat, IntoElement, ParentElement, Render,
     SharedString, StatefulInteractiveElement, StrikethroughStyle, Styled, StyledImage, StyledText, TextStyle, UnderlineStyle, Window, div, img, prelude::*,
     px, rgb,
 };
@@ -117,7 +117,10 @@ enum InlineNode {
     Emphasis { children: Vec<InlineNode> },
     Strong { children: Vec<InlineNode> },
     Strikethrough { children: Vec<InlineNode> },
-    Link { children: Vec<InlineNode> },
+    Link {
+        children: Vec<InlineNode>,
+        url: SharedString,
+    },
     Image { alt: SharedString, url: SharedString },
     SoftBreak,
     HardBreak,
@@ -386,11 +389,11 @@ fn parse_markdown(source: &str) -> Vec<BlockNode> {
                 }
                 TagEnd::Link => {
                     if let Some(ctx) = block_stack.pop_back() {
-                        if let BlockContext::Link { children, .. } = ctx {
+                        if let BlockContext::Link { children, url } = ctx {
                             push_inline(
                                 &mut inline_buffer,
                                 &mut block_stack,
-                                InlineNode::Link { children },
+                                InlineNode::Link { children, url },
                             );
                         }
                     }
@@ -750,7 +753,7 @@ fn collect_styled_inlines(
                     theme,
                 );
             }
-            InlineNode::Link { children } => {
+            InlineNode::Link { children, .. } => {
                 append_padded_children(
                     text,
                     highlights,
@@ -859,7 +862,7 @@ fn render_inlines_text(inlines: &[InlineNode]) -> String {
                 result.push_str(&render_inlines_text(children));
                 result.push_str("~~");
             }
-            InlineNode::Link { children } => {
+            InlineNode::Link { children, .. } => {
                 result.push_str(&render_inlines_text(children));
             }
             InlineNode::Image { alt, url } => {
@@ -915,10 +918,54 @@ fn inlines_contain_image(inlines: &[InlineNode]) -> bool {
                 InlineNode::Emphasis { children }
                 | InlineNode::Strong { children }
                 | InlineNode::Strikethrough { children }
-                | InlineNode::Link { children } => inlines_contain_image(children),
+                | InlineNode::Link { children, .. } => inlines_contain_image(children),
                 _ => false,
             }
     })
+}
+
+fn inlines_contain_link(inlines: &[InlineNode]) -> bool {
+    inlines.iter().any(|inline| {
+        matches!(inline, InlineNode::Link { .. })
+            || match inline {
+                InlineNode::Emphasis { children }
+                | InlineNode::Strong { children }
+                | InlineNode::Strikethrough { children }
+                | InlineNode::Link { children, .. } => inlines_contain_link(children),
+                _ => false,
+            }
+    })
+}
+
+fn render_link_element(
+    children: &[InlineNode],
+    url: &SharedString,
+    theme: &MarkdownTheme,
+    base_text_style: Option<TextStyle>,
+) -> gpui::AnyElement {
+    let mut style = base_text_style.unwrap_or_else(|| {
+        let mut s = TextStyle::default();
+        s.color = theme.text_primary;
+        s
+    });
+    style.color = theme.link_color;
+    style.underline = Some(UnderlineStyle {
+        thickness: px(1.),
+        color: Some(theme.link_underline),
+        wavy: false,
+    });
+
+    let url = url.clone();
+    div()
+        .id(SharedString::from(format!("link-{}", url)))
+        .cursor_pointer()
+        .flex()
+        .flex_row()
+        .children(render_inlines_as_elements(children, theme, Some(style)))
+        .on_click(move |_event: &gpui::ClickEvent, _window, cx: &mut gpui::App| {
+            let _ = cx.open_url(&url);
+        })
+        .into_any_element()
 }
 
 /// Renders inline nodes as a sequence of GPUI elements, mixing StyledText
@@ -995,20 +1042,14 @@ fn render_inlines_as_elements(
                         theme, base_text_style,
                     );
                 }
-                InlineNode::Link { children } => {
-                    append_padded_children_to_elements(
-                        text, highlights, elements, children,
-                        active_style.highlight(HighlightStyle {
-                            color: Some(theme.link_color),
-                            underline: Some(UnderlineStyle {
-                                thickness: px(1.),
-                                color: Some(theme.link_underline),
-                                wavy: false,
-                            }),
-                            ..Default::default()
-                        }),
-                        theme, base_text_style,
-                    );
+                InlineNode::Link { children, url } => {
+                    flush_text(text, highlights, elements, base_text_style);
+                    elements.push(render_link_element(
+                        children,
+                        url,
+                        theme,
+                        base_text_style.clone(),
+                    ));
                 }
                 InlineNode::Image { alt, url } => {
                     flush_text(text, highlights, elements, base_text_style);
@@ -1108,6 +1149,17 @@ fn render_inlines_as_elements(
     elements
 }
 
+fn heading_style(level: HeadingLevel) -> (f32, FontWeight) {
+    match level {
+        HeadingLevel::H1 => (26.0, FontWeight(700.0)),
+        HeadingLevel::H2 => (22.0, FontWeight(700.0)),
+        HeadingLevel::H3 => (19.0, FontWeight(700.0)),
+        HeadingLevel::H4 => (16.0, FontWeight(600.0)),
+        HeadingLevel::H5 => (14.0, FontWeight(600.0)),
+        HeadingLevel::H6 => (13.0, FontWeight(600.0)),
+    }
+}
+
 fn render_blocks(blocks: &[BlockNode], theme: &MarkdownTheme) -> Vec<gpui::AnyElement> {
     blocks.iter().map(|block| render_block(block, theme)).collect()
 }
@@ -1117,7 +1169,7 @@ fn render_block(block: &BlockNode, theme: &MarkdownTheme) -> gpui::AnyElement {
         BlockNode::Paragraph { inlines } => {
             if inlines.is_empty() {
                 div().h(px(4.)).into_any_element()
-            } else if inlines_contain_image(inlines) {
+            } else if inlines_contain_image(inlines) || inlines_contain_link(inlines) {
                 div()
                     .w_full()
                     .text_left()
@@ -1135,14 +1187,8 @@ fn render_block(block: &BlockNode, theme: &MarkdownTheme) -> gpui::AnyElement {
             }
         }
         BlockNode::Heading { level, inlines } => {
-            let (font_size, weight) = match level {
-                HeadingLevel::H1 => (px(26.), FontWeight(700.0)),
-                HeadingLevel::H2 => (px(22.), FontWeight(700.0)),
-                HeadingLevel::H3 => (px(19.), FontWeight(700.0)),
-                HeadingLevel::H4 => (px(16.), FontWeight(600.0)),
-                HeadingLevel::H5 => (px(14.), FontWeight(600.0)),
-                HeadingLevel::H6 => (px(13.), FontWeight(600.0)),
-            };
+            let (font_size, weight) = heading_style(*level);
+            let font_size = px(font_size);
             let heading = div()
                 .w_full()
                 .mt_2()
@@ -1150,7 +1196,7 @@ fn render_block(block: &BlockNode, theme: &MarkdownTheme) -> gpui::AnyElement {
                 .text_size(font_size)
                 .font_weight(weight)
                 .text_color(theme.heading_color);
-            if inlines_contain_image(inlines) {
+            if inlines_contain_image(inlines) || inlines_contain_link(inlines) {
                 let mut style = TextStyle::default();
                 style.font_size = gpui::AbsoluteLength::Pixels(font_size);
                 style.color = theme.heading_color;
@@ -1167,6 +1213,7 @@ fn render_block(block: &BlockNode, theme: &MarkdownTheme) -> gpui::AnyElement {
             }
         }
         BlockNode::CodeBlock { language, code } => {
+            let code_for_copy = code.clone();
             let lang_label = language
                 .clone()
                 .unwrap_or_else(|| SharedString::from("code"));
@@ -1242,12 +1289,17 @@ fn render_block(block: &BlockNode, theme: &MarkdownTheme) -> gpui::AnyElement {
                         .child(lang_label)
                         .child(
                             div()
+                                .id("copy-code-btn")
                                 .px_2()
                                 .py_px()
                                 .rounded_md()
                                 .bg(theme.button_bg)
                                 .text_color(theme.button_text)
-                                .child("Copy"),
+                                .cursor_pointer()
+                                .child("Copy")
+                                .on_click(move |_event: &gpui::ClickEvent, _window, cx: &mut gpui::App| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(code_for_copy.to_string()));
+                                }),
                         ),
                 )
                 .child(code_content)
@@ -1557,14 +1609,7 @@ mod tests {
             HeadingLevel::H6,
         ]
         .iter()
-        .map(|level| match level {
-            HeadingLevel::H1 => 18.0,
-            HeadingLevel::H2 => 17.0,
-            HeadingLevel::H3 => 16.0,
-            HeadingLevel::H4 => 16.0,
-            HeadingLevel::H5 => 15.0,
-            HeadingLevel::H6 => 14.0,
-        })
+        .map(|level| heading_style(*level).0)
         .collect();
         // All sizes must be distinct
         let mut unique = sizes.clone();
@@ -1585,6 +1630,30 @@ mod tests {
             total_highlights > 0,
             "expected syntax highlighting to produce highlights for Rust code"
         );
+    }
+
+    #[test]
+    fn link_preserves_url() {
+        let blocks = parse_markdown("[example](https://example.com)");
+        let paragraph = blocks
+            .iter()
+            .find_map(|b| match b {
+                BlockNode::Paragraph { inlines } if !inlines.is_empty() => Some(inlines),
+                _ => None,
+            })
+            .expect("expected a non-empty paragraph");
+        assert_eq!(paragraph.len(), 1, "expected 1 inline, got {:?}", paragraph);
+        match &paragraph[0] {
+            InlineNode::Link { children, url } => {
+                assert_eq!(url.as_ref(), "https://example.com");
+                assert_eq!(children.len(), 1);
+                match &children[0] {
+                    InlineNode::Text { text } => assert_eq!(text.as_ref(), "example"),
+                    _ => panic!("expected text inside link"),
+                }
+            }
+            _ => panic!("expected link node, got {:?}", paragraph[0]),
+        }
     }
 
     #[test]

@@ -12,7 +12,9 @@ use std::time::Duration;
 ///
 /// # Example
 /// ```rust
-/// .child(loader())
+/// # use mini_pi::ui::loader::loader;
+/// # use gpui::{div, ParentElement};
+/// div().child(loader());
 /// ```
 pub fn loader() -> impl IntoElement {
     loader_with(8.0, 0x888888)
@@ -66,7 +68,9 @@ fn animated_dot(
 ///
 /// # Example
 /// ```rust
-/// .child(text_loader())
+/// # use mini_pi::ui::loader::text_loader;
+/// # use gpui::{div, ParentElement};
+/// div().child(text_loader());
 /// ```
 pub fn text_loader() -> impl IntoElement {
     const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];

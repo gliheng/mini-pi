@@ -7,15 +7,15 @@ use std::{
 use crate::views::title_bar::{TitleBarEvent, TitleBarVariant};
 use futures::StreamExt;
 use gpui::{
-    Bounds, ClipboardItem, Context, FocusHandle, IntoElement, KeyDownEvent, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
+    Bounds, ClipboardItem, Context, FocusHandle, Focusable, IntoElement, InteractiveElement,
+    KeyDownEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
     PathPromptOptions, Render, ScrollHandle, SharedString, Styled, Task, Window, div, prelude::*,
     canvas, fill, point, px, rgb, svg,
 };
 use uuid::Uuid;
 
 use crate::config::model_config::{all_models, model_display_name, parse_model_id};
-use crate::core::actions::{CloseWindow, SendMessage};
+use crate::core::actions::{CancelInlineEdit, CloseWindow, ConfirmInlineEdit, SendMessage};
 use crate::core::app::AppStore;
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::data::store::{Store, ThreadMeta, WorkspaceMeta};
@@ -57,6 +57,8 @@ pub struct ChatWindow {
     pub show_workspace_manager: bool,
     pub workspace_manager: gpui::Entity<WorkspaceManager>,
     pub pi_restart_count: u32,
+    pub editing_message_id: Option<String>,
+    pub inline_edit_input: Option<gpui::Entity<TextArea>>,
 }
 
 impl ChatWindow {
@@ -87,6 +89,8 @@ impl ChatWindow {
         let selected_model: Option<String> = thread
             .and_then(|t| t.model.clone())
             .or_else(|| cx.global::<AppStore>().config.default_model.clone());
+        let selected_thinking_level: Option<String> = thread
+            .and_then(|t| t.thinking_level.clone());
 
         let mut workspaces = store.list_workspaces().unwrap_or_default();
         if workspaces.is_empty() {
@@ -132,7 +136,20 @@ impl ChatWindow {
             DropdownItem::new("xhigh", "Extra High"),
         ];
         let thinking_dropdown = cx.new(|cx| {
-            Dropdown::new(cx, "Default", thinking_items)
+            let thinking_label: SharedString = selected_thinking_level
+                .as_ref()
+                .map(|l| match l.as_str() {
+                    "off" => "Off".into(),
+                    "minimal" => "Minimal".into(),
+                    "low" => "Low".into(),
+                    "medium" => "Medium".into(),
+                    "high" => "High".into(),
+                    "xhigh" => "Extra High".into(),
+                    _ => l.clone().into(),
+                })
+                .unwrap_or_else(|| "Default".into());
+            Dropdown::new(cx, thinking_label, thinking_items)
+                .with_selected(selected_thinking_level.clone())
                 .with_width(px(160.))
                 .with_max_height(px(300.))
                 .with_direction(Direction::Up)
@@ -151,7 +168,7 @@ chat_input,
             pi: None,
             _pi_task: None,
             selected_model,
-            thinking_level: None,
+            thinking_level: selected_thinking_level,
             model_dropdown: model_dropdown.clone(),
             thinking_dropdown: thinking_dropdown.clone(),
             reasoning_displays: vec![],
@@ -166,6 +183,8 @@ chat_input,
             show_workspace_manager: false,
             workspace_manager: workspace_manager.clone(),
             pi_restart_count: 0,
+            editing_message_id: None,
+            inline_edit_input: None,
         };
 
         if is_restoring {
@@ -249,7 +268,7 @@ chat_input,
                 if let Some(thread_id) = this.thread_id {
                     let _ =
                         this.store
-                            .update_thread(thread_id, None, None, None, Some(Some(id)), None);
+                            .update_thread(thread_id, None, None, None, Some(Some(id)), None, None);
                 }
                 if let Some(ref mut pi) = this.pi {
                     if let Some((provider, model)) = parse_model_id(id) {
@@ -266,14 +285,26 @@ chat_input,
         // Subscribe to thinking dropdown selection events
         cx.subscribe(
             &thinking_dropdown,
-            |this, _dropdown, event: &DropdownEvent, _cx| {
+            |this, _dropdown, event: &DropdownEvent, cx| {
                 let DropdownEvent::Selected { id } = event;
                 this.thinking_level = Some(id.clone());
+                if let Some(thread_id) = this.thread_id {
+                    let _ = this.store.update_thread(
+                        thread_id,
+                        None,
+                        None,
+                        None,
+                        None,
+                        Some(Some(id)),
+                        None,
+                    );
+                }
                 if let Some(ref mut pi) = this.pi {
                     if let Err(e) = pi.send_set_thinking_level(id, None) {
                         eprintln!("[mini-pi] send_set_thinking_level failed: {}", e);
                     }
                 }
+                cx.notify();
             },
         )
         .detach();
@@ -460,9 +491,15 @@ chat_input,
             BridgeEvent::AgentStart => {
                 self.state = ChatState::Streaming;
             }
-            BridgeEvent::MessageStart { .. } => {
+            BridgeEvent::MessageStart { message } => {
+                let id = message
+                    .as_ref()
+                    .and_then(|m| m.get("id"))
+                    .and_then(|id| id.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| Uuid::new_v4().to_string());
                 self.messages.push(Message {
-                    id: Uuid::new_v4().to_string(),
+                    id,
                     role: Role::Assistant,
                     parts: vec![],
                 });
@@ -769,7 +806,12 @@ chat_input,
                     );
                 }
             }
-            BridgeEvent::Response { command, success, data, .. } => {
+            BridgeEvent::Response { command, success, data, error, .. } => {
+                if command == "fork" && !success {
+                    let err = error.unwrap_or_else(|| "fork failed".to_string());
+                    eprintln!("[mini-pi] fork failed: {}", err);
+                    self.state = ChatState::Error(format!("Fork failed: {}", err).into());
+                }
                 if command == "get_commands" && success {
                     if let Some(ref data_val) = data {
                         if let Some(commands) = data_val.get("commands") {
@@ -825,7 +867,7 @@ chat_input,
                             }
                             if !parts.is_empty() {
                                 self.messages.push(Message {
-                                    id: Uuid::new_v4().to_string(),
+                                    id: msg.id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                                     role: Role::User,
                                     parts,
                                 });
@@ -868,7 +910,7 @@ chat_input,
                             }
                             if !parts.is_empty() {
                                 self.messages.push(Message {
-                                    id: Uuid::new_v4().to_string(),
+                                    id: msg.id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                                     role: Role::Assistant,
                                     parts,
                                 });
@@ -912,9 +954,48 @@ chat_input,
         if self.chat_input.read(cx).is_popup_visible() {
             return;
         }
-        let content = self.chat_input.read(cx).content().clone();
+        // When inline-editing a message, read from the inline input instead of
+        // the bottom chat input.
+        let content = if self.editing_message_id.is_some() {
+            self.inline_edit_input
+                .as_ref()
+                .map(|i| i.read(cx).content().clone())
+                .unwrap_or_else(|| self.chat_input.read(cx).content().clone())
+        } else {
+            self.chat_input.read(cx).content().clone()
+        };
         eprintln!("[mini-pi] send_message: {} chars", content.len());
         if content.is_empty() {
+            return;
+        }
+
+        // Handle editing an existing user message: fork from it and send the
+        // edited prompt into the new branch.
+        if let Some(editing_id) = self.editing_message_id.take() {
+            self.chat_input.update(cx, |ci, cx| ci.reset(cx));
+            let Some(edit_idx) = self.messages.iter().position(|m| m.id == editing_id) else {
+                eprintln!("[mini-pi] edited message {} not found", editing_id);
+                self.clear_inline_edit_state(cx);
+                return;
+            };
+            if !matches!(self.messages[edit_idx].role, Role::User) {
+                eprintln!("[mini-pi] cannot edit non-user message");
+                self.clear_inline_edit_state(cx);
+                return;
+            }
+            let entry_id = self.messages[edit_idx].id.clone();
+            // Update the edited message text.
+            self.messages[edit_idx].parts = vec![MessagePart::Text {
+                text: content.clone(),
+                state: Some(PartState::Done),
+            }];
+            // Truncate any messages that came after the edited one.
+            self.messages.truncate(edit_idx + 1);
+            // Clear stale display entities.
+            self.reasoning_displays.truncate(edit_idx + 1);
+            self.markdown_displays.truncate(edit_idx + 1);
+            self.clear_inline_edit_state(cx);
+            self.send_edited_prompt(entry_id, content, cx);
             return;
         }
 
@@ -949,6 +1030,7 @@ chat_input,
                         Some(Some(&sf)),
                         Some(model_opt),
                         None,
+                        None,
                     );
                     needs_refresh = true;
                 }
@@ -979,7 +1061,7 @@ chat_input,
                             if let Some(tid) = window.thread_id {
                                 let _ = window
                                     .store
-                                    .update_thread(tid, Some(&title), None, None, None, None);
+                                    .update_thread(tid, Some(&title), None, None, None, None, None);
                             }
                             window.title_bar.update(cx, |tb, _| {
                                 tb.title = title.into();
@@ -1009,7 +1091,7 @@ chat_input,
         let preview: String = content.chars().take(120).collect();
         let _ = self
             .store
-            .update_thread(tid, Some(&title), Some(&preview), None, None, None);
+            .update_thread(tid, Some(&title), Some(&preview), None, None, None, None);
         needs_refresh = true;
 
         if needs_refresh {
@@ -1024,6 +1106,136 @@ chat_input,
         }
 
         cx.notify();
+    }
+
+    fn send_edited_prompt(&mut self, entry_id: String, content: SharedString, cx: &mut Context<Self>) {
+        if self.pi.is_none() {
+            // Spawn without requesting history; we already have the local
+            // message list and are about to fork from it.
+            if !self.spawn_pi(false, cx) {
+                return;
+            }
+        }
+
+        // Ensure a thread row exists.
+        if self.thread_id.is_none() {
+            match self.store.create_thread("", "") {
+                Ok(thread) => {
+                    self.thread_id = Some(thread.id);
+                    let sf = self.session_file.clone();
+                    let model_opt = self.selected_model.as_deref();
+                    let thinking_opt = self.thinking_level.as_deref();
+                    let _ = self.store.update_thread(
+                        thread.id,
+                        None,
+                        None,
+                        Some(Some(&sf)),
+                        Some(model_opt),
+                        Some(thinking_opt),
+                        None,
+                    );
+                }
+                Err(_) => {
+                    self.state = ChatState::Error("Failed to create thread".into());
+                    cx.notify();
+                    return;
+                }
+            }
+        }
+        if let Some(tid) = self.thread_id {
+            let preview: String = content.chars().take(120).collect();
+            let _ = self
+                .store
+                .update_thread(tid, None, Some(&preview), None, None, None, None);
+        }
+        self.state = ChatState::Streaming;
+        self.scroll_locked = true;
+        if let Some(ref mut pi) = self.pi {
+            let _ = pi.send_fork(&entry_id, None);
+            let _ = pi.send_prompt(&content);
+        }
+        cx.notify();
+    }
+
+    pub fn confirm_inline_edit(
+        &mut self,
+        _: &ConfirmInlineEdit,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(editing_id) = self.editing_message_id.take() else {
+            self.clear_inline_edit_state(cx);
+            return;
+        };
+        let Some(edit_idx) = self.messages.iter().position(|m| m.id == editing_id) else {
+            eprintln!("[mini-pi] inline edited message {} not found", editing_id);
+            self.clear_inline_edit_state(cx);
+            return;
+        };
+        if !matches!(self.messages[edit_idx].role, Role::User) {
+            eprintln!("[mini-pi] cannot edit non-user message");
+            self.clear_inline_edit_state(cx);
+            return;
+        }
+        let content = self
+            .inline_edit_input
+            .as_ref()
+            .map(|i| i.read(cx).content().clone())
+            .unwrap_or_default();
+        if content.is_empty() {
+            self.clear_inline_edit_state(cx);
+            return;
+        }
+        let entry_id = self.messages[edit_idx].id.clone();
+        self.messages[edit_idx].parts = vec![MessagePart::Text {
+            text: content.clone(),
+            state: Some(PartState::Done),
+        }];
+        self.messages.truncate(edit_idx + 1);
+        self.reasoning_displays.truncate(edit_idx + 1);
+        self.markdown_displays.truncate(edit_idx + 1);
+        self.clear_inline_edit_state(cx);
+        self.send_edited_prompt(entry_id, content, cx);
+    }
+
+    pub fn cancel_inline_edit(
+        &mut self,
+        _: &CancelInlineEdit,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_inline_edit_state(cx);
+    }
+
+    fn clear_inline_edit_state(&mut self, cx: &mut Context<Self>) {
+        self.editing_message_id = None;
+        self.inline_edit_input = None;
+        cx.notify();
+    }
+
+    fn start_edit_message(
+        &mut self,
+        msg_id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(msg) = self.messages.iter().find(|m| m.id == msg_id) {
+            if let Some(MessagePart::Text { text, .. }) = msg.parts.first() {
+                self.editing_message_id = Some(msg_id);
+                let text = text.clone();
+                let inline_input = cx.new(|cx| {
+                    TextArea::new(cx, "Edit message...")
+                        .with_at_mention(false)
+                        .with_slash_commands(false)
+                });
+                inline_input.update(cx, |ci, cx| {
+                    ci.set_content(text, cx);
+                });
+                inline_input.focus_handle(cx).focus(window);
+                self.inline_edit_input = Some(inline_input);
+                cx.notify();
+            }
+        }
     }
 
     fn render_at_mention_popup(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1510,6 +1722,7 @@ impl Render for ChatWindow {
                             .children(
                                 self.messages.iter().enumerate().map(|(msg_idx, msg)| {
                                     let is_user = matches!(msg.role, Role::User);
+                                    let msg_id = msg.id.clone();
                                     let msg_reasoning = reasoning_entities.get(msg_idx).cloned().unwrap_or_default();
                                     let msg_markdown = markdown_entities.get(msg_idx).cloned().unwrap_or_default();
                                     div()
@@ -1530,53 +1743,131 @@ impl Render for ChatWindow {
                                                             let is_streaming_empty = *state == Some(PartState::Streaming) && text.is_empty();
                                                             let markdown_entity = msg_markdown.get(part_idx).and_then(|e| e.clone());
                                                             let text_to_copy: SharedString = text.clone();
-                                                            div()
-                                                                .flex()
-                                                                .flex_col()
-                                                                .gap_1()
-                                                                .child(
-                                                                    div()
-                                                                        .py_2()
-                                                                        .rounded_md()
-                                                                        .when(is_user, |this| {
-                                                                            this.px_3()
-                                                                                .bg(rgb(0x6366f1))
-                                                                                .text_color(rgb(0xffffff))
-                                                                        })
-                                                                        .when(matches!(msg.role, Role::Assistant), |this| {
-                                                                            this.text_color(rgb(0xe5e5e5))
-                                                                        })
-                                                                        .text_sm()
-                                                                        .when(is_streaming_empty, |this| {
-                                                                            this.child(text_loader())
-                                                                        })
-                                                                        .when(!is_streaming_empty, |this| {
-                                                                            if let Some(md) = markdown_entity {
-                                                                                this.child(md)
-                                                                            } else {
-                                                                                this.child(text.clone())
-                                                                            }
-                                                                        })
-                                                                )
-                                                                .when(!is_user && !is_streaming_empty, |this| {
-                                                                    this.child(
+                                                            let is_editing = is_user && self.editing_message_id.as_ref() == Some(&msg_id);
+                                                            if is_editing {
+                                                                let inline_input = self.inline_edit_input.clone().unwrap_or_else(|| self.chat_input.clone());
+                                                                div()
+                                                                    .flex()
+                                                                    .flex_col()
+                                                                    .gap_1()
+                                                                    .w_full()
+                                                                    .child(
                                                                         div()
-                                                                            .id(("copy-btn", msg_idx as u64))
-                                                                            .flex()
-                                                                            .items_center()
-                                                                            .cursor_pointer()
-                                                                            .child(
-                                                                                svg()
-                                                                                    .path("clipboard.svg")
-                                                                                    .size(px(12.))
-                                                                                    .text_color(rgb(0x888888))
-                                                                                    .hover(|style| style.text_color(rgb(0xcccccc))),
-                                                                            )
-                                                                            .on_click(cx.listener(move |_this, _, _window, cx| {
-                                                                                cx.write_to_clipboard(ClipboardItem::new_string(text_to_copy.to_string()));
-                                                                            }))
+                                                                            .px_3()
+                                                                            .py_2()
+                                                                            .rounded_md()
+                                                                            .bg(rgb(0xffffff))
+                                                                            .text_color(rgb(0x000000))
+                                                                            .text_sm()
+                                                                            .child(inline_input)
                                                                     )
-                                                                })
+                                                                    .child(
+                                                                        div()
+                                                                            .flex()
+                                                                            .gap_2()
+                                                                            .justify_end()
+                                                                            .child(
+                                                                                div()
+                                                                                    .id("inline-edit-save")
+                                                                                    .px_2()
+                                                                                    .py_1()
+                                                                                    .rounded_md()
+                                                                                    .bg(rgb(0x4f46e5))
+                                                                                    .text_color(rgb(0xffffff))
+                                                                                    .text_xs()
+                                                                                    .cursor_pointer()
+                                                                                    .hover(|style| style.bg(rgb(0x4338ca)))
+                                                                                    .child("Save")
+                                                                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                                                                        this.confirm_inline_edit(&ConfirmInlineEdit, _window, cx);
+                                                                                    }))
+                                                                            )
+                                                                            .child(
+                                                                                div()
+                                                                                    .id("inline-edit-cancel")
+                                                                                    .px_2()
+                                                                                    .py_1()
+                                                                                    .rounded_md()
+                                                                                    .bg(rgb(0x3f3f46))
+                                                                                    .text_color(rgb(0xd4d4d8))
+                                                                                    .text_xs()
+                                                                                    .cursor_pointer()
+                                                                                    .hover(|style| style.bg(rgb(0x52525b)))
+                                                                                    .child("Cancel")
+                                                                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                                                                        this.cancel_inline_edit(&CancelInlineEdit, _window, cx);
+                                                                                    }))
+                                                                            )
+                                                                    )
+                                                            } else {
+                                                                div()
+                                                                    .flex()
+                                                                    .flex_col()
+                                                                    .gap_1()
+                                                                    .child(
+                                                                        div()
+                                                                            .py_2()
+                                                                            .rounded_md()
+                                                                            .when(is_user, |this| {
+                                                                                this.px_3()
+                                                                                    .bg(rgb(0x6366f1))
+                                                                                    .text_color(rgb(0xffffff))
+                                                                            })
+                                                                            .when(matches!(msg.role, Role::Assistant), |this| {
+                                                                                this.text_color(rgb(0xe5e5e5))
+                                                                            })
+                                                                            .text_sm()
+                                                                            .when(is_streaming_empty, |this| {
+                                                                                this.child(text_loader())
+                                                                            })
+                                                                            .when(!is_streaming_empty, |this| {
+                                                                                if let Some(md) = markdown_entity {
+                                                                                    this.child(md)
+                                                                                } else {
+                                                                                    this.child(text.clone())
+                                                                                }
+                                                                            })
+                                                                    )
+                                                                    .when(!is_user && !is_streaming_empty, |this| {
+                                                                        this.child(
+                                                                            div()
+                                                                                .id(("copy-btn", msg_idx as u64))
+                                                                                .flex()
+                                                                                .items_center()
+                                                                                .cursor_pointer()
+                                                                                .child(
+                                                                                    svg()
+                                                                                        .path("clipboard.svg")
+                                                                                        .size(px(12.))
+                                                                                        .text_color(rgb(0x888888))
+                                                                                        .hover(|style| style.text_color(rgb(0xcccccc))),
+                                                                                )
+                                                                                .on_click(cx.listener(move |_this, _, _window, cx| {
+                                                                                    cx.write_to_clipboard(ClipboardItem::new_string(text_to_copy.to_string()));
+                                                                                }))
+                                                                        )
+                                                                    })
+                                                                    .when(is_user && !is_streaming_empty, |this| {
+                                                                        let edit_msg_id = msg_id.clone();
+                                                                        this.child(
+                                                                            div()
+                                                                                .id(("edit-btn", msg_idx as u64))
+                                                                                .flex()
+                                                                                .items_center()
+                                                                                .cursor_pointer()
+                                                                                .child(
+                                                                                    svg()
+                                                                                        .path("edit.svg")
+                                                                                        .size(px(12.))
+                                                                                        .text_color(rgb(0x888888))
+                                                                                        .hover(|style| style.text_color(rgb(0xcccccc))),
+                                                                                )
+                                                                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                                                                    this.start_edit_message(edit_msg_id.clone(), _window, cx);
+                                                                                }))
+                                                                        )
+                                                                    })
+                                                            }
                                                         }
                                                         MessagePart::Reasoning { .. } => {
                                                             let reasoning_entity = msg_reasoning.get(part_idx).and_then(|e| e.clone());
