@@ -424,25 +424,39 @@ chat_input,
     }
 
     fn spawn_pi(&mut self, restoring: bool, cx: &mut Context<Self>) -> bool {
+        let Some(bridge) = cx.global::<AppStore>().pi_bridge.clone() else {
+            self.state = ChatState::Error(
+                "Failed to start pi SDK bridge. Run `cd pi-bridge && npm install`.".into(),
+            );
+            cx.notify();
+            return false;
+        };
+
         let session_path = self.store.sessions_dir().join(&self.session_file);
         let workspace_dir: Option<PathBuf> = self
             .selected_workspace_id
             .and_then(|id| self.workspaces.iter().find(|ws| ws.id == id))
             .map(|ws| PathBuf::from(&ws.path));
 
-        let (mut rpc, rx) =
-            match PiRpc::spawn(&session_path, self.selected_model.as_deref(), workspace_dir) {
-                Ok(result) => result,
-                Err(e) => {
-                    eprintln!("[mini-pi] failed to spawn pi: {}", e);
-                    self.state =
-                        ChatState::Error("Failed to start pi agent. Is bun installed?".into());
-                    cx.notify();
-                    return false;
-                }
-            };
+        let session_id = self.session_file.clone();
+        let rx = match bridge.create_session(
+            session_id.clone(),
+            Some(session_path),
+            workspace_dir,
+            self.selected_model.clone(),
+            self.thinking_level.clone(),
+        ) {
+            Ok(rx) => rx,
+            Err(e) => {
+                eprintln!("[mini-pi] failed to create SDK session: {}", e);
+                self.state = ChatState::Error("Failed to create pi SDK session.".into());
+                cx.notify();
+                return false;
+            }
+        };
 
-        eprintln!("[mini-pi] pi spawned with session {}", self.session_file);
+        let mut rpc = PiRpc::new(session_id.clone(), bridge);
+        eprintln!("[mini-pi] pi SDK session created: {}", self.session_file);
 
         if let Err(e) = rpc.send_get_commands(None) {
             eprintln!("[mini-pi] failed to send get_commands: {}", e);
@@ -807,10 +821,47 @@ chat_input,
                 }
             }
             BridgeEvent::Response { command, success, data, error, .. } => {
+                if command == "create_session" && success {
+                    if let Some(ref data_val) = data {
+                        if let Some(session_file) = data_val.get("sessionFile").and_then(|s| s.as_str()) {
+                            let file_name = std::path::Path::new(session_file)
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or(session_file)
+                                .to_string();
+                            if self.session_file != file_name {
+                                eprintln!("[mini-pi] SDK session file: {}", file_name);
+                                self.session_file = file_name.clone();
+                                if let Some(tid) = self.thread_id {
+                                    let _ = self.store.update_thread(
+                                        tid,
+                                        None,
+                                        None,
+                                        Some(Some(&file_name)),
+                                        None,
+                                        None,
+                                        None,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
                 if command == "fork" && !success {
-                    let err = error.unwrap_or_else(|| "fork failed".to_string());
+                    let err = error.as_deref().unwrap_or("fork failed");
                     eprintln!("[mini-pi] fork failed: {}", err);
                     self.state = ChatState::Error(format!("Fork failed: {}", err).into());
+                }
+                if command == "get_messages" {
+                    if !success {
+                        let err = error.as_deref().unwrap_or("failed to load messages");
+                        eprintln!("[mini-pi] get_messages failed: {}", err);
+                        self.state = ChatState::Error(format!("Load failed: {}", err).into());
+                    } else {
+                        // If the response carried data.messages but parse_messages
+                        // returned None, clear the loading state so we don't spin.
+                        self.state = ChatState::Idle;
+                    }
                 }
                 if command == "get_commands" && success {
                     if let Some(ref data_val) = data {

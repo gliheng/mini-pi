@@ -1,15 +1,16 @@
-use std::io::{BufRead, Write};
+use std::collections::HashMap;
+use std::io::BufRead;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-use crate::utils::format::truncate_str;
+use futures::{SinkExt, StreamExt};
+use tokio_tungstenite::tungstenite::Message;
 
-pub struct PiRpc {
-    stdin: std::process::ChildStdin,
-}
+use crate::utils::format::truncate_str;
 
 // ---------------------------------------------------------------------------
 // Bridge Events
@@ -130,98 +131,234 @@ macro_rules! log {
 }
 
 // ---------------------------------------------------------------------------
-// PiRpc
+// PiBridge: shared WebSocket connection to the SDK bridge
 // ---------------------------------------------------------------------------
 
-impl PiRpc {
-    pub fn spawn(
-        session_path: &PathBuf,
-        model: Option<&str>,
-        workspace_dir: Option<PathBuf>,
-    ) -> Result<(Self, futures::channel::mpsc::UnboundedReceiver<BridgeEvent>), PiRpcError> {
-        let program = if cfg!(windows) { "pi.cmd" } else { "pi" };
-        let mut cmd = Command::new(program);
-        if let Some(model_str) = model {
-            if let Some((provider, model_id)) =
-                crate::config::model_config::parse_model_id(model_str)
-            {
-                cmd.arg("--provider").arg(provider);
-                cmd.arg("--model").arg(model_id);
-            } else {
-                cmd.arg("--model").arg(model_str);
-            }
+pub struct PiBridge {
+    write_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    sessions: Arc<Mutex<HashMap<String, futures::channel::mpsc::UnboundedSender<BridgeEvent>>>>,
+    child: Arc<Mutex<std::process::Child>>,
+    _runtime: tokio::runtime::Runtime,
+}
+
+impl Drop for PiBridge {
+    fn drop(&mut self) {
+        if let Ok(mut child) = self.child.lock() {
+            let _ = child.kill();
         }
-        cmd.arg("--mode").arg("rpc");
-        cmd.arg("--session").arg(session_path);
-        if let Some(ref dir) = workspace_dir {
-            std::fs::create_dir_all(dir).map_err(PiRpcError::Io)?;
-            cmd.current_dir(dir);
-        }
-        if let Some(home) = dirs::home_dir() {
-            cmd.env("PI_CODING_AGENT_DIR", home.join(".mini-pi/agent"));
-            cmd.env(
-                "PI_CODING_AGENT_SESSION_DIR",
-                home.join(".mini-pi/sessions"),
-            );
-        }
-        cmd.stdin(Stdio::piped())
+    }
+}
+
+impl PiBridge {
+    pub fn spawn() -> Result<Arc<Self>, PiRpcError> {
+        let bridge_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pi-bridge");
+        let (program, args) = find_runtime(&bridge_dir)?;
+
+        let agent_dir = dirs::home_dir()
+            .map(|h| h.join(".mini-pi").join("agent"))
+            .unwrap_or_else(|| bridge_dir.join("agent"));
+
+        let mut cmd = Command::new(&program);
+        cmd.args(&args)
+            .current_dir(&bridge_dir)
+            .arg("--agent-dir")
+            .arg(&agent_dir);
+        cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
+            .stderr(Stdio::piped());
 
         #[cfg(windows)]
         {
             cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
         }
 
-        log!("spawning: {:?}", cmd);
+        log!("spawning bridge: {:?} {:?}", cmd, args);
         let mut child = cmd.spawn().map_err(|e| {
-            log!("failed to spawn pi: {}", e);
-            PiRpcError::Io(e)
+            log!("failed to spawn pi bridge: {}", e);
+            PiRpcError::Spawn(format!(
+                "failed to spawn pi bridge with {}: {}",
+                program, e
+            ))
         })?;
-        log!("pi process spawned, pid={}", child.id());
+        log!("pi bridge spawned, pid={}", child.id());
 
-        let stdin = child.stdin.take().ok_or_else(|| {
-            log!("failed to get stdin handle");
-            PiRpcError::Stdin
-        })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
-            log!("failed to get stdout handle");
-            PiRpcError::Stdout
-        })?;
+        let stdout = child.stdout.take().ok_or(PiRpcError::Stdout)?;
+        let port = read_bridge_port(stdout)?;
+        log!("pi bridge listening on port {}", port);
 
-        let (tx, rx) = futures::channel::mpsc::unbounded();
-
-        std::thread::spawn(move || {
-            log!("reader thread started");
-            let reader = std::io::BufReader::new(stdout);
-            for line in reader.lines() {
-                match line {
-                    Ok(text) => {
-                        if text.is_empty() {
-                            continue;
+        // Forward bridge stderr to our stderr so SDK diagnostics are visible.
+        if let Some(stderr) = child.stderr.take() {
+            std::thread::spawn(move || {
+                let reader = std::io::BufReader::new(stderr);
+                for line in reader.lines() {
+                    if let Ok(text) = line {
+                        if !text.is_empty() {
+                            eprintln!("[pi-bridge] {}", text);
                         }
-                        if let Some(event) = parse_pi_line(&text) {
-                            log!("event: {:?}", event);
-                            if tx.unbounded_send(event).is_err() {
-                                log!("channel closed, stopping reader");
-                                break;
+                    }
+                }
+            });
+        }
+
+        let child = Arc::new(Mutex::new(child));
+
+        // Monitor the child process and log when it exits.
+        let child_for_monitor = Arc::clone(&child);
+        std::thread::spawn(move || {
+            let status = child_for_monitor.lock().unwrap().wait();
+            log!("pi bridge process exited: {:?}", status);
+        });
+
+        let url = format!("ws://127.0.0.1:{}/", port);
+
+        let runtime = tokio::runtime::Runtime::new()
+            .map_err(|e| PiRpcError::Runtime(format!("tokio runtime: {}", e)))?;
+
+        let (ws_stream, _) = runtime
+            .block_on(tokio_tungstenite::connect_async(&url))
+            .map_err(|e| PiRpcError::WebSocket(format!("connect: {}", e)))?;
+
+        let (write_half, read_half) = ws_stream.split();
+        let (write_tx, mut write_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+
+        let sessions: Arc<Mutex<HashMap<String, futures::channel::mpsc::UnboundedSender<BridgeEvent>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let sessions_for_reader = Arc::clone(&sessions);
+
+        // Writer task: forward outgoing JSON to the WebSocket.
+        runtime.spawn(async move {
+            let mut write_half = write_half;
+            while let Some(text) = write_rx.recv().await {
+                if write_half
+                    .send(Message::text(text))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            log!("bridge writer task exiting");
+            let _ = write_half.close().await;
+        });
+
+        // Reader task: parse incoming messages and route to the right session.
+        runtime.spawn(async move {
+            let mut read_half = read_half;
+            while let Some(result) = read_half.next().await {
+                match result {
+                    Ok(Message::Text(text)) => {
+                        if let Some((session_id, event)) = parse_bridge_message(&text) {
+                            let sessions_guard = sessions_for_reader.lock().unwrap();
+                            if let Some(sender) = sessions_guard.get(&session_id) {
+                                let _ = sender.unbounded_send(event);
+                            } else {
+                                log!("no session receiver for {}", session_id);
                             }
                         }
                     }
+                    Ok(Message::Close(_)) => {
+                        log!("bridge closed websocket");
+                        break;
+                    }
+                    Ok(_) => {}
                     Err(e) => {
-                        log!("stdout read error: {}, stopping", e);
-                        let _ = tx.unbounded_send(BridgeEvent::Disconnected);
+                        log!("bridge websocket error: {}", e);
                         break;
                     }
                 }
             }
-            log!("reader thread exiting, waiting for child to reap");
-            let _ = child.wait();
+            log!("bridge reader task exiting; notifying sessions");
+            let mut sessions_guard = sessions_for_reader.lock().unwrap();
+            for (_id, sender) in sessions_guard.drain() {
+                let _: Result<(), _> = sender.unbounded_send(BridgeEvent::Disconnected);
+            }
         });
 
-        let pi_rpc = Self { stdin };
+        Ok(Arc::new(Self {
+            write_tx,
+            sessions,
+            child,
+            _runtime: runtime,
+        }))
+    }
 
-        Ok((pi_rpc, rx))
+    pub fn create_session(
+        &self,
+        session_id: String,
+        session_path: Option<PathBuf>,
+        cwd: Option<PathBuf>,
+        model: Option<String>,
+        thinking_level: Option<String>,
+    ) -> Result<futures::channel::mpsc::UnboundedReceiver<BridgeEvent>, PiRpcError> {
+        let (tx, rx) = futures::channel::mpsc::unbounded();
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.insert(session_id.clone(), tx);
+        }
+
+        let mut cmd = serde_json::json!({
+            "type": "create_session",
+            "sessionId": session_id,
+        });
+        if let Some(path) = session_path {
+            cmd["sessionPath"] = serde_json::json!(path.to_string_lossy().to_string());
+        }
+        if let Some(dir) = cwd {
+            cmd["cwd"] = serde_json::json!(dir.to_string_lossy().to_string());
+        }
+        if let Some(m) = model {
+            cmd["model"] = serde_json::json!(m);
+        }
+        if let Some(level) = thinking_level {
+            cmd["thinkingLevel"] = serde_json::json!(level);
+        }
+
+        self.send_json(&cmd)?;
+        Ok(rx)
+    }
+
+    pub fn send(
+        &self,
+        session_id: String,
+        json: &serde_json::Value,
+    ) -> Result<(), PiRpcError> {
+        let mut msg = json.clone();
+        msg["sessionId"] = serde_json::json!(session_id);
+        self.send_json(&msg)
+    }
+
+    fn send_json(&self, json: &serde_json::Value) -> Result<(), PiRpcError> {
+        let text = serde_json::to_string(json).map_err(PiRpcError::Serde)?;
+        log!(
+            "send: type={} sessionId={}",
+            json.get("type").and_then(|t| t.as_str()).unwrap_or("?"),
+            json.get("sessionId").and_then(|s| s.as_str()).unwrap_or("?")
+        );
+        self.write_tx
+            .send(text)
+            .map_err(|_| PiRpcError::WebSocket("writer channel closed".to_string()))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PiRpc: per-session handle that sends commands through PiBridge
+// ---------------------------------------------------------------------------
+
+pub struct PiRpc {
+    session_id: String,
+    bridge: Arc<PiBridge>,
+}
+
+impl PiRpc {
+    pub fn new(session_id: String, bridge: Arc<PiBridge>) -> Self {
+        Self {
+            session_id,
+            bridge,
+        }
+    }
+
+    fn send(&mut self, json: &serde_json::Value) -> Result<(), PiRpcError> {
+        self.bridge.send(self.session_id.clone(), json)
     }
 
     // ------------------------------------------------------------------
@@ -248,7 +385,7 @@ impl PiRpc {
         if let Some(behavior) = streaming_behavior {
             cmd["streamingBehavior"] = serde_json::json!(behavior);
         }
-        self.write_json(&cmd)
+        self.send(&cmd)
     }
 
     pub fn send_steer(
@@ -263,7 +400,7 @@ impl PiRpc {
         });
         add_request_id(&mut cmd, request_id);
         add_images(&mut cmd, images);
-        self.write_json(&cmd)
+        self.send(&cmd)
     }
 
     pub fn send_follow_up(
@@ -278,13 +415,13 @@ impl PiRpc {
         });
         add_request_id(&mut cmd, request_id);
         add_images(&mut cmd, images);
-        self.write_json(&cmd)
+        self.send(&cmd)
     }
 
     pub fn send_abort(&mut self, request_id: Option<&str>) -> Result<(), PiRpcError> {
         let mut cmd = serde_json::json!({ "type": "abort" });
         add_request_id(&mut cmd, request_id);
-        self.write_json(&cmd)
+        self.send(&cmd)
     }
 
     pub fn send_new_session(
@@ -297,7 +434,7 @@ impl PiRpc {
             cmd["parentSession"] = serde_json::json!(parent);
         }
         add_request_id(&mut cmd, request_id);
-        self.write_json(&cmd)
+        self.send(&cmd)
     }
 
     // ------------------------------------------------------------------
@@ -307,19 +444,19 @@ impl PiRpc {
     pub fn send_get_state(&mut self, request_id: Option<&str>) -> Result<(), PiRpcError> {
         let mut cmd = serde_json::json!({ "type": "get_state" });
         add_request_id(&mut cmd, request_id);
-        self.write_json(&cmd)
+        self.send(&cmd)
     }
 
     pub fn send_get_messages(&mut self, request_id: Option<&str>) -> Result<(), PiRpcError> {
         let mut cmd = serde_json::json!({ "type": "get_messages" });
         add_request_id(&mut cmd, request_id);
-        self.write_json(&cmd)
+        self.send(&cmd)
     }
 
     pub fn send_get_commands(&mut self, request_id: Option<&str>) -> Result<(), PiRpcError> {
         let mut cmd = serde_json::json!({ "type": "get_commands" });
         add_request_id(&mut cmd, request_id);
-        self.write_json(&cmd)
+        self.send(&cmd)
     }
 
     pub fn send_fork(&mut self, entry_id: &str, request_id: Option<&str>) -> Result<(), PiRpcError> {
@@ -328,13 +465,13 @@ impl PiRpc {
             "entryId": entry_id,
         });
         add_request_id(&mut cmd, request_id);
-        self.write_json(&cmd)
+        self.send(&cmd)
     }
 
     pub fn send_clone(&mut self, request_id: Option<&str>) -> Result<(), PiRpcError> {
         let mut cmd = serde_json::json!({ "type": "clone" });
         add_request_id(&mut cmd, request_id);
-        self.write_json(&cmd)
+        self.send(&cmd)
     }
 
     pub fn send_get_fork_messages(
@@ -343,7 +480,7 @@ impl PiRpc {
     ) -> Result<(), PiRpcError> {
         let mut cmd = serde_json::json!({ "type": "get_fork_messages" });
         add_request_id(&mut cmd, request_id);
-        self.write_json(&cmd)
+        self.send(&cmd)
     }
 
     // ------------------------------------------------------------------
@@ -362,7 +499,7 @@ impl PiRpc {
             "modelId": model_id,
         });
         add_request_id(&mut cmd, request_id);
-        self.write_json(&cmd)
+        self.send(&cmd)
     }
 
     // ------------------------------------------------------------------
@@ -379,7 +516,7 @@ impl PiRpc {
             "level": level,
         });
         add_request_id(&mut cmd, request_id);
-        self.write_json(&cmd)
+        self.send(&cmd)
     }
 
     // ------------------------------------------------------------------
@@ -392,7 +529,7 @@ impl PiRpc {
             "command": command,
         });
         add_request_id(&mut cmd, request_id);
-        self.write_json(&cmd)
+        self.send(&cmd)
     }
 
     // ------------------------------------------------------------------
@@ -409,7 +546,7 @@ impl PiRpc {
             cmd["customInstructions"] = serde_json::json!(instructions);
         }
         add_request_id(&mut cmd, request_id);
-        self.write_json(&cmd)
+        self.send(&cmd)
     }
 
     // ------------------------------------------------------------------
@@ -426,7 +563,7 @@ impl PiRpc {
             cmd["outputPath"] = serde_json::json!(path);
         }
         add_request_id(&mut cmd, request_id);
-        self.write_json(&cmd)
+        self.send(&cmd)
     }
 
     // ------------------------------------------------------------------
@@ -446,26 +583,71 @@ impl PiRpc {
             );
             obj.insert("id".to_string(), serde_json::json!(id));
         }
-        self.write_json(&cmd)
-    }
-
-    // ------------------------------------------------------------------
-    // Private helpers
-    // ------------------------------------------------------------------
-
-    fn write_json(&mut self, json: &serde_json::Value) -> Result<(), PiRpcError> {
-        let mut line = serde_json::to_string(json).map_err(PiRpcError::Serde)?;
-        line.push('\n');
-        self.stdin
-            .write_all(line.as_bytes())
-            .map_err(PiRpcError::Io)?;
-        self.stdin.flush().map_err(PiRpcError::Io)?;
-        Ok(())
+        self.send(&cmd)
     }
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Bridge process helpers
+// ---------------------------------------------------------------------------
+
+fn find_runtime(bridge_dir: &PathBuf) -> Result<(String, Vec<String>), PiRpcError> {
+    // Prefer bun because it can run TypeScript directly.
+    if Command::new("bun").arg("--version").output().is_ok() {
+        return Ok(("bun".to_string(), vec!["run".to_string(), "src/index.ts".to_string()]));
+    }
+
+    // Use the local tsx binary if npm install was run.
+    #[cfg(windows)]
+    let tsx_names: [&str; 2] = ["tsx.cmd", "tsx"];
+    #[cfg(not(windows))]
+    let tsx_names: [&str; 1] = ["tsx"];
+
+    for name in tsx_names.iter() {
+        let tsx = bridge_dir.join("node_modules").join(".bin").join(name);
+        if tsx.exists() {
+            return Ok((
+                tsx.to_string_lossy().to_string(),
+                vec!["src/index.ts".to_string()],
+            ));
+        }
+    }
+
+    // Last resort: npx tsx (requires network if tsx is missing).
+    if Command::new("npx").arg("--version").output().is_ok() {
+        return Ok((
+            "npx".to_string(),
+            vec!["tsx".to_string(), "src/index.ts".to_string()],
+        ));
+    }
+
+    Err(PiRpcError::Spawn(
+        "no JavaScript runtime found (tried bun, tsx, npx).".to_string(),
+    ))
+}
+
+fn read_bridge_port(stdout: std::process::ChildStdout) -> Result<u16, PiRpcError> {
+    let reader = std::io::BufReader::new(stdout);
+    for line in reader.lines() {
+        let text = line.map_err(PiRpcError::Io)?;
+        if text.trim().is_empty() {
+            continue;
+        }
+        log!("bridge stdout: {}", &text[..text.len().min(200)]);
+        if let Some(prefix) = text.strip_prefix("BRIDGE_PORT ") {
+            return prefix
+                .trim()
+                .parse::<u16>()
+                .map_err(|e| PiRpcError::Spawn(format!("invalid port: {}", e)));
+        }
+    }
+    Err(PiRpcError::Spawn(
+        "bridge exited before reporting port".to_string(),
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// Message helpers
 // ---------------------------------------------------------------------------
 
 fn add_request_id(cmd: &mut serde_json::Value, request_id: Option<&str>) {
@@ -492,28 +674,43 @@ fn add_images(cmd: &mut serde_json::Value, images: Option<&[ImageContent]>) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Parser
-// ---------------------------------------------------------------------------
-
-fn parse_pi_line(line: &str) -> Option<BridgeEvent> {
-    let val: serde_json::Value = match serde_json::from_str(line) {
+fn parse_bridge_message(text: &str) -> Option<(String, BridgeEvent)> {
+    let mut val: serde_json::Value = match serde_json::from_str(text) {
         Ok(v) => v,
         Err(e) => {
             log!(
                 "failed to parse JSON: {} (line: {})",
                 e,
-                &line[..line.len().min(100)]
+                &text[..text.len().min(100)]
             );
             return None;
         }
     };
 
+    let session_id = val
+        .get("sessionId")
+        .and_then(|s| s.as_str())
+        .map(|s| s.to_string())?;
+
+    // Remove sessionId so the rest of the payload matches the original RPC event shape.
+    if let Some(obj) = val.as_object_mut() {
+        obj.remove("sessionId");
+    }
+
+    let event = parse_pi_line_value(&val)?;
+    Some((session_id, event))
+}
+
+// ---------------------------------------------------------------------------
+// Parser
+// ---------------------------------------------------------------------------
+
+fn parse_pi_line_value(val: &serde_json::Value) -> Option<BridgeEvent> {
     let event_type = val.get("type")?.as_str()?;
     log!(
         "raw event type={}, data={}",
         event_type,
-        truncate_str(line, 200)
+        truncate_str(&serde_json::to_string(val).unwrap_or_default(), 200)
     );
 
     match event_type {
@@ -909,8 +1106,10 @@ fn extract_text_parts(val: &serde_json::Value, out: &mut String) {
 pub enum PiRpcError {
     Io(std::io::Error),
     Serde(serde_json::Error),
-    Stdin,
     Stdout,
+    Spawn(String),
+    WebSocket(String),
+    Runtime(String),
 }
 
 impl std::fmt::Display for PiRpcError {
@@ -918,8 +1117,20 @@ impl std::fmt::Display for PiRpcError {
         match self {
             PiRpcError::Io(e) => write!(f, "io error: {}", e),
             PiRpcError::Serde(e) => write!(f, "json error: {}", e),
-            PiRpcError::Stdin => write!(f, "could not get stdin handle"),
             PiRpcError::Stdout => write!(f, "could not get stdout handle"),
+            PiRpcError::Spawn(msg) => write!(f, "spawn error: {}", msg),
+            PiRpcError::WebSocket(msg) => write!(f, "websocket error: {}", msg),
+            PiRpcError::Runtime(msg) => write!(f, "runtime error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for PiRpcError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            PiRpcError::Io(e) => Some(e),
+            PiRpcError::Serde(e) => Some(e),
+            _ => None,
         }
     }
 }

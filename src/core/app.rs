@@ -8,6 +8,7 @@ use gpui::{
 use crate::auth::state::{AuthState, SupabaseSession};
 use crate::config::app_config::AppConfig;
 use crate::data::store::Store;
+use crate::rpc::pi_rpc::PiBridge;
 use crate::sync::settings_sync::{SyncMeta, SyncStatus};
 
 pub struct AppStore {
@@ -19,6 +20,7 @@ pub struct AppStore {
     pub sync_meta: SyncMeta,
     pub sync_status: SyncStatus,
     pub user_panel_active: bool,
+    pub pi_bridge: Option<Arc<PiBridge>>,
 }
 
 impl Global for AppStore {}

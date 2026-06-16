@@ -18,6 +18,7 @@ use crate::core::actions::Quit;
 use crate::core::app::{AppStore, custom_window_options};
 use crate::core::assets::Assets;
 use crate::data::store::Store;
+use crate::rpc::pi_rpc::PiBridge;
 use crate::sync::settings_sync;
 use crate::views::thread_list::ThreadList;
 
@@ -59,6 +60,17 @@ fn main() {
 
     let sync_meta = settings_sync::load_sync_meta();
 
+    let pi_bridge = match PiBridge::spawn() {
+        Ok(bridge) => {
+            eprintln!("[mini-pi] pi SDK bridge connected");
+            Some(bridge)
+        }
+        Err(e) => {
+            eprintln!("[mini-pi] failed to start pi SDK bridge: {}", e);
+            None
+        }
+    };
+
     Application::new()
         .with_assets(Assets { base: assets_dir })
         .run(move |cx: &mut App| {
@@ -71,6 +83,7 @@ fn main() {
                 sync_meta,
                 sync_status: settings_sync::SyncStatus::Idle,
                 user_panel_active: false,
+                pi_bridge: pi_bridge.clone(),
             });
 
             if auth.is_logged_in() {

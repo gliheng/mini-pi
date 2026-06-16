@@ -1,12 +1,12 @@
 # mini-pi
 
-A desktop GUI chat application that wraps the `pi` AI coding agent CLI. Built with Rust and GPUI (the GPU-accelerated UI framework from the Zed editor).
+A desktop GUI chat application that wraps the `pi` AI coding agent SDK. Built with Rust and GPUI (the GPU-accelerated UI framework from the Zed editor).
 
 ## Project Overview
 
-`mini-pi` provides a native chat-window interface for interacting with the `pi` CLI tool in RPC mode. Users can create chat threads, select AI models, manage workspaces (project directories), and authenticate via Supabase to sync agent configuration across devices.
+`mini-pi` provides a native chat-window interface for interacting with the `pi` coding agent SDK. Users can create chat threads, select AI models, manage workspaces (project directories), and authenticate via Supabase to sync agent configuration across devices.
 
-The application spawns the `pi` binary as a subprocess and communicates with it via JSON Lines over stdin/stdout. Chat sessions are persisted locally in SQLite and as JSONL files, while agent configuration can be synced to a Supabase storage bucket.
+The application runs a Node.js/WebSocket bridge (`pi-bridge/`) that loads `@earendil-works/pi-coding-agent` and exposes the SDK over a single multiplexed WebSocket connection. Chat sessions are persisted locally in SQLite and as JSONL files, while agent configuration can be synced to a Supabase storage bucket.
 
 On first run, if `~/.pi/agent/` contains JSON files, the app offers to import them into `~/.mini-pi/agent/`.
 
@@ -41,7 +41,10 @@ src/auth/
   state.rs              # AuthState, SupabaseSession, session persistence, agent-dir helpers
   supabase.rs           # Supabase auth and Storage API client (hardcoded URL + anon key)
 src/rpc/
-  pi_rpc.rs             # PiRpc subprocess bridge, BridgeEvent enum, JSONL parser
+  pi_rpc.rs             # PiBridge shared WebSocket client, PiRpc session handle, BridgeEvent enum, JSON parser
+pi-bridge/
+  package.json          # Node dependencies for the SDK bridge
+  src/index.ts          # WebSocket server that runs @earendil-works/pi-coding-agent
 src/sync/
   settings_sync.rs      # Two-way sync of ~/.mini-pi/agent/ files with Supabase Storage bucket pi-sync
 src/ui/
@@ -71,6 +74,9 @@ examples/               # Standalone markdown renderer example and test markdown
 ## Build, Run and Test
 
 ```bash
+# Install the SDK bridge dependencies
+cd pi-bridge && npm install
+
 # Standard cargo workflow
 cargo build
 cargo run
@@ -89,7 +95,7 @@ cargo test
    - **macOS:** Xcode + Xcode Command Line Tools (`xcode-select --install`)
    - **Linux:** Vulkan drivers, `libxcb`, `libxkbcommon`, `libfontconfig`, `libssl`
    - **Windows:** Vulkan SDK or DirectX
-3. **`pi` CLI binary** must be installed and available on `PATH`. The app spawns `pi --mode rpc --session <path>` (on Windows it uses `pi.cmd`).
+3. **Node.js** (with `npm`) or **bun** must be installed, and `pi-bridge/node_modules` must be present (`cd pi-bridge && npm install`). The app spawns the bridge automatically and connects to it over a local WebSocket.
 4. *(Optional)* **Cloudflare AI Gateway** environment variables for auto-generated thread titles:
    - `CLOUDFLARE_API_KEY`
    - `CLOUDFLARE_ACCOUNT_ID`
@@ -101,7 +107,7 @@ cargo test
 
 - **Database:** `~/.mini-pi/mini-pi.db` (SQLite, WAL mode, foreign keys ON)
 - **Sessions:** `~/.mini-pi/sessions/*.jsonl` — conversation history files used by the `pi` subprocess
-- **Agent config:** `~/.mini-pi/agent/` — imported from `~/.pi/agent/` on first run
+- **Agent config:** `~/.mini-pi/agent/` — passed to the SDK bridge via `--agent-dir`; imported from `~/.pi/agent/` on first run
 - **App config:** `~/.config/mini-pi/config.json`
 - **Auth session:** Stored in the `user_settings` table of `~/.mini-pi/mini-pi.db` under key `supabase_session`
 - **Sync metadata:** `~/.mini-pi/sync_meta.json`
@@ -125,12 +131,14 @@ On launch the app:
 4. If logged in, spawns a background `smol` task to sync agent config changes.
 5. Opens the `ThreadList` window.
 
-Each chat thread opens its own window. Inside the window, `ChatWindow::spawn_pi` creates a `PiRpc` instance that:
+On launch the app also spawns a single `PiBridge` process that runs the SDK bridge (`pi-bridge/src/index.ts`). The Rust GUI opens one shared WebSocket connection to the bridge and multiplexes all sessions over it.
 
-- Runs `pi [--provider <provider> --model <model>] --mode rpc --session <session_path>`.
-- Sets `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR` to the `~/.mini-pi` directories.
-- Runs a background OS thread reading JSON Lines from `pi` stdout and forwarding parsed `BridgeEvent`s over an async `futures::channel::mpsc` channel.
-- The `ChatWindow` GPUI task consumes that channel and updates messages/reasoning/tool-call state.
+Each chat thread opens its own window. Inside the window, `ChatWindow::spawn_pi` creates a `PiRpc` session handle that:
+
+- Registers a session with the shared `PiBridge` via `{ type: "create_session", sessionId, sessionPath, cwd, model, thinkingLevel }`.
+- Receives a per-session `futures::channel::mpsc` stream of `BridgeEvent`s from the bridge.
+- Sends commands (`prompt`, `set_model`, `fork`, etc.) over the shared WebSocket; the bridge forwards SDK events back with the same `sessionId`.
+- The `ChatWindow` GPUI task consumes the per-session event stream and updates messages/reasoning/tool-call state.
 
 ### Window Management
 
@@ -165,9 +173,9 @@ Dropdowns handle `up`, `down`, `enter`, and `escape` internally.
   - `ui::text_area::TextArea` — chat-specific multi-line input with `@` mention autocomplete and `/` slash-command palette support
 - **Markdown:** `ui::markdown::MarkdownRenderer` parses content into custom `BlockNode` / `InlineNode` ASTs and renders them to GPUI elements. Code blocks are highlighted with `syntect` using the `base16-ocean.dark` theme.
 
-## External CLI Dependency
+## External SDK Dependency
 
-This application is a thin GUI wrapper around the `pi` CLI. Without the `pi` binary on `PATH`, chat functionality will fail at runtime when `PiRpc::spawn` is called. The RPC protocol is documented by the `BridgeEvent` enum in `src/rpc/pi_rpc.rs`.
+This application is a thin GUI wrapper around the `@earendil-works/pi-coding-agent` SDK, run inside a local Node.js bridge. Without Node.js/bun and the installed `pi-bridge/node_modules`, chat functionality will fail at runtime when `PiBridge::spawn` is called. The wire protocol is documented by the `BridgeEvent` enum and the multiplexed JSON messages in `src/rpc/pi_rpc.rs`.
 
 ## Security Considerations
 
@@ -179,8 +187,7 @@ This application is a thin GUI wrapper around the `pi` CLI. Without the `pi` bin
 ## Testing
 
 - `cargo test` runs the unit tests in `src/ui/markdown.rs`.
-- The current codebase has **10 markdown unit tests**, but one is failing:
-  - `ui::markdown::tests::heading_font_sizes_are_distinct` asserts that all six heading font sizes are distinct; the current mapping has a duplicate.
+- The current codebase has **11 markdown unit tests**; all pass.
 - There are no integration tests and no CI workflows configured for this repository.
 
 ## Documentation
@@ -198,4 +205,7 @@ This application is a thin GUI wrapper around the `pi` CLI. Without the `pi` bin
 - When adding database changes, append a new migration tuple to `MIGRATIONS` in `src/data/store.rs`.
 - Assets are loaded from the source tree at runtime via `core::assets::Assets`. Running the binary outside the repository requires the `assets/` directory to be present at the expected path.
 - The app is primarily developed and tested on macOS. Windows-specific and Linux-specific code exists (e.g. `CREATE_NO_WINDOW`, client-side titlebar controls, `wmctrl`) but may need verification.
+- The `pi-bridge/` directory must have its dependencies installed (`npm install` or `bun install`) before running the app. The Rust binary spawns the bridge from the repository root.
+- The wire protocol between Rust and the bridge uses a single WebSocket connection; every message includes a `sessionId` so multiple chat sessions can share one connection.
+- Model IDs in `src/config/model_config.rs` must resolve through the SDK's `ModelRegistry`/`getModel`. Provider names like `cloudflare-ai-gateway` may not be recognized by the SDK and may need to be mapped to SDK-supported providers (`anthropic`, `openai`, etc.).
 - Several known issues are documented in `docs/design-review.md`; review it before making large changes to process management, sync, or window lifecycle.
