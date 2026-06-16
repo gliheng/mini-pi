@@ -19,6 +19,7 @@ const modelRegistry = ModelRegistry.create(authStorage);
 
 interface SessionState {
   runtime: any;
+  sessionManager: any;
   unsubscribe: () => void;
   cwd: string;
   agentDir: string;
@@ -168,7 +169,7 @@ async function handleCreateSession(
   }
 
   const unsubscribe = subscribeToSession(ws, sessionId, runtime);
-  sessions.set(sessionId, { runtime, unsubscribe, cwd, agentDir });
+  sessions.set(sessionId, { runtime, sessionManager, unsubscribe, cwd, agentDir });
 
   sendResponse(ws, sessionId, "create_session", msg.id, true, {
     sessionId,
@@ -251,6 +252,53 @@ async function readSessionJsonl(sessionPath: string): Promise<any[]> {
   return messages;
 }
 
+function agentMessageToWire(entryId: string, msg: any): any | null {
+  const role = msg.role;
+  if (role === "user") {
+    const content = msg.content;
+    if (typeof content === "string") {
+      return { id: entryId, role: "user", content: [{ type: "text", text: content }] };
+    }
+    if (Array.isArray(content)) {
+      return { id: entryId, role: "user", content };
+    }
+    return { id: entryId, role: "user", content: [] };
+  }
+
+  if (role === "assistant") {
+    const parts: any[] = [];
+    const content = msg.content;
+    if (Array.isArray(content)) {
+      for (const block of content) {
+        if (block.type === "text") {
+          parts.push({ type: "text", text: block.text });
+        } else if (block.type === "thinking") {
+          parts.push({ type: "thinking", thinking: block.thinking });
+        } else if (block.type === "toolCall") {
+          parts.push({
+            type: "toolCall",
+            name: block.name,
+            arguments: block.arguments,
+          });
+        }
+      }
+    }
+    return { id: entryId, role: "assistant", content: parts };
+  }
+
+  if (role === "toolResult") {
+    return {
+      id: entryId,
+      role: "toolResult",
+      toolName: msg.toolName || msg.toolCallId,
+      content: msg.content,
+    };
+  }
+
+  // Bash execution messages are custom types in the SDK; skip unknowns here.
+  return null;
+}
+
 async function handleGetMessages(
   ws: WebSocket,
   msg: any,
@@ -260,14 +308,28 @@ async function handleGetMessages(
   log("get_messages:", msg.sessionId, "sessionFile:", sessionFile);
   try {
     let messages: any[] = [];
-    if (sessionFile && fs.existsSync(sessionFile)) {
+
+    // Prefer SessionManager.getBranch() so we only return the current leaf path,
+    // matching how the pi TUI renders branched sessions.
+    if (state.sessionManager && typeof state.sessionManager.getBranch === "function") {
+      const branch = state.sessionManager.getBranch();
+      log("sessionManager.getBranch returned", branch.length, "entries");
+      for (const entry of branch) {
+        if (entry.type === "message" && entry.message) {
+          const wired = agentMessageToWire(entry.id, entry.message);
+          if (wired) {
+            messages.push(wired);
+          }
+        }
+      }
+    } else if (sessionFile && fs.existsSync(sessionFile)) {
       messages = await readSessionJsonl(sessionFile);
       log("read", messages.length, "messages from", sessionFile);
     } else {
-      // Fallback to runtime agent state if available.
       messages = state.runtime.session.agent?.state?.messages || [];
       log("fallback to agent state,", messages.length, "messages");
     }
+
     sendResponse(ws, msg.sessionId, "get_messages", msg.id, true, {
       messages,
     });
@@ -432,6 +494,13 @@ async function dispatch(ws: WebSocket, msg: any): Promise<void> {
         state.unsubscribe();
         state.unsubscribe = subscribeToSession(ws, sessionId, state.runtime);
         sendResponse(ws, sessionId, "new_session", msg.id, true);
+        break;
+      }
+      case "navigate_tree": {
+        log("navigate_tree:", msg.entryId);
+        const result = await session.navigateTree(String(msg.entryId));
+        log("navigate_tree result:", result);
+        sendResponse(ws, sessionId, "navigate_tree", msg.id, true, result);
         break;
       }
       case "fork": {

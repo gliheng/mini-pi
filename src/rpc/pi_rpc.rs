@@ -445,6 +445,19 @@ impl PiRpc {
         self.send(&cmd)
     }
 
+    pub fn send_navigate_tree(
+        &mut self,
+        entry_id: &str,
+        request_id: Option<&str>,
+    ) -> Result<(), PiRpcError> {
+        let mut cmd = serde_json::json!({
+            "type": "navigate_tree",
+            "entryId": entry_id,
+        });
+        add_request_id(&mut cmd, request_id);
+        self.send(&cmd)
+    }
+
     pub fn send_fork(
         &mut self,
         entry_id: &str,

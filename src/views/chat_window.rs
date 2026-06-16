@@ -1348,7 +1348,10 @@ impl ChatWindow {
         self.state = ChatState::Streaming;
         self.scroll_locked = true;
         if let Some(ref mut pi) = self.pi {
-            let _ = pi.send_fork(&entry_id, None);
+            // Use navigate_tree to move the session leaf back to the edited
+            // entry in-place, keeping the conversation tree inside the same
+            // session file. Then send the new prompt to create a branch there.
+            let _ = pi.send_navigate_tree(&entry_id, None);
             let _ = pi.send_prompt(&content);
         }
         self.refresh_entry_ids_after_streaming = true;
