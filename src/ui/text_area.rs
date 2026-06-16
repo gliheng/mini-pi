@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, ElementInputHandler,
-    Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId,
+    Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, Hsla,
     KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     Pixels, Point, ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle,
     Window, actions, div, fill, hsla, point, prelude::*, px, relative, rgba, size,
@@ -96,6 +96,8 @@ pub struct TextArea {
     pub slash_command_highlighted: usize,
     pub slash_command_items: Vec<CommandItem>,
     available_commands: Vec<CommandItem>,
+
+    pub text_color: Option<Hsla>,
 }
 
 impl EventEmitter<TextAreaEvent> for TextArea {}
@@ -135,7 +137,14 @@ impl TextArea {
             slash_command_highlighted: 0,
             slash_command_items: Vec::new(),
             available_commands: Vec::new(),
+
+            text_color: None,
         }
+    }
+
+    pub fn with_text_color(mut self, color: impl Into<Hsla>) -> Self {
+        self.text_color = Some(color.into());
+        self
     }
 
     pub fn with_at_mention(mut self, enabled: bool) -> Self {
@@ -941,7 +950,7 @@ impl Element for TextAreaElement {
         let cursor = input.cursor_offset();
         let style = window.text_style();
 
-        let base_color = style.color;
+        let base_color = input.text_color.unwrap_or(style.color);
         let (display_text, text_color) = if content.is_empty() {
             (
                 input.placeholder.clone(),

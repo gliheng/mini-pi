@@ -56,6 +56,16 @@ impl Render for ThreadItem {
         let pinned = self.thread.pinned;
         let confirming = self.confirming;
         let hovered = self.hovered;
+        let is_streaming = cx
+            .global::<AppStore>()
+            .streaming_thread_ids
+            .contains(&thread_id);
+        let has_new_activity = self
+            .thread
+            .metadata
+            .as_ref()
+            .and_then(|md| md.get("has_new_activity").and_then(|v| v.as_bool()))
+            .unwrap_or(false);
 
         div()
             .id(SharedString::from(format!("thread-{}", thread_id)))
@@ -143,7 +153,49 @@ impl Render for ThreadItem {
                     .items_center()
                     .gap_2()
                     .when(!confirming && !hovered, |el| {
-                        el.child(div().text_xs().text_color(rgb(0x666666)).child(time_label))
+                        el.when(is_streaming, |el| {
+                            el.child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .size(px(6.))
+                                            .rounded_full()
+                                            .bg(rgb(0x22c55e)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(rgb(0x22c55e))
+                                            .child("Thinking..."),
+                                    ),
+                            )
+                        })
+                        .when(!is_streaming && has_new_activity, |el| {
+                            el.child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .size(px(6.))
+                                            .rounded_full()
+                                            .bg(rgb(0x6366f1)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(rgb(0x6366f1))
+                                            .child("New"),
+                                    ),
+                            )
+                        })
+                        .child(div().text_xs().text_color(rgb(0x666666)).child(time_label))
                     })
                     .when(!confirming && hovered, |el| {
                         el.child(

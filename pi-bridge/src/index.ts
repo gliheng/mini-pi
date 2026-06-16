@@ -106,9 +106,13 @@ async function handleCreateSession(
 
   const existing = sessions.get(sessionId);
   if (existing) {
-    existing.unsubscribe();
-    existing.runtime.dispose?.();
-    sessions.delete(sessionId);
+    // Session already exists; keep it running and just acknowledge the request.
+    // This makes create_session idempotent on the Rust side.
+    sendResponse(ws, sessionId, "create_session", msg.id, true, {
+      sessionId,
+      sessionFile: existing.runtime.session.sessionFile,
+    });
+    return;
   }
 
   const cwd = msg.cwd || process.cwd();

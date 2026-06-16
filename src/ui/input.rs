@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
-    EntityInputHandler, FocusHandle, Focusable, GlobalElementId, LayoutId, MouseButton,
+    EntityInputHandler, FocusHandle, Focusable, GlobalElementId, Hsla, LayoutId, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ShapedLine,
     SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, actions, div, fill, hsla,
     point, prelude::*, px, relative, rgba, size,
@@ -45,6 +45,7 @@ pub struct TextInput {
     cursor_visible: bool,
     blink_enabled: bool,
     blink_epoch: usize,
+    text_color: Option<Hsla>,
 }
 
 impl TextInput {
@@ -63,7 +64,13 @@ impl TextInput {
             cursor_visible: true,
             blink_enabled: false,
             blink_epoch: 0,
+            text_color: None,
         }
+    }
+
+    pub fn with_text_color(mut self, color: impl Into<Hsla>) -> Self {
+        self.text_color = Some(color.into());
+        self
     }
 
     pub fn with_password_mode(mut self) -> Self {
@@ -586,17 +593,18 @@ impl Element for TextElement {
         let selected_range = input.selected_range.clone();
         let cursor = input.cursor_offset();
         let style = window.text_style();
+        let base_color = input.text_color.unwrap_or(hsla(0., 0., 1., 1.));
 
         let (display_text, text_color) = if content.is_empty() {
-            (input.placeholder.clone(), hsla(0., 0., 1., 0.3))
+            (input.placeholder.clone(), hsla(base_color.h, base_color.s, base_color.l, 0.3))
         } else if input.password_mode {
             let bullets: SharedString = std::iter::repeat('*')
                 .take(content.chars().count())
                 .collect::<String>()
                 .into();
-            (bullets, hsla(0., 0., 1., 1.))
+            (bullets, base_color)
         } else {
-            (content, hsla(0., 0., 1., 1.))
+            (content, base_color)
         };
 
         let run = TextRun {

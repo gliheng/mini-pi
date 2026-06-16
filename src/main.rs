@@ -8,7 +8,7 @@ mod ui;
 mod utils;
 mod views;
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{collections::{HashMap, HashSet}, path::PathBuf, sync::Arc};
 
 use gpui::{App, AppContext, Application, Bounds, KeyBinding, px, size};
 
@@ -17,6 +17,7 @@ use crate::config::app_config::AppConfig;
 use crate::core::actions::Quit;
 use crate::core::app::{AppStore, custom_window_options};
 use crate::core::assets::Assets;
+use crate::core::session_manager::SessionManager;
 use crate::data::store::Store;
 use crate::rpc::pi_rpc::PiBridge;
 use crate::sync::settings_sync;
@@ -84,6 +85,8 @@ fn main() {
                 sync_status: settings_sync::SyncStatus::Idle,
                 user_panel_active: false,
                 pi_bridge: pi_bridge.clone(),
+                session_manager: SessionManager::new(),
+                streaming_thread_ids: HashSet::new(),
             });
 
             if auth.is_logged_in() {

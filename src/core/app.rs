@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::{HashMap, HashSet}, sync::Arc};
 
 use gpui::{
     AnyWindowHandle, Bounds, Global, TitlebarOptions, WindowBackgroundAppearance, WindowBounds,
@@ -7,6 +7,7 @@ use gpui::{
 
 use crate::auth::state::{AuthState, SupabaseSession};
 use crate::config::app_config::AppConfig;
+use crate::core::session_manager::SessionManager;
 use crate::data::store::Store;
 use crate::rpc::pi_rpc::PiBridge;
 use crate::sync::settings_sync::{SyncMeta, SyncStatus};
@@ -21,6 +22,8 @@ pub struct AppStore {
     pub sync_status: SyncStatus,
     pub user_panel_active: bool,
     pub pi_bridge: Option<Arc<PiBridge>>,
+    pub session_manager: SessionManager,
+    pub streaming_thread_ids: HashSet<i64>,
 }
 
 impl Global for AppStore {}

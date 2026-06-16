@@ -15,6 +15,7 @@ pub struct ThreadMeta {
     pub model: Option<String>,
     pub thinking_level: Option<String>,
     pub pinned: bool,
+    pub metadata: Option<serde_json::Value>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -60,6 +61,12 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "004_thinking_level",
         "
         ALTER TABLE threads ADD COLUMN thinking_level TEXT;
+        ",
+    ),
+    (
+        "005_thread_metadata",
+        "
+        ALTER TABLE threads ADD COLUMN metadata TEXT;
         ",
     ),
 ];
@@ -151,8 +158,8 @@ impl Store {
     pub fn create_thread(&self, title: &str, preview: &str) -> Result<ThreadMeta, StoreError> {
         self.conn
             .execute(
-                "INSERT INTO threads (title, preview, thinking_level) VALUES (?1, ?2, ?3)",
-                params![title, preview, Option::<&str>::None],
+                "INSERT INTO threads (title, preview, thinking_level, metadata) VALUES (?1, ?2, ?3, ?4)",
+                params![title, preview, Option::<&str>::None, Option::<String>::None],
             )
             .map_err(StoreError::Rusqlite)?;
         let id = self.conn.last_insert_rowid();
@@ -163,12 +170,15 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, title, preview, session_file, model, thinking_level, pinned, created_at, updated_at \
+                "SELECT id, title, preview, session_file, model, thinking_level, pinned, metadata, created_at, updated_at \
                  FROM threads ORDER BY pinned DESC, updated_at DESC",
             )
             .map_err(StoreError::Rusqlite)?;
         let rows = stmt
             .query_map([], |row| {
+                let metadata_str: Option<String> = row.get(7)?;
+                let metadata = metadata_str
+                    .and_then(|s| serde_json::from_str(&s).ok());
                 Ok(ThreadMeta {
                     id: row.get(0)?,
                     title: row.get(1)?,
@@ -177,8 +187,9 @@ impl Store {
                     model: row.get(4)?,
                     thinking_level: row.get(5)?,
                     pinned: row.get::<_, i32>(6)? != 0,
-                    created_at: row.get(7)?,
-                    updated_at: row.get(8)?,
+                    metadata,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
                 })
             })
             .map_err(StoreError::Rusqlite)?;
@@ -190,11 +201,14 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, title, preview, session_file, model, thinking_level, pinned, created_at, updated_at \
+                "SELECT id, title, preview, session_file, model, thinking_level, pinned, metadata, created_at, updated_at \
                  FROM threads WHERE id = ?1",
             )
             .map_err(StoreError::Rusqlite)?;
         stmt.query_row(params![id], |row| {
+            let metadata_str: Option<String> = row.get(7)?;
+            let metadata = metadata_str
+                .and_then(|s| serde_json::from_str(&s).ok());
             Ok(ThreadMeta {
                 id: row.get(0)?,
                 title: row.get(1)?,
@@ -203,8 +217,9 @@ impl Store {
                 model: row.get(4)?,
                 thinking_level: row.get(5)?,
                 pinned: row.get::<_, i32>(6)? != 0,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
+                metadata,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
             })
         })
         .optional()
@@ -220,6 +235,7 @@ impl Store {
         model: Option<Option<&str>>,
         thinking_level: Option<Option<&str>>,
         pinned: Option<bool>,
+        metadata: Option<Option<&serde_json::Value>>,
     ) -> Result<(), StoreError> {
         if let Some(t) = title {
             self.conn
@@ -266,6 +282,15 @@ impl Store {
                 .execute(
                     "UPDATE threads SET pinned = ?1 WHERE id = ?2",
                     params![p as i32, id],
+                )
+                .map_err(StoreError::Rusqlite)?;
+        }
+        if let Some(md) = metadata {
+            let md_str = md.as_ref().map(|v| v.to_string());
+            self.conn
+                .execute(
+                    "UPDATE threads SET metadata = ?1 WHERE id = ?2",
+                    params![md_str, id],
                 )
                 .map_err(StoreError::Rusqlite)?;
         }
