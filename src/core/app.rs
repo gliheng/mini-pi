@@ -1,8 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use gpui::{
-    point, px, AnyWindowHandle, Bounds, Global, TitlebarOptions, WindowBackgroundAppearance,
-    WindowBounds, WindowDecorations, WindowOptions,
+    AnyWindowHandle, Bounds, Global, TitlebarOptions, WindowBackgroundAppearance, WindowBounds,
+    WindowDecorations, WindowOptions, point, px,
 };
 
 use crate::auth::state::{AuthState, SupabaseSession};

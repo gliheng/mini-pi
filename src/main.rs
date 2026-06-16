@@ -94,7 +94,8 @@ fn main() {
                     cx.spawn(async move |cx| {
                         let result = smol::unblock(move || {
                             settings_sync::sync_changes(&access_token, &user_id)
-                        }).await;
+                        })
+                        .await;
                         let _ = cx.update_global(|app: &mut AppStore, _| {
                             app.sync_status = match result {
                                 Ok(meta) => {
@@ -104,7 +105,8 @@ fn main() {
                                 Err(e) => settings_sync::SyncStatus::Error(e),
                             };
                         });
-                    }).detach();
+                    })
+                    .detach();
                 }
             }
 

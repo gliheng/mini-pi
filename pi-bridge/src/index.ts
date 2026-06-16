@@ -459,15 +459,23 @@ async function dispatch(ws: WebSocket, msg: any): Promise<void> {
         break;
       }
       case "export_html": {
-        sendResponse(
-          ws,
-          sessionId,
-          "export_html",
-          msg.id,
-          false,
-          undefined,
-          "export_html is not supported in SDK mode yet"
-        );
+        try {
+          const outputPath = msg.outputPath
+            ? String(msg.outputPath)
+            : undefined;
+          const path = await session.exportToHtml(outputPath);
+          sendResponse(ws, sessionId, "export_html", msg.id, true, { path });
+        } catch (e: any) {
+          sendResponse(
+            ws,
+            sessionId,
+            "export_html",
+            msg.id,
+            false,
+            undefined,
+            e?.message || String(e)
+          );
+        }
         break;
       }
       case "compact": {

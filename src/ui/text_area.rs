@@ -4,10 +4,10 @@ use std::time::Duration;
 
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, ElementInputHandler,
-    Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, KeyDownEvent,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
-    ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, actions,
-    div, fill, hsla, point, prelude::*, px, relative, rgba, size,
+    Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId,
+    KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
+    Pixels, Point, ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle,
+    Window, actions, div, fill, hsla, point, prelude::*, px, relative, rgba, size,
 };
 use unicode_segmentation::*;
 
@@ -188,13 +188,7 @@ impl TextArea {
         self.just_selected_mention = false;
     }
 
-    pub fn set_workspace(
-        &mut self,
-        id: i64,
-        dir: PathBuf,
-        name: String,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn set_workspace(&mut self, id: i64, dir: PathBuf, name: String, cx: &mut Context<Self>) {
         if self.cached_workspace_id == Some(id) {
             return;
         }
@@ -282,8 +276,7 @@ impl TextArea {
             self.at_mention_replace_range = parse.replace_range.clone();
 
             if self.file_cache_loaded {
-                let filtered =
-                    filter_mention_items(&self.file_cache, &parse.query);
+                let filtered = filter_mention_items(&self.file_cache, &parse.query);
                 self.at_mention_active = !filtered.is_empty();
                 self.mention_items = filtered;
             } else {
@@ -305,8 +298,7 @@ impl TextArea {
         if !self.mention_items.is_empty() {
             let len = self.mention_items.len();
             if direction > 0 {
-                self.at_mention_highlighted =
-                    (self.at_mention_highlighted + 1) % len;
+                self.at_mention_highlighted = (self.at_mention_highlighted + 1) % len;
             } else if direction < 0 {
                 self.at_mention_highlighted = if self.at_mention_highlighted == 0 {
                     len - 1
@@ -317,8 +309,7 @@ impl TextArea {
         } else if !self.slash_command_items.is_empty() {
             let len = self.slash_command_items.len();
             if direction > 0 {
-                self.slash_command_highlighted =
-                    (self.slash_command_highlighted + 1) % len;
+                self.slash_command_highlighted = (self.slash_command_highlighted + 1) % len;
             } else if direction < 0 {
                 self.slash_command_highlighted = if self.slash_command_highlighted == 0 {
                     len - 1
@@ -335,7 +326,9 @@ impl TextArea {
             let suffix = if item.is_dir { "/" } else { "" };
             let insertion = format!(
                 "[@{}]({}{})",
-                item.name, item.absolute_path.to_string_lossy(), suffix
+                item.name,
+                item.absolute_path.to_string_lossy(),
+                suffix
             );
             let range = self.at_mention_replace_range.clone();
             if range.start <= self.content.len() && range.end <= self.content.len() {
@@ -396,19 +389,13 @@ impl TextArea {
         cx.notify();
     }
 
-    fn replace_range(
-        &mut self,
-        range: Range<usize>,
-        replacement: &str,
-        cx: &mut Context<Self>,
-    ) {
+    fn replace_range(&mut self, range: Range<usize>, replacement: &str, cx: &mut Context<Self>) {
         let range_start = range.start.min(self.content.len());
         let range_end = range.end.min(self.content.len());
         let end = range_start + replacement.len();
-        self.content = (self.content[0..range_start].to_owned()
-            + replacement
-            + &self.content[range_end..])
-            .into();
+        self.content =
+            (self.content[0..range_start].to_owned() + replacement + &self.content[range_end..])
+                .into();
         self.selected_range = end..end;
         self.selection_reversed = false;
         self.marked_range = None;
@@ -697,8 +684,11 @@ impl TextArea {
         self.cursor_visible = true;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(Duration::from_millis(530)).await;
-            this.update(cx, |this, cx| this.blink_cursor(epoch, cx)).ok();
+            cx.background_executor()
+                .timer(Duration::from_millis(530))
+                .await;
+            this.update(cx, |this, cx| this.blink_cursor(epoch, cx))
+                .ok();
         })
         .detach();
     }
@@ -718,8 +708,11 @@ impl TextArea {
         self.blink_epoch += 1;
         let epoch = self.blink_epoch;
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(Duration::from_millis(500)).await;
-            this.update(cx, |this, cx| this.resume_blinking(epoch, cx)).ok();
+            cx.background_executor()
+                .timer(Duration::from_millis(500))
+                .await;
+            this.update(cx, |this, cx| this.resume_blinking(epoch, cx))
+                .ok();
         })
         .detach();
     }
@@ -739,8 +732,11 @@ impl TextArea {
         self.blink_epoch += 1;
         let next_epoch = self.blink_epoch;
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(Duration::from_millis(530)).await;
-            this.update(cx, |this, cx| this.blink_cursor(next_epoch, cx)).ok();
+            cx.background_executor()
+                .timer(Duration::from_millis(530))
+                .await;
+            this.update(cx, |this, cx| this.blink_cursor(next_epoch, cx))
+                .ok();
         })
         .detach();
     }
@@ -807,9 +803,7 @@ impl EntityInputHandler for TextArea {
         let start = range.start.min(self.content.len());
         let end = range.end.min(self.content.len());
 
-        self.content =
-            (self.content[0..start].to_owned() + new_text + &self.content[end..])
-                .into();
+        self.content = (self.content[0..start].to_owned() + new_text + &self.content[end..]).into();
         self.selected_range = start + new_text.len()..start + new_text.len();
         self.marked_range.take();
         self.update_popups(cx);
@@ -834,9 +828,7 @@ impl EntityInputHandler for TextArea {
         let start = range.start.min(self.content.len());
         let end = range.end.min(self.content.len());
 
-        self.content =
-            (self.content[0..start].to_owned() + new_text + &self.content[end..])
-                .into();
+        self.content = (self.content[0..start].to_owned() + new_text + &self.content[end..]).into();
         if !new_text.is_empty() {
             self.marked_range = Some(start..start + new_text.len());
         } else {
@@ -845,7 +837,10 @@ impl EntityInputHandler for TextArea {
         self.selected_range = new_selected_range_utf16
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .map(|new_range| (new_range.start + start).min(self.content.len())..(new_range.end + end).min(self.content.len()))
+            .map(|new_range| {
+                (new_range.start + start).min(self.content.len())
+                    ..(new_range.end + end).min(self.content.len())
+            })
             .unwrap_or_else(|| start + new_text.len()..start + new_text.len());
 
         self.update_popups(cx);
@@ -1057,15 +1052,12 @@ impl Element for TextAreaElement {
         let line = prepaint.line.take().unwrap();
         let line_height = window.line_height();
         let text_y = bounds.top() + (bounds.bottom() - bounds.top() - line_height) / 2.0;
-        line.paint(
-            point(bounds.origin.x, text_y),
-            line_height,
-            window,
-            cx,
-        )
-        .unwrap();
+        line.paint(point(bounds.origin.x, text_y), line_height, window, cx)
+            .unwrap();
 
-        if focus_handle.is_focused(window) && let Some(cursor) = prepaint.cursor.take() {
+        if focus_handle.is_focused(window)
+            && let Some(cursor) = prepaint.cursor.take()
+        {
             window.paint_quad(cursor);
         }
 
@@ -1107,7 +1099,8 @@ impl Render for TextArea {
             .on_action(cx.listener(Self::copy))
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
                 let at_popup_active = this.at_mention_active && !this.mention_items.is_empty();
-                let command_popup_active = this.slash_command_active && !this.slash_command_items.is_empty();
+                let command_popup_active =
+                    this.slash_command_active && !this.slash_command_items.is_empty();
                 if at_popup_active || command_popup_active {
                     match event.keystroke.key.as_str() {
                         "up" => {
@@ -1139,7 +1132,11 @@ impl Render for TextArea {
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .line_height(px(20.))
             .text_size(px(14.))
-            .child(div().size_full().child(TextAreaElement { input: cx.entity() }))
+            .child(
+                div()
+                    .size_full()
+                    .child(TextAreaElement { input: cx.entity() }),
+            )
     }
 }
 
@@ -1160,8 +1157,7 @@ fn parse_at_mention(content: &str, cursor: usize) -> Option<AtMentionParse> {
     if at_pos > 0 {
         let ch_before = content.as_bytes().get(at_pos - 1).copied();
         match ch_before {
-            Some(b' ') | Some(b'\n') | Some(b'\t') | Some(b'(') | Some(b'[')
-            | Some(b'{') => {}
+            Some(b' ') | Some(b'\n') | Some(b'\t') | Some(b'(') | Some(b'[') | Some(b'{') => {}
             _ => return None,
         }
     }
@@ -1213,7 +1209,10 @@ fn filter_mention_items(items: &[MentionItem], query: &str) -> Vec<MentionItem> 
             }
         })
         .collect();
-    matches.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.relative_path.cmp(&b.0.relative_path)));
+    matches.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then_with(|| a.0.relative_path.cmp(&b.0.relative_path))
+    });
     matches.into_iter().take(50).map(|(item, _)| item).collect()
 }
 

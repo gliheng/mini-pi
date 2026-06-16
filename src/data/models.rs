@@ -40,7 +40,10 @@ pub enum MessagePart {
 
 #[derive(Clone)]
 pub struct Message {
+    /// Local UI identifier.
     pub id: String,
+    /// SDK session entry id, used for operations such as fork.
+    pub entry_id: Option<String>,
     pub role: Role,
     pub parts: Vec<MessagePart>,
 }

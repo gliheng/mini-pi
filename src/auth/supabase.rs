@@ -168,9 +168,7 @@ pub fn login(email: &str, password: &str) -> Result<SupabaseSession, SupabaseAut
     })
 }
 
-pub fn refresh_session(
-    refresh_token: &str,
-) -> Result<SupabaseSession, SupabaseAuthError> {
+pub fn refresh_session(refresh_token: &str) -> Result<SupabaseSession, SupabaseAuthError> {
     let resp = client()
         .post(format!(
             "{}/auth/v1/token?grant_type=refresh_token",
@@ -231,7 +229,11 @@ pub fn get_user(access_token: &str) -> Result<SupabaseUser, SupabaseAuthError> {
     if status >= 400 {
         let msg = serde_json::from_str::<serde_json::Value>(&body)
             .ok()
-            .and_then(|v| v.as_str().map(|s| s.to_string()).or(v.get("msg").and_then(|v| v.as_str().map(|s| s.to_string()))))
+            .and_then(|v| {
+                v.as_str()
+                    .map(|s| s.to_string())
+                    .or(v.get("msg").and_then(|v| v.as_str().map(|s| s.to_string())))
+            })
             .unwrap_or_else(|| format!("Get user failed (status {})", status));
         return Err(SupabaseAuthError::Api { msg, status });
     }
@@ -288,10 +290,7 @@ pub fn list_files(
     user_id: &str,
 ) -> Result<Vec<StorageFile>, SupabaseAuthError> {
     let resp = client()
-        .post(format!(
-            "{}/storage/v1/object/list/pi-sync",
-            SUPABASE_URL
-        ))
+        .post(format!("{}/storage/v1/object/list/pi-sync", SUPABASE_URL))
         .header("apikey", anon_key())
         .header("Authorization", format!("Bearer {}", access_token))
         .header("Content-Type", "application/json")

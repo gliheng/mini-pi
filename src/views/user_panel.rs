@@ -1,7 +1,7 @@
 use gpui::{
     AppContext, BorrowAppContext, Context, EventEmitter, InteractiveElement, IntoElement,
-    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window, div, px, rgb,
-    prelude::FluentBuilder,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window, div,
+    prelude::FluentBuilder, px, rgb,
 };
 
 use crate::auth::state::{self, AuthState};
@@ -37,7 +37,8 @@ impl UserPanel {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let email_input = cx.new(|cx| TextInput::new(cx, "Email"));
         let password_input = cx.new(|cx| TextInput::new(cx, "Password").with_password_mode());
-        let confirm_password_input = cx.new(|cx| TextInput::new(cx, "Confirm Password").with_password_mode());
+        let confirm_password_input =
+            cx.new(|cx| TextInput::new(cx, "Confirm Password").with_password_mode());
 
         let _email_sub = cx.observe(&email_input, |_, _, cx| {
             cx.notify();
@@ -106,8 +107,14 @@ impl Render for UserPanel {
             let confirm_password_val = self.confirm_password_input.read(cx).content().clone();
 
             let (title, subtitle): (SharedString, SharedString) = match dialog {
-                AuthDialog::Login => ("Sign In".into(), "Sign in to sync your agent settings across devices".into()),
-                AuthDialog::Signup => ("Create Account".into(), "Sign up to sync your agent settings across devices".into()),
+                AuthDialog::Login => (
+                    "Sign In".into(),
+                    "Sign in to sync your agent settings across devices".into(),
+                ),
+                AuthDialog::Signup => (
+                    "Create Account".into(),
+                    "Sign up to sync your agent settings across devices".into(),
+                ),
             };
 
             let form_fields = div()
@@ -145,12 +152,27 @@ impl Render for UserPanel {
                             .child("Signing in..."),
                     )
                 })
-                .when(!is_logging_in && dialog == AuthDialog::Login, |el: gpui::Div| {
-                    el.child(render_login_button(email_val.clone(), password_val.clone(), cx))
-                })
-                .when(!is_logging_in && dialog == AuthDialog::Signup, |el: gpui::Div| {
-                    el.child(render_signup_submit_button(email_val.clone(), password_val.clone(), confirm_password_val.clone(), cx))
-                });
+                .when(
+                    !is_logging_in && dialog == AuthDialog::Login,
+                    |el: gpui::Div| {
+                        el.child(render_login_button(
+                            email_val.clone(),
+                            password_val.clone(),
+                            cx,
+                        ))
+                    },
+                )
+                .when(
+                    !is_logging_in && dialog == AuthDialog::Signup,
+                    |el: gpui::Div| {
+                        el.child(render_signup_submit_button(
+                            email_val.clone(),
+                            password_val.clone(),
+                            confirm_password_val.clone(),
+                            cx,
+                        ))
+                    },
+                );
 
             div()
                 .id("user-panel")
@@ -199,12 +221,7 @@ impl Render for UserPanel {
                                         .text_color(rgb(0xe0e0e0))
                                         .child(title),
                                 )
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(rgb(0x888888))
-                                        .child(subtitle),
-                                )
+                                .child(div().text_sm().text_color(rgb(0x888888)).child(subtitle))
                                 .child(form_fields)
                                 .child(
                                     div()
@@ -269,7 +286,7 @@ impl Render for UserPanel {
                                             .child("Sign In"),
                                     )
                                 }),
-                        )
+                        ),
                 )
         } else {
             div()
@@ -317,7 +334,12 @@ fn render_auth_content(
                 .next()
                 .map(|c| c.to_uppercase().to_string())
                 .unwrap_or_else(|| "?".to_string());
-            let threads_count = cx.global::<AppStore>().store.list_threads().map(|t| t.len()).unwrap_or(0);
+            let threads_count = cx
+                .global::<AppStore>()
+                .store
+                .list_threads()
+                .map(|t| t.len())
+                .unwrap_or(0);
             let sync_status = cx.global::<AppStore>().sync_status.clone();
             let sync_label: SharedString = match &sync_status {
                 settings_sync::SyncStatus::Idle => "Not synced".into(),
@@ -368,31 +390,26 @@ fn render_auth_content(
                         ),
                 )
                 .child(
-                    div()
-                        .w_full()
-                        .flex()
-                        .flex_row()
-                        .gap_3()
-                        .child(
-                            div()
-                                .flex_1()
-                                .flex()
-                                .flex_col()
-                                .items_center()
-                                .gap_1()
-                                .px_4()
-                                .py_3()
-                                .rounded_lg()
-                                .bg(rgb(0x252525))
-                                .child(
-                                    div()
-                                        .text_lg()
-                                        .font_weight(gpui::FontWeight::BOLD)
-                                        .text_color(rgb(0xe0e0e0))
-                                        .child(threads_count.to_string()),
-                                )
-                                .child(div().text_xs().text_color(rgb(0x888888)).child("Threads")),
-                        ),
+                    div().w_full().flex().flex_row().gap_3().child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .gap_1()
+                            .px_4()
+                            .py_3()
+                            .rounded_lg()
+                            .bg(rgb(0x252525))
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(rgb(0xe0e0e0))
+                                    .child(threads_count.to_string()),
+                            )
+                            .child(div().text_xs().text_color(rgb(0x888888)).child("Threads")),
+                    ),
                 )
                 .child(
                     div()
@@ -435,69 +452,67 @@ fn render_auth_content(
                 )
                 .child(render_logout_button(cx))
         }
-        _ => {
-            div()
-                .w_full()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap_6()
-                .child(
-                    div()
-                        .id("login-dialog-btn")
-                        .w_full()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .gap_2()
-                        .px_4()
-                        .py_3()
-                        .rounded_lg()
-                        .bg(rgb(0x6366f1))
-                        .cursor_pointer()
-                        .text_color(rgb(0xffffff))
-                        .text_sm()
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .hover(|style| style.bg(rgb(0x4f46e5)))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.auth_dialog = Some(AuthDialog::Login);
-                            cx.notify();
-                        }))
-                        .child(
-                            gpui::svg()
-                                .path("login.svg")
-                                .size(px(16.))
-                                .text_color(rgb(0xffffff)),
-                        )
-                        .child("Sign In"),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(0x888888))
-                        .child("Sign in to sync your agent settings"),
-                )
-                .child(
-                    div()
-                        .w_full()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .child(
-                            div()
-                                .px_2()
-                                .py_1()
-                                .text_xs()
-                                .text_color(rgb(0x888888))
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .child("SETTINGS"),
-                        )
-                        .child(settings_row("Notifications", "notifications.svg"))
-                        .child(settings_row("Appearance", "appearance.svg"))
-                        .child(settings_row("Keyboard Shortcuts", "keyboard.svg"))
-                        .child(settings_row("About", "about.svg")),
-                )
-        }
+        _ => div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_6()
+            .child(
+                div()
+                    .id("login-dialog-btn")
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .gap_2()
+                    .px_4()
+                    .py_3()
+                    .rounded_lg()
+                    .bg(rgb(0x6366f1))
+                    .cursor_pointer()
+                    .text_color(rgb(0xffffff))
+                    .text_sm()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .hover(|style| style.bg(rgb(0x4f46e5)))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.auth_dialog = Some(AuthDialog::Login);
+                        cx.notify();
+                    }))
+                    .child(
+                        gpui::svg()
+                            .path("login.svg")
+                            .size(px(16.))
+                            .text_color(rgb(0xffffff)),
+                    )
+                    .child("Sign In"),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(0x888888))
+                    .child("Sign in to sync your agent settings"),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .px_2()
+                            .py_1()
+                            .text_xs()
+                            .text_color(rgb(0x888888))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child("SETTINGS"),
+                    )
+                    .child(settings_row("Notifications", "notifications.svg"))
+                    .child(settings_row("Appearance", "appearance.svg"))
+                    .child(settings_row("Keyboard Shortcuts", "keyboard.svg"))
+                    .child(settings_row("About", "about.svg")),
+            ),
     }
 }
 
@@ -763,14 +778,20 @@ fn render_sync_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
         .px_4()
         .py_3()
         .rounded_lg()
-        .bg(if is_syncing { rgb(0x333333) } else { rgb(0x4f46e5) })
+        .bg(if is_syncing {
+            rgb(0x333333)
+        } else {
+            rgb(0x4f46e5)
+        })
         .cursor_pointer()
-        .text_color(if is_syncing { rgb(0x888888) } else { rgb(0xffffff) })
+        .text_color(if is_syncing {
+            rgb(0x888888)
+        } else {
+            rgb(0xffffff)
+        })
         .text_sm()
         .font_weight(gpui::FontWeight::SEMIBOLD)
-        .when(!is_syncing, |el| {
-            el.hover(|style| style.bg(rgb(0x4338ca)))
-        })
+        .when(!is_syncing, |el| el.hover(|style| style.bg(rgb(0x4338ca))))
         .on_click(cx.listener(|_this, _, _, cx| {
             let session = cx.global::<AppStore>().session.clone();
             if let Some(s) = session {
@@ -781,30 +802,26 @@ fn render_sync_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
                 let access_token = s.access_token.clone();
                 let user_id = s.user.id.clone();
                 cx.spawn(async move |_, cx| {
-                    let result = smol::unblock(move || {
-                        settings_sync::sync_changes(&access_token, &user_id)
-                    }).await;
-                    let _ = cx.update_global(|app: &mut AppStore, _| {
-                        match result {
-                            Ok(meta) => {
-                                app.sync_meta = meta;
-                                app.sync_status = settings_sync::SyncStatus::Synced;
-                            }
-                            Err(e) => {
-                                app.sync_status = settings_sync::SyncStatus::Error(e);
-                            }
+                    let result =
+                        smol::unblock(move || settings_sync::sync_changes(&access_token, &user_id))
+                            .await;
+                    let _ = cx.update_global(|app: &mut AppStore, _| match result {
+                        Ok(meta) => {
+                            app.sync_meta = meta;
+                            app.sync_status = settings_sync::SyncStatus::Synced;
+                        }
+                        Err(e) => {
+                            app.sync_status = settings_sync::SyncStatus::Error(e);
                         }
                     });
-                }).detach();
+                })
+                .detach();
             }
         }))
         .child(label)
 }
 
-fn sync_row(
-    label: impl Into<SharedString>,
-    status_label: &SharedString,
-) -> impl IntoElement {
+fn sync_row(label: impl Into<SharedString>, status_label: &SharedString) -> impl IntoElement {
     let label: SharedString = label.into();
     let status_color = if status_label.as_ref() == "Synced" {
         rgb(0x22c55e)
@@ -834,12 +851,7 @@ fn sync_row(
                 .flex()
                 .flex_row()
                 .items_center()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(0xe0e0e0))
-                        .child(label),
-                ),
+                .child(div().text_sm().text_color(rgb(0xe0e0e0)).child(label)),
         )
         .child(
             div()

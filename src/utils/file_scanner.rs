@@ -37,12 +37,7 @@ fn should_skip(name: &str) -> bool {
     name.starts_with('.') || SKIP_DIRS.contains(&name)
 }
 
-fn scan_recursive(
-    dir: &Path,
-    root: &Path,
-    depth: u32,
-    entries: &mut Vec<FileEntry>,
-) {
+fn scan_recursive(dir: &Path, root: &Path, depth: u32, entries: &mut Vec<FileEntry>) {
     if depth > MAX_DEPTH || entries.len() >= MAX_ENTRIES {
         return;
     }
@@ -106,12 +101,10 @@ pub fn scan_directory(root: &Path) -> Vec<FileEntry> {
     }
     let mut entries = Vec::new();
     scan_recursive(root, root, 0, &mut entries);
-    entries.sort_by(|a, b| {
-        match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.relative_path.cmp(&b.relative_path),
-        }
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.relative_path.cmp(&b.relative_path),
     });
     entries
 }
@@ -124,8 +117,7 @@ pub fn filter_entries<'a>(entries: &'a [FileEntry], query: &str) -> Vec<&'a File
     entries
         .iter()
         .filter(|e| {
-            e.name.to_lowercase().contains(&q)
-                || e.relative_path.to_lowercase().contains(&q)
+            e.name.to_lowercase().contains(&q) || e.relative_path.to_lowercase().contains(&q)
         })
         .take(50)
         .collect()

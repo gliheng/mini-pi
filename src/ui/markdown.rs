@@ -1,13 +1,17 @@
-use std::{collections::VecDeque, ops::Range, sync::{Arc, OnceLock}};
+use std::{
+    collections::VecDeque,
+    ops::Range,
+    sync::{Arc, OnceLock},
+};
 
 use gpui::{
-    ClipboardItem, Context, FontStyle, FontWeight, HighlightStyle, Image, ImageFormat, IntoElement, ParentElement, Render,
-    SharedString, StatefulInteractiveElement, StrikethroughStyle, Styled, StyledImage, StyledText, TextStyle, UnderlineStyle, Window, div, img, prelude::*,
-    px, rgb,
+    ClipboardItem, Context, FontStyle, FontWeight, HighlightStyle, Image, ImageFormat, IntoElement,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, StrikethroughStyle, Styled,
+    StyledImage, StyledText, TextStyle, UnderlineStyle, Window, div, img, prelude::*, px, rgb,
 };
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use syntect::easy::HighlightLines;
-use syntect::highlighting::{ThemeSet, Color as SyntectColor};
+use syntect::highlighting::{Color as SyntectColor, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 
@@ -55,7 +59,9 @@ fn highlight_code(
             line
         };
 
-        let highlighted = highlighter.highlight_line(trimmed_line, ss).unwrap_or_default();
+        let highlighted = highlighter
+            .highlight_line(trimmed_line, ss)
+            .unwrap_or_default();
         let mut line_text = String::new();
         let mut line_highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
 
@@ -70,9 +76,8 @@ fn highlight_code(
                 continue;
             }
 
-            let gpui_color = rgb(
-                (color.r as u32) * 0x10000 + (color.g as u32) * 0x100 + (color.b as u32),
-            );
+            let gpui_color =
+                rgb((color.r as u32) * 0x10000 + (color.g as u32) * 0x100 + (color.b as u32));
 
             line_highlights.push((
                 start..end,
@@ -112,20 +117,37 @@ impl MarkdownRenderer {
 
 #[derive(Debug, Clone)]
 enum InlineNode {
-    Text { text: SharedString },
-    Code { code: SharedString },
-    Emphasis { children: Vec<InlineNode> },
-    Strong { children: Vec<InlineNode> },
-    Strikethrough { children: Vec<InlineNode> },
+    Text {
+        text: SharedString,
+    },
+    Code {
+        code: SharedString,
+    },
+    Emphasis {
+        children: Vec<InlineNode>,
+    },
+    Strong {
+        children: Vec<InlineNode>,
+    },
+    Strikethrough {
+        children: Vec<InlineNode>,
+    },
     Link {
         children: Vec<InlineNode>,
         url: SharedString,
     },
-    Image { alt: SharedString, url: SharedString },
+    Image {
+        alt: SharedString,
+        url: SharedString,
+    },
     SoftBreak,
     HardBreak,
-    InlineHtml { html: SharedString },
-    TaskMarker { checked: bool },
+    InlineHtml {
+        html: SharedString,
+    },
+    TaskMarker {
+        checked: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -962,9 +984,11 @@ fn render_link_element(
         .flex()
         .flex_row()
         .children(render_inlines_as_elements(children, theme, Some(style)))
-        .on_click(move |_event: &gpui::ClickEvent, _window, cx: &mut gpui::App| {
-            let _ = cx.open_url(&url);
-        })
+        .on_click(
+            move |_event: &gpui::ClickEvent, _window, cx: &mut gpui::App| {
+                let _ = cx.open_url(&url);
+            },
+        )
         .into_any_element()
 }
 
@@ -989,7 +1013,8 @@ fn render_inlines_as_elements(
             return;
         }
         let styled = if let Some(style) = base_text_style {
-            StyledText::new(std::mem::take(text)).with_default_highlights(style, std::mem::take(highlights))
+            StyledText::new(std::mem::take(text))
+                .with_default_highlights(style, std::mem::take(highlights))
         } else {
             StyledText::new(std::mem::take(text)).with_highlights(std::mem::take(highlights))
         };
@@ -1020,26 +1045,38 @@ fn render_inlines_as_elements(
                 }
                 InlineNode::Emphasis { children } => {
                     append_padded_children_to_elements(
-                        text, highlights, elements, children,
+                        text,
+                        highlights,
+                        elements,
+                        children,
                         active_style.highlight(FontStyle::Italic.into()),
-                        theme, base_text_style,
+                        theme,
+                        base_text_style,
                     );
                 }
                 InlineNode::Strong { children } => {
                     append_padded_children_to_elements(
-                        text, highlights, elements, children,
+                        text,
+                        highlights,
+                        elements,
+                        children,
                         active_style.highlight(FontWeight(700.0).into()),
-                        theme, base_text_style,
+                        theme,
+                        base_text_style,
                     );
                 }
                 InlineNode::Strikethrough { children } => {
                     append_padded_children_to_elements(
-                        text, highlights, elements, children,
+                        text,
+                        highlights,
+                        elements,
+                        children,
                         active_style.highlight(HighlightStyle {
                             strikethrough: Some(StrikethroughStyle::default()),
                             ..Default::default()
                         }),
-                        theme, base_text_style,
+                        theme,
+                        base_text_style,
                     );
                 }
                 InlineNode::Link { children, url } => {
@@ -1060,15 +1097,13 @@ fn render_inlines_as_elements(
                     };
                     let fallback_bg = theme.code_inline_bg;
                     let fallback_color = theme.image_text;
-                    let image_element = if let Some(source) = image_source_from_url(url) {
-                        div()
-                            .min_w_0()
-                            .max_w_full()
-                            .child(
-                                img(source)
-                                    .max_w_full()
-                                    .rounded_md()
-                                    .with_fallback(move || {
+                    let image_element =
+                        if let Some(source) = image_source_from_url(url) {
+                            div()
+                                .min_w_0()
+                                .max_w_full()
+                                .child(img(source).max_w_full().rounded_md().with_fallback(
+                                    move || {
                                         div()
                                             .px_2()
                                             .py_1()
@@ -1078,20 +1113,20 @@ fn render_inlines_as_elements(
                                             .text_xs()
                                             .child(alt_text.clone())
                                             .into_any_element()
-                                    }),
-                            )
-                            .into_any_element()
-                    } else {
-                        div()
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .bg(fallback_bg)
-                            .text_color(fallback_color)
-                            .text_xs()
-                            .child(alt_text)
-                            .into_any_element()
-                    };
+                                    },
+                                ))
+                                .into_any_element()
+                        } else {
+                            div()
+                                .px_2()
+                                .py_1()
+                                .rounded_md()
+                                .bg(fallback_bg)
+                                .text_color(fallback_color)
+                                .text_xs()
+                                .child(alt_text)
+                                .into_any_element()
+                        };
                     elements.push(image_element);
                 }
                 InlineNode::SoftBreak => {
@@ -1132,7 +1167,15 @@ fn render_inlines_as_elements(
             return;
         }
         append_inline_padding(text, highlights, style);
-        collect(children, style, text, highlights, elements, theme, base_text_style);
+        collect(
+            children,
+            style,
+            text,
+            highlights,
+            elements,
+            theme,
+            base_text_style,
+        );
         append_inline_padding(text, highlights, style);
     }
 
@@ -1161,7 +1204,10 @@ fn heading_style(level: HeadingLevel) -> (f32, FontWeight) {
 }
 
 fn render_blocks(blocks: &[BlockNode], theme: &MarkdownTheme) -> Vec<gpui::AnyElement> {
-    blocks.iter().map(|block| render_block(block, theme)).collect()
+    blocks
+        .iter()
+        .map(|block| render_block(block, theme))
+        .collect()
 }
 
 fn render_block(block: &BlockNode, theme: &MarkdownTheme) -> gpui::AnyElement {
@@ -1259,7 +1305,9 @@ fn render_block(block: &BlockNode, theme: &MarkdownTheme) -> gpui::AnyElement {
                     .flex_col()
                     .overflow_x_scroll()
                     .children(highlighted.into_iter().map(|(line_text, line_highlights)| {
-                        div().whitespace_nowrap().child(StyledText::new(line_text).with_highlights(line_highlights))
+                        div()
+                            .whitespace_nowrap()
+                            .child(StyledText::new(line_text).with_highlights(line_highlights))
                     }))
             };
 
@@ -1297,9 +1345,15 @@ fn render_block(block: &BlockNode, theme: &MarkdownTheme) -> gpui::AnyElement {
                                 .text_color(theme.button_text)
                                 .cursor_pointer()
                                 .child("Copy")
-                                .on_click(move |_event: &gpui::ClickEvent, _window, cx: &mut gpui::App| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(code_for_copy.to_string()));
-                                }),
+                                .on_click(
+                                    move |_event: &gpui::ClickEvent,
+                                          _window,
+                                          cx: &mut gpui::App| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            code_for_copy.to_string(),
+                                        ));
+                                    },
+                                ),
                         ),
                 )
                 .child(code_content)
@@ -1333,7 +1387,12 @@ fn render_block(block: &BlockNode, theme: &MarkdownTheme) -> gpui::AnyElement {
                     .flex()
                     .flex_row()
                     .gap_1()
-                    .child(div().text_color(theme.list_marker).min_w(px(16.)).child(marker))
+                    .child(
+                        div()
+                            .text_color(theme.list_marker)
+                            .min_w(px(16.))
+                            .child(marker),
+                    )
                     .child(div().flex_1().children(render_blocks(item_blocks, theme)))
                     .into_any_element()
             }))
@@ -1425,7 +1484,9 @@ fn strip_html_tags(html: &str) -> String {
 
 impl Render for MarkdownRenderer {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let blocks = self.parsed.get_or_insert_with(|| parse_markdown(&self.content));
+        let blocks = self
+            .parsed
+            .get_or_insert_with(|| parse_markdown(&self.content));
         let theme = default_theme();
 
         div()
@@ -1515,7 +1576,13 @@ mod tests {
 
         assert_eq!(blocks.len(), 1);
 
-        let BlockNode::List { ordered, start, items, .. } = &blocks[0] else {
+        let BlockNode::List {
+            ordered,
+            start,
+            items,
+            ..
+        } = &blocks[0]
+        else {
             panic!("expected top-level list");
         };
 
@@ -1548,7 +1615,13 @@ mod tests {
         let source = "| Feature | Status |\n|---------|--------|\n| **Bold** | *Italic* |\n| `Code` | [Link](https://example.com) |";
         let blocks = parse_markdown(source);
 
-        assert_eq!(blocks.len(), 1, "expected exactly 1 block, got {}: {:?}", blocks.len(), blocks);
+        assert_eq!(
+            blocks.len(),
+            1,
+            "expected exactly 1 block, got {}: {:?}",
+            blocks.len(),
+            blocks
+        );
 
         let BlockNode::Table { headers, rows, .. } = &blocks[0] else {
             panic!("expected table, got: {:?}", blocks[0]);
@@ -1560,20 +1633,31 @@ mod tests {
         // Check that rows parse with inline formatting (headers may be empty due to pulldown-cmark behavior)
         assert!(!rows.is_empty(), "expected non-empty rows");
         let first_row = &rows[0];
-        assert_eq!(first_row.len(), 2, "expected 2 cells in first row, got: {:?}", first_row);
+        assert_eq!(
+            first_row.len(),
+            2,
+            "expected 2 cells in first row, got: {:?}",
+            first_row
+        );
 
         // Check that bold cell has Strong inline node
         let bold_cell = &first_row[0];
         assert!(
-            bold_cell.iter().any(|inline| matches!(inline, InlineNode::Strong { .. })),
-            "Expected bold cell to contain Strong inline node, got: {:?}", bold_cell
+            bold_cell
+                .iter()
+                .any(|inline| matches!(inline, InlineNode::Strong { .. })),
+            "Expected bold cell to contain Strong inline node, got: {:?}",
+            bold_cell
         );
 
         // Check that italic cell has Emphasis inline node
         let italic_cell = &first_row[1];
         assert!(
-            italic_cell.iter().any(|inline| matches!(inline, InlineNode::Emphasis { .. })),
-            "Expected italic cell to contain Emphasis inline node, got: {:?}", italic_cell
+            italic_cell
+                .iter()
+                .any(|inline| matches!(inline, InlineNode::Emphasis { .. })),
+            "Expected italic cell to contain Emphasis inline node, got: {:?}",
+            italic_cell
         );
     }
 
@@ -1588,14 +1672,18 @@ mod tests {
             })
             .collect();
         assert_eq!(levels.len(), 6, "expected 6 heading blocks");
-        assert_eq!(levels, vec![
-            HeadingLevel::H1,
-            HeadingLevel::H2,
-            HeadingLevel::H3,
-            HeadingLevel::H4,
-            HeadingLevel::H5,
-            HeadingLevel::H6,
-        ], "heading levels should be distinct");
+        assert_eq!(
+            levels,
+            vec![
+                HeadingLevel::H1,
+                HeadingLevel::H2,
+                HeadingLevel::H3,
+                HeadingLevel::H4,
+                HeadingLevel::H5,
+                HeadingLevel::H6,
+            ],
+            "heading levels should be distinct"
+        );
     }
 
     #[test]

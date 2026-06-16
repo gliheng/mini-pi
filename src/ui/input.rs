@@ -343,8 +343,11 @@ impl TextInput {
         self.cursor_visible = true;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(Duration::from_millis(530)).await;
-            this.update(cx, |this, cx| this.blink_cursor(epoch, cx)).ok();
+            cx.background_executor()
+                .timer(Duration::from_millis(530))
+                .await;
+            this.update(cx, |this, cx| this.blink_cursor(epoch, cx))
+                .ok();
         })
         .detach();
     }
@@ -364,8 +367,11 @@ impl TextInput {
         self.blink_epoch += 1;
         let epoch = self.blink_epoch;
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(Duration::from_millis(500)).await;
-            this.update(cx, |this, cx| this.resume_blinking(epoch, cx)).ok();
+            cx.background_executor()
+                .timer(Duration::from_millis(500))
+                .await;
+            this.update(cx, |this, cx| this.resume_blinking(epoch, cx))
+                .ok();
         })
         .detach();
     }
@@ -385,8 +391,11 @@ impl TextInput {
         self.blink_epoch += 1;
         let next_epoch = self.blink_epoch;
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(Duration::from_millis(530)).await;
-            this.update(cx, |this, cx| this.blink_cursor(next_epoch, cx)).ok();
+            cx.background_executor()
+                .timer(Duration::from_millis(530))
+                .await;
+            this.update(cx, |this, cx| this.blink_cursor(next_epoch, cx))
+                .ok();
         })
         .detach();
     }
@@ -581,7 +590,10 @@ impl Element for TextElement {
         let (display_text, text_color) = if content.is_empty() {
             (input.placeholder.clone(), hsla(0., 0., 1., 0.3))
         } else if input.password_mode {
-            let bullets: SharedString = std::iter::repeat('*').take(content.chars().count()).collect::<String>().into();
+            let bullets: SharedString = std::iter::repeat('*')
+                .take(content.chars().count())
+                .collect::<String>()
+                .into();
             (bullets, hsla(0., 0., 1., 1.))
         } else {
             (content, hsla(0., 0., 1., 1.))

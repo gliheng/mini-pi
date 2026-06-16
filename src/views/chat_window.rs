@@ -7,10 +7,10 @@ use std::{
 use crate::views::title_bar::{TitleBarEvent, TitleBarVariant};
 use futures::StreamExt;
 use gpui::{
-    Bounds, ClipboardItem, Context, FocusHandle, Focusable, IntoElement, InteractiveElement,
-    KeyDownEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
-    PathPromptOptions, Render, ScrollHandle, SharedString, Styled, Task, Window, div, prelude::*,
-    canvas, fill, point, px, rgb, svg,
+    Bounds, ClipboardItem, Context, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    KeyDownEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, PathPromptOptions,
+    Pixels, Render, ScrollHandle, SharedString, Styled, Task, Window, canvas, div, fill, point,
+    prelude::*, px, rgb, svg,
 };
 use uuid::Uuid;
 
@@ -20,10 +20,10 @@ use crate::core::app::AppStore;
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::data::store::{Store, ThreadMeta, WorkspaceMeta};
 use crate::rpc::pi_rpc::{BridgeEvent, PiRpc};
-use crate::ui::text_area::TextArea;
 use crate::ui::dropdown::{Direction, Dropdown, DropdownEvent, DropdownItem};
 use crate::ui::loader::{loader, text_loader};
 use crate::ui::markdown::MarkdownRenderer;
+use crate::ui::text_area::TextArea;
 use crate::utils::format::truncate_str;
 use crate::utils::llm::generate_title;
 use crate::views::reasoning::Reasoning;
@@ -59,6 +59,10 @@ pub struct ChatWindow {
     pub pi_restart_count: u32,
     pub editing_message_id: Option<String>,
     pub inline_edit_input: Option<gpui::Entity<TextArea>>,
+    /// `(ui_message_id, new_content)` waiting for `get_messages` to return the SDK entry id.
+    pub pending_fork: Option<(String, String)>,
+    /// Set after an edited prompt is sent so entry ids are refreshed once streaming ends.
+    pub refresh_entry_ids_after_streaming: bool,
 }
 
 impl ChatWindow {
@@ -89,8 +93,7 @@ impl ChatWindow {
         let selected_model: Option<String> = thread
             .and_then(|t| t.model.clone())
             .or_else(|| cx.global::<AppStore>().config.default_model.clone());
-        let selected_thinking_level: Option<String> = thread
-            .and_then(|t| t.thinking_level.clone());
+        let selected_thinking_level: Option<String> = thread.and_then(|t| t.thinking_level.clone());
 
         let mut workspaces = store.list_workspaces().unwrap_or_default();
         if workspaces.is_empty() {
@@ -102,7 +105,11 @@ impl ChatWindow {
             }
         }
         Self::sort_workspaces(&mut workspaces);
-        let config_workspace_name = cx.global::<AppStore>().config.default_workspace_name.clone();
+        let config_workspace_name = cx
+            .global::<AppStore>()
+            .config
+            .default_workspace_name
+            .clone();
         let selected_workspace_id = config_workspace_name
             .and_then(|name| workspaces.iter().find(|ws| ws.name == name).map(|ws| ws.id))
             .or_else(|| workspaces.first().map(|ws| ws.id));
@@ -161,7 +168,7 @@ impl ChatWindow {
             session_file,
             title_bar: title_bar.clone(),
             messages: vec![],
-chat_input,
+            chat_input,
             focus_handle: cx.focus_handle(),
             state: ChatState::Idle,
             store: store.clone(),
@@ -185,6 +192,8 @@ chat_input,
             pi_restart_count: 0,
             editing_message_id: None,
             inline_edit_input: None,
+            pending_fork: None,
+            refresh_entry_ids_after_streaming: false,
         };
 
         if is_restoring {
@@ -266,13 +275,22 @@ chat_input,
                     }
                 });
                 if let Some(thread_id) = this.thread_id {
-                    let _ =
-                        this.store
-                            .update_thread(thread_id, None, None, None, Some(Some(id)), None, None);
+                    let _ = this.store.update_thread(
+                        thread_id,
+                        None,
+                        None,
+                        None,
+                        Some(Some(id)),
+                        None,
+                        None,
+                    );
                 }
                 if let Some(ref mut pi) = this.pi {
                     if let Some((provider, model)) = parse_model_id(id) {
-                        println!("[mini-pi] setting model: provider={} model={}", provider, model);
+                        println!(
+                            "[mini-pi] setting model: provider={} model={}",
+                            provider, model
+                        );
                         if let Err(e) = pi.send_set_model(provider, model, None) {
                             eprintln!("[mini-pi] send_set_model failed: {}", e);
                         }
@@ -499,6 +517,129 @@ chat_input,
         true
     }
 
+    /// Replace the current message list with messages loaded from the SDK session.
+    fn load_messages(
+        &mut self,
+        messages: Vec<crate::rpc::pi_rpc::LoadedMessage>,
+        cx: &mut Context<Self>,
+    ) {
+        eprintln!("[mini-pi] loaded {} messages from history", messages.len());
+        self.messages.clear();
+        for msg in messages {
+            match msg.role.as_str() {
+                "user" => {
+                    let mut parts = vec![];
+                    for part in msg.parts {
+                        if let crate::rpc::pi_rpc::LoadedPart::Text { text } = part {
+                            parts.push(MessagePart::Text {
+                                text: if text.is_empty() {
+                                    SharedString::from("(empty)")
+                                } else {
+                                    text.into()
+                                },
+                                state: Some(PartState::Done),
+                            });
+                        }
+                    }
+                    if !parts.is_empty() {
+                        self.messages.push(Message {
+                            id: Uuid::new_v4().to_string(),
+                            entry_id: msg.id,
+                            role: Role::User,
+                            parts,
+                        });
+                    }
+                }
+                "assistant" => {
+                    let mut parts = vec![];
+                    for part in msg.parts {
+                        match part {
+                            crate::rpc::pi_rpc::LoadedPart::Text { text } => {
+                                parts.push(MessagePart::Text {
+                                    text: text.into(),
+                                    state: Some(PartState::Done),
+                                });
+                            }
+                            crate::rpc::pi_rpc::LoadedPart::Thinking { text } => {
+                                parts.push(MessagePart::Reasoning {
+                                    text: text.into(),
+                                    state: Some(PartState::Done),
+                                    provider_metadata: None,
+                                });
+                            }
+                            crate::rpc::pi_rpc::LoadedPart::ToolCall { name, args } => {
+                                parts.push(MessagePart::ToolCall {
+                                    tool_call_id: SharedString::from(""),
+                                    name: name.into(),
+                                    args: args.into(),
+                                    state: Some(PartState::Done),
+                                });
+                            }
+                            crate::rpc::pi_rpc::LoadedPart::ToolResult { name, output } => {
+                                parts.push(MessagePart::ToolResult {
+                                    tool_call_id: SharedString::from(""),
+                                    name: name.into(),
+                                    output: output.into(),
+                                    state: Some(PartState::Done),
+                                });
+                            }
+                        }
+                    }
+                    if !parts.is_empty() {
+                        self.messages.push(Message {
+                            id: Uuid::new_v4().to_string(),
+                            entry_id: msg.id,
+                            role: Role::Assistant,
+                            parts,
+                        });
+                    }
+                }
+                "tool" => {
+                    for part in msg.parts {
+                        if let crate::rpc::pi_rpc::LoadedPart::ToolResult { name, output } = part {
+                            if let Some(last_msg) = self.messages.last_mut() {
+                                if matches!(last_msg.role, Role::Assistant) {
+                                    last_msg.parts.push(MessagePart::ToolResult {
+                                        tool_call_id: SharedString::from(""),
+                                        name: name.into(),
+                                        output: output.into(),
+                                        state: Some(PartState::Done),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.state = ChatState::Idle;
+        cx.notify();
+    }
+
+    /// Update `entry_id` on existing UI messages by matching role and order.
+    fn update_entry_ids(&mut self, loaded: &[crate::rpc::pi_rpc::LoadedMessage]) {
+        use std::collections::HashMap;
+        let mut by_role: HashMap<&str, Vec<&crate::rpc::pi_rpc::LoadedMessage>> = HashMap::new();
+        for msg in loaded {
+            by_role.entry(msg.role.as_str()).or_default().push(msg);
+        }
+        let mut indices: HashMap<&str, usize> = HashMap::new();
+        for ui_msg in self.messages.iter_mut() {
+            let role_str = match ui_msg.role {
+                Role::User => "user",
+                Role::Assistant => "assistant",
+            };
+            let idx = indices.entry(role_str).or_insert(0);
+            if let Some(loaded_msg) = by_role.get(role_str).and_then(|v| v.get(*idx)) {
+                if ui_msg.entry_id.is_none() {
+                    ui_msg.entry_id = loaded_msg.id.clone();
+                }
+                *idx += 1;
+            }
+        }
+    }
+
     pub fn handle_bridge_event(&mut self, event: BridgeEvent, cx: &mut Context<Self>) {
         eprintln!("[mini-pi] bridge event: {:?}", event);
         match event {
@@ -506,14 +647,15 @@ chat_input,
                 self.state = ChatState::Streaming;
             }
             BridgeEvent::MessageStart { message } => {
-                let id = message
+                let entry_id = message
                     .as_ref()
                     .and_then(|m| m.get("id"))
                     .and_then(|id| id.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| Uuid::new_v4().to_string());
+                    .map(|s| s.to_string());
+                let id = Uuid::new_v4().to_string();
                 self.messages.push(Message {
                     id,
+                    entry_id,
                     role: Role::Assistant,
                     parts: vec![],
                 });
@@ -534,6 +676,13 @@ chat_input,
                     }
                 }
                 self.state = ChatState::Idle;
+                if self.refresh_entry_ids_after_streaming {
+                    if let Some(ref mut pi) = self.pi {
+                        let _ = pi.send_get_messages(None);
+                    } else {
+                        self.refresh_entry_ids_after_streaming = false;
+                    }
+                }
             }
             BridgeEvent::TextDelta { content } => {
                 if let Some(msg) = self.messages.iter_mut().find(|m| {
@@ -820,10 +969,18 @@ chat_input,
                     );
                 }
             }
-            BridgeEvent::Response { command, success, data, error, .. } => {
+            BridgeEvent::Response {
+                command,
+                success,
+                data,
+                error,
+                ..
+            } => {
                 if command == "create_session" && success {
                     if let Some(ref data_val) = data {
-                        if let Some(session_file) = data_val.get("sessionFile").and_then(|s| s.as_str()) {
+                        if let Some(session_file) =
+                            data_val.get("sessionFile").and_then(|s| s.as_str())
+                        {
                             let file_name = std::path::Path::new(session_file)
                                 .file_name()
                                 .and_then(|n| n.to_str())
@@ -857,10 +1014,64 @@ chat_input,
                         let err = error.as_deref().unwrap_or("failed to load messages");
                         eprintln!("[mini-pi] get_messages failed: {}", err);
                         self.state = ChatState::Error(format!("Load failed: {}", err).into());
+                        self.pending_fork = None;
+                        self.refresh_entry_ids_after_streaming = false;
+                    } else if let Some(ref data_val) = data {
+                        if let Some(messages_val) = data_val.get("messages") {
+                            if let Some(loaded) =
+                                crate::rpc::pi_rpc::parse_loaded_messages(messages_val)
+                            {
+                                if self.pending_fork.is_some() {
+                                    self.update_entry_ids(&loaded);
+                                    if let Some((msg_id, content)) = self.pending_fork.take() {
+                                        if let Some(msg) =
+                                            self.messages.iter().find(|m| m.id == msg_id)
+                                        {
+                                            if msg.entry_id.is_some() {
+                                                self.send_edited_prompt(msg_id, content.into(), cx);
+                                            } else {
+                                                eprintln!(
+                                                    "[mini-pi] could not resolve entry id for edited message"
+                                                );
+                                                self.state = ChatState::Error(
+                                                    "Could not resolve message entry id".into(),
+                                                );
+                                            }
+                                        } else {
+                                            eprintln!(
+                                                "[mini-pi] pending fork target message disappeared"
+                                            );
+                                            self.state =
+                                                ChatState::Error("Edited message not found".into());
+                                        }
+                                    }
+                                } else if self.refresh_entry_ids_after_streaming {
+                                    self.refresh_entry_ids_after_streaming = false;
+                                    self.update_entry_ids(&loaded);
+                                } else {
+                                    self.load_messages(loaded, cx);
+                                }
+                            } else {
+                                self.state = ChatState::Idle;
+                            }
+                        } else {
+                            self.state = ChatState::Idle;
+                        }
                     } else {
-                        // If the response carried data.messages but parse_messages
-                        // returned None, clear the loading state so we don't spin.
                         self.state = ChatState::Idle;
+                    }
+                }
+                if command == "export_html" {
+                    if success {
+                        if let Some(ref data_val) = data {
+                            if let Some(path) = data_val.get("path").and_then(|p| p.as_str()) {
+                                eprintln!("[mini-pi] session exported to: {}", path);
+                            }
+                        }
+                    } else {
+                        let err = error.as_deref().unwrap_or("export failed");
+                        eprintln!("[mini-pi] export_html failed: {}", err);
+                        self.state = ChatState::Error(format!("Export failed: {}", err).into());
                     }
                 }
                 if command == "get_commands" && success {
@@ -895,101 +1106,6 @@ chat_input,
                     }
                 }
             }
-            BridgeEvent::MessagesLoaded { messages } => {
-                eprintln!("[mini-pi] loaded {} messages from history", messages.len());
-                for msg in messages {
-                    match msg.role.as_str() {
-                        "user" => {
-                            let mut parts = vec![];
-                            for part in msg.parts {
-                                match part {
-                                    crate::rpc::pi_rpc::LoadedPart::Text { text } => {
-                                        parts.push(MessagePart::Text {
-                                            text: if text.is_empty() {
-                                                SharedString::from("(empty)")
-                                            } else {
-                                                text.into()
-                                            },
-                                            state: Some(PartState::Done),
-                                        });
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            if !parts.is_empty() {
-                                self.messages.push(Message {
-                                    id: msg.id.unwrap_or_else(|| Uuid::new_v4().to_string()),
-                                    role: Role::User,
-                                    parts,
-                                });
-                            }
-                        }
-                        "assistant" => {
-                            let mut parts = vec![];
-                            for part in msg.parts {
-                                match part {
-                                    crate::rpc::pi_rpc::LoadedPart::Text { text } => {
-                                        parts.push(MessagePart::Text {
-                                            text: text.into(),
-                                            state: Some(PartState::Done),
-                                        });
-                                    }
-                                    crate::rpc::pi_rpc::LoadedPart::Thinking { text } => {
-                                        parts.push(MessagePart::Reasoning {
-                                            text: text.into(),
-                                            state: Some(PartState::Done),
-                                            provider_metadata: None,
-                                        });
-                                    }
-                                    crate::rpc::pi_rpc::LoadedPart::ToolCall { name, args } => {
-                                        parts.push(MessagePart::ToolCall {
-                                            tool_call_id: SharedString::from(""),
-                                            name: name.into(),
-                                            args: args.into(),
-                                            state: Some(PartState::Done),
-                                        });
-                                    }
-                                    crate::rpc::pi_rpc::LoadedPart::ToolResult { name, output } => {
-                                        parts.push(MessagePart::ToolResult {
-                                            tool_call_id: SharedString::from(""),
-                                            name: name.into(),
-                                            output: output.into(),
-                                            state: Some(PartState::Done),
-                                        });
-                                    }
-                                }
-                            }
-                            if !parts.is_empty() {
-                                self.messages.push(Message {
-                                    id: msg.id.unwrap_or_else(|| Uuid::new_v4().to_string()),
-                                    role: Role::Assistant,
-                                    parts,
-                                });
-                            }
-                        }
-                        "tool" => {
-                            for part in msg.parts {
-                                if let crate::rpc::pi_rpc::LoadedPart::ToolResult { name, output } =
-                                    part
-                                {
-                                    if let Some(last_msg) = self.messages.last_mut() {
-                                        if matches!(last_msg.role, Role::Assistant) {
-                                            last_msg.parts.push(MessagePart::ToolResult {
-                                                tool_call_id: SharedString::from(""),
-                                                name: name.into(),
-                                                output: output.into(),
-                                                state: Some(PartState::Done),
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                self.state = ChatState::Idle;
-            }
         }
         if matches!(self.state, ChatState::Streaming) && self.scroll_locked {
             self.scroll_handle.scroll_to_bottom();
@@ -999,7 +1115,8 @@ chat_input,
 
     pub fn send_message(&mut self, _: &SendMessage, _window: &mut Window, cx: &mut Context<Self>) {
         if self.chat_input.read(cx).is_just_selected_mention() {
-            self.chat_input.update(cx, |ci, _| ci.clear_just_selected_mention());
+            self.chat_input
+                .update(cx, |ci, _| ci.clear_just_selected_mention());
             return;
         }
         if self.chat_input.read(cx).is_popup_visible() {
@@ -1034,7 +1151,6 @@ chat_input,
                 self.clear_inline_edit_state(cx);
                 return;
             }
-            let entry_id = self.messages[edit_idx].id.clone();
             // Update the edited message text.
             self.messages[edit_idx].parts = vec![MessagePart::Text {
                 text: content.clone(),
@@ -1046,7 +1162,7 @@ chat_input,
             self.reasoning_displays.truncate(edit_idx + 1);
             self.markdown_displays.truncate(edit_idx + 1);
             self.clear_inline_edit_state(cx);
-            self.send_edited_prompt(entry_id, content, cx);
+            self.send_edited_prompt(editing_id, content, cx);
             return;
         }
 
@@ -1058,6 +1174,7 @@ chat_input,
 
         self.messages.push(Message {
             id: Uuid::new_v4().to_string(),
+            entry_id: None,
             role: Role::User,
             parts: vec![MessagePart::Text {
                 text: content.clone(),
@@ -1110,9 +1227,15 @@ chat_input,
                     Ok(title) => {
                         let _ = weak.update(cx, |window, cx| {
                             if let Some(tid) = window.thread_id {
-                                let _ = window
-                                    .store
-                                    .update_thread(tid, Some(&title), None, None, None, None, None);
+                                let _ = window.store.update_thread(
+                                    tid,
+                                    Some(&title),
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                );
                             }
                             window.title_bar.update(cx, |tb, _| {
                                 tb.title = title.into();
@@ -1159,7 +1282,12 @@ chat_input,
         cx.notify();
     }
 
-    fn send_edited_prompt(&mut self, entry_id: String, content: SharedString, cx: &mut Context<Self>) {
+    fn send_edited_prompt(
+        &mut self,
+        message_id: String,
+        content: SharedString,
+        cx: &mut Context<Self>,
+    ) {
         if self.pi.is_none() {
             // Spawn without requesting history; we already have the local
             // message list and are about to fork from it.
@@ -1167,6 +1295,24 @@ chat_input,
                 return;
             }
         }
+
+        let Some(edit_idx) = self.messages.iter().position(|m| m.id == message_id) else {
+            eprintln!("[mini-pi] edited message {} not found", message_id);
+            return;
+        };
+
+        // If we don't know the SDK entry id yet, ask the bridge for the current
+        // session messages and defer the fork until the response arrives.
+        if self.messages[edit_idx].entry_id.is_none() {
+            self.pending_fork = Some((message_id, content.to_string()));
+            if let Some(ref mut pi) = self.pi {
+                let _ = pi.send_get_messages(None);
+            }
+            cx.notify();
+            return;
+        }
+
+        let entry_id = self.messages[edit_idx].entry_id.clone().unwrap();
 
         // Ensure a thread row exists.
         if self.thread_id.is_none() {
@@ -1205,6 +1351,7 @@ chat_input,
             let _ = pi.send_fork(&entry_id, None);
             let _ = pi.send_prompt(&content);
         }
+        self.refresh_entry_ids_after_streaming = true;
         cx.notify();
     }
 
@@ -1264,12 +1411,7 @@ chat_input,
         cx.notify();
     }
 
-    fn start_edit_message(
-        &mut self,
-        msg_id: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn start_edit_message(&mut self, msg_id: String, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(msg) = self.messages.iter().find(|m| m.id == msg_id) {
             if let Some(MessagePart::Text { text, .. }) = msg.parts.first() {
                 self.editing_message_id = Some(msg_id);
@@ -1311,9 +1453,12 @@ chat_input,
                     .left(px(-5000.))
                     .w(px(10000.))
                     .h(px(10000.))
-                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, _, cx| {
-                        this.chat_input.update(cx, |ci, cx| ci.close_popup(cx));
-                    })),
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.chat_input.update(cx, |ci, cx| ci.close_popup(cx));
+                        }),
+                    ),
             )
             .child(
                 div()
@@ -1342,7 +1487,11 @@ chat_input,
                     })
                     .children(items.iter().enumerate().map(|(idx, item)| {
                         let is_highlighted = idx == highlighted;
-                        let icon = if item.is_dir { "folder.svg" } else { "file.svg" };
+                        let icon = if item.is_dir {
+                            "folder.svg"
+                        } else {
+                            "file.svg"
+                        };
                         let label: SharedString = item.name.clone().into();
                         let detail: SharedString = if item.relative_path != item.name {
                             item.relative_path.clone().into()
@@ -1365,7 +1514,11 @@ chat_input,
                                 svg()
                                     .path(icon)
                                     .size(px(14.))
-                                    .text_color(if is_highlighted { rgb(0x6366f1) } else { rgb(0x888888) }),
+                                    .text_color(if is_highlighted {
+                                        rgb(0x6366f1)
+                                    } else {
+                                        rgb(0x888888)
+                                    }),
                             )
                             .child(
                                 div()
@@ -1376,15 +1529,16 @@ chat_input,
                                     .child(
                                         div()
                                             .text_sm()
-                                            .text_color(if is_highlighted { rgb(0xffffff) } else { rgb(0xcccccc) })
+                                            .text_color(if is_highlighted {
+                                                rgb(0xffffff)
+                                            } else {
+                                                rgb(0xcccccc)
+                                            })
                                             .child(label),
                                     )
                                     .when(!detail.is_empty(), |s| {
                                         s.child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(rgb(0x666666))
-                                                .child(detail),
+                                            div().text_xs().text_color(rgb(0x666666)).child(detail),
                                         )
                                     }),
                             )
@@ -1427,10 +1581,11 @@ chat_input,
                         }
 
                         let content_height = viewport_height + max_scroll;
-                        let thumb_height =
-                            ((viewport_height / content_height) * track_height).clamp(px(36.), track_height);
+                        let thumb_height = ((viewport_height / content_height) * track_height)
+                            .clamp(px(36.), track_height);
                         let progress = (-scroll_handle.offset().y / max_scroll).clamp(0., 1.);
-                        let thumb_top = track_bounds.top() + (track_height - thumb_height) * progress;
+                        let thumb_top =
+                            track_bounds.top() + (track_height - thumb_height) * progress;
                         let thumb_bounds = Bounds::from_corners(
                             point(track_bounds.left(), thumb_top),
                             point(track_bounds.right(), thumb_top + thumb_height),
@@ -1465,7 +1620,8 @@ chat_input,
                                     return;
                                 }
 
-                                let Some(drag_offset_y) = entity.read(cx).scrollbar_drag_offset_y else {
+                                let Some(drag_offset_y) = entity.read(cx).scrollbar_drag_offset_y
+                                else {
                                     return;
                                 };
 
@@ -1474,9 +1630,12 @@ chat_input,
                                     return;
                                 }
 
-                                let thumb_top = (ev.position.y - drag_offset_y)
-                                    .clamp(track_bounds.top(), track_bounds.bottom() - thumb_height);
-                                let progress = ((thumb_top - track_bounds.top()) / draggable_height)
+                                let thumb_top = (ev.position.y - drag_offset_y).clamp(
+                                    track_bounds.top(),
+                                    track_bounds.bottom() - thumb_height,
+                                );
+                                let progress = ((thumb_top - track_bounds.top())
+                                    / draggable_height)
                                     .clamp(0., 1.);
                                 let offset_y = (max_scroll * progress).clamp(px(0.), max_scroll);
                                 scroll_handle.set_offset(point(px(0.), -offset_y));
@@ -1514,9 +1673,12 @@ chat_input,
                     .left(px(-5000.))
                     .w(px(10000.))
                     .h(px(10000.))
-                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, _, cx| {
-                        this.chat_input.update(cx, |ci, cx| ci.close_popup(cx));
-                    })),
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.chat_input.update(cx, |ci, cx| ci.close_popup(cx));
+                        }),
+                    ),
             )
             .child(
                 div()
@@ -1546,13 +1708,16 @@ chat_input,
                     .children(items.iter().enumerate().map(|(idx, item)| {
                         let is_highlighted = idx == highlighted;
                         let label: SharedString = format!("/{}", item.name).into();
-                        let detail: SharedString = item.description.clone().unwrap_or_default().into();
+                        let detail: SharedString =
+                            item.description.clone().unwrap_or_default().into();
                         let source_label: SharedString = (match item.source.as_str() {
                             "extension" => "Extension",
                             "prompt" => "Prompt",
                             "skill" => "Skill",
                             _ => &item.source,
-                        }).to_string().into();
+                        })
+                        .to_string()
+                        .into();
                         let item_idx = idx;
                         div()
                             .id(SharedString::from(format!("command-{}", idx)))
@@ -1570,13 +1735,12 @@ chat_input,
                                     .w(px(160.))
                                     .overflow_hidden()
                                     .text_sm()
-                                    .text_color(if is_highlighted { rgb(0xffffff) } else { rgb(0xcccccc) })
-                                    .child(
-                                        div()
-                                            .whitespace_nowrap()
-                                            .text_ellipsis()
-                                            .child(label),
-                                    ),
+                                    .text_color(if is_highlighted {
+                                        rgb(0xffffff)
+                                    } else {
+                                        rgb(0xcccccc)
+                                    })
+                                    .child(div().whitespace_nowrap().text_ellipsis().child(label)),
                             )
                             .child(
                                 div()

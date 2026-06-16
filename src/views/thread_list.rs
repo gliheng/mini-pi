@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyWindowHandle, Bounds, BoxShadow, Context, FocusHandle, Focusable, Hsla,
-    IntoElement, ParentElement, Render, SharedString, Styled, Window, div,
-    linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size, svg,
-    BorrowAppContext,
+    AnyWindowHandle, BorrowAppContext, Bounds, BoxShadow, Context, FocusHandle, Focusable, Hsla,
+    IntoElement, ParentElement, Render, SharedString, Styled, Window, div, linear_color_stop,
+    linear_gradient, point, prelude::*, px, rgb, size, svg,
 };
 
 use crate::auth::state::{self, AuthState};
@@ -76,15 +75,18 @@ impl Render for ThreadItem {
                 let store = this.store.clone();
                 let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
 
-                let existing_window: Option<AnyWindowHandle> = cx
-                    .update_global::<AppStore, _>(|app_store, _| {
+                let existing_window: Option<AnyWindowHandle> =
+                    cx.update_global::<AppStore, _>(|app_store, _| {
                         app_store.thread_windows.get(&thread_id).copied()
                     });
 
                 if let Some(handle) = existing_window {
-                    let still_open = handle.update(cx, |_view: gpui::AnyView, window: &mut Window, _app: &mut gpui::App| {
-                        window.activate_window();
-                    });
+                    let still_open = handle.update(
+                        cx,
+                        |_view: gpui::AnyView, window: &mut Window, _app: &mut gpui::App| {
+                            window.activate_window();
+                        },
+                    );
                     if still_open.is_ok() {
                         return;
                     }
@@ -311,19 +313,21 @@ impl ThreadList {
                                 cx.spawn(async move |_, cx| {
                                     let result = smol::unblock(move || {
                                         settings_sync::sync_changes(&access_token, &user_id)
-                                    }).await;
-                                    let _ = cx.update_global(|app: &mut AppStore, _| {
-                                        match result {
+                                    })
+                                    .await;
+                                    let _ =
+                                        cx.update_global(|app: &mut AppStore, _| match result {
                                             Ok(meta) => {
                                                 app.sync_meta = meta;
                                                 app.sync_status = settings_sync::SyncStatus::Synced;
                                             }
                                             Err(e) => {
-                                                app.sync_status = settings_sync::SyncStatus::Error(e);
+                                                app.sync_status =
+                                                    settings_sync::SyncStatus::Error(e);
                                             }
-                                        }
-                                    });
-                                }).detach();
+                                        });
+                                })
+                                .detach();
                             }
                         }
                     }
@@ -332,8 +336,9 @@ impl ThreadList {
                 cx.notify();
             });
 
-        let import_prompt_subscription =
-            cx.subscribe(&import_prompt, move |this, _, event: &PiAgentImportEvent, _cx| {
+        let import_prompt_subscription = cx.subscribe(
+            &import_prompt,
+            move |this, _, event: &PiAgentImportEvent, _cx| {
                 match event {
                     PiAgentImportEvent::ImportRequested => {
                         this.show_import_prompt = false;
@@ -343,7 +348,8 @@ impl ThreadList {
                     }
                 }
                 _cx.notify();
-            });
+            },
+        );
 
         let is_first = state::is_first_run();
         let has_pi_settings = import_prompt.read(cx).has_files();
@@ -513,7 +519,8 @@ impl Render for ThreadList {
                                     |window, cx| {
                                         cx.new(|cx| {
                                             let chat = ChatWindow::new(cx, None, store.clone());
-                                            let input_handle = chat.chat_input.read(cx).focus_handle(cx);
+                                            let input_handle =
+                                                chat.chat_input.read(cx).focus_handle(cx);
                                             window.focus(&input_handle);
                                             chat
                                         })

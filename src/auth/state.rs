@@ -70,9 +70,13 @@ fn auth_file_path() -> PathBuf {
     dir.join("auth.json")
 }
 
-pub fn save_session(store: &Store, session: &SupabaseSession) -> Result<(), crate::data::store::StoreError> {
-    let content = serde_json::to_string_pretty(session)
-        .map_err(|e| crate::data::store::StoreError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+pub fn save_session(
+    store: &Store,
+    session: &SupabaseSession,
+) -> Result<(), crate::data::store::StoreError> {
+    let content = serde_json::to_string_pretty(session).map_err(|e| {
+        crate::data::store::StoreError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    })?;
     store.set_user_setting("supabase_session", &content)
 }
 
@@ -145,13 +149,19 @@ pub fn list_pi_agent_json_files() -> Vec<(String, PathBuf)> {
 }
 
 fn collect_json_files(base: &PathBuf, current: &PathBuf, out: &mut Vec<(String, PathBuf)>) {
-    let Ok(entries) = std::fs::read_dir(current) else { return };
+    let Ok(entries) = std::fs::read_dir(current) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
             collect_json_files(base, &path, out);
         } else if path.extension().and_then(|e| e.to_str()) == Some("json") {
-            let rel = path.strip_prefix(base).unwrap_or(&path).to_string_lossy().to_string();
+            let rel = path
+                .strip_prefix(base)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_string();
             out.push((rel, path));
         }
     }

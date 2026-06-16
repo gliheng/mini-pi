@@ -1,7 +1,6 @@
 use gpui::{
     Context, EventEmitter, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
-    StatefulInteractiveElement, Styled, div, px, rgb, svg,
-    prelude::FluentBuilder,
+    StatefulInteractiveElement, Styled, div, prelude::FluentBuilder, px, rgb, svg,
 };
 
 use crate::auth::state;

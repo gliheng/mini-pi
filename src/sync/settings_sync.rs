@@ -113,13 +113,11 @@ pub enum SyncStatus {
     Error(String),
 }
 
-pub fn pull_from_remote(
-    access_token: &str,
-    user_id: &str,
-) -> Result<SyncMeta, String> {
+pub fn pull_from_remote(access_token: &str, user_id: &str) -> Result<SyncMeta, String> {
     with_sync_lock(|| {
         let agent_dir = state::agent_dir();
-        let remote_files = supabase::list_files(access_token, user_id).map_err(|e| e.to_string())?;
+        let remote_files =
+            supabase::list_files(access_token, user_id).map_err(|e| e.to_string())?;
 
         let mut meta = SyncMeta::default();
 
@@ -159,10 +157,7 @@ pub fn pull_from_remote(
     })
 }
 
-pub fn push_to_remote(
-    access_token: &str,
-    user_id: &str,
-) -> Result<SyncMeta, String> {
+pub fn push_to_remote(access_token: &str, user_id: &str) -> Result<SyncMeta, String> {
     with_sync_lock(|| {
         let local_files = scan_agent_files();
         let mut meta = SyncMeta::default();
@@ -190,10 +185,7 @@ pub fn push_to_remote(
     })
 }
 
-pub fn sync_changes(
-    access_token: &str,
-    user_id: &str,
-) -> Result<SyncMeta, String> {
+pub fn sync_changes(access_token: &str, user_id: &str) -> Result<SyncMeta, String> {
     with_sync_lock(|| {
         let mut meta = load_sync_meta();
         let local_files = scan_agent_files();
@@ -230,7 +222,8 @@ pub fn sync_changes(
             }
         }
 
-        let remote_files = supabase::list_files(access_token, user_id).map_err(|e| e.to_string())?;
+        let remote_files =
+            supabase::list_files(access_token, user_id).map_err(|e| e.to_string())?;
         let remote_set: std::collections::HashSet<String> = remote_files
             .iter()
             .map(|f| {
@@ -241,8 +234,7 @@ pub fn sync_changes(
             })
             .collect();
 
-        let local_set: std::collections::HashSet<String> =
-            local_map.keys().cloned().collect();
+        let local_set: std::collections::HashSet<String> = local_map.keys().cloned().collect();
 
         for remote_file in &remote_set {
             if !local_set.contains(remote_file) {

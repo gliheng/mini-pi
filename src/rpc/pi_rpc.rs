@@ -73,9 +73,6 @@ pub enum BridgeEvent {
     Error {
         message: String,
     },
-    MessagesLoaded {
-        messages: Vec<LoadedMessage>,
-    },
     ExtensionUiRequest {
         id: String,
         method: String,
@@ -175,10 +172,7 @@ impl PiBridge {
         log!("spawning bridge: {:?} {:?}", cmd, args);
         let mut child = cmd.spawn().map_err(|e| {
             log!("failed to spawn pi bridge: {}", e);
-            PiRpcError::Spawn(format!(
-                "failed to spawn pi bridge with {}: {}",
-                program, e
-            ))
+            PiRpcError::Spawn(format!("failed to spawn pi bridge with {}: {}", program, e))
         })?;
         log!("pi bridge spawned, pid={}", child.id());
 
@@ -221,19 +215,16 @@ impl PiBridge {
         let (write_half, read_half) = ws_stream.split();
         let (write_tx, mut write_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
-        let sessions: Arc<Mutex<HashMap<String, futures::channel::mpsc::UnboundedSender<BridgeEvent>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let sessions: Arc<
+            Mutex<HashMap<String, futures::channel::mpsc::UnboundedSender<BridgeEvent>>>,
+        > = Arc::new(Mutex::new(HashMap::new()));
         let sessions_for_reader = Arc::clone(&sessions);
 
         // Writer task: forward outgoing JSON to the WebSocket.
         runtime.spawn(async move {
             let mut write_half = write_half;
             while let Some(text) = write_rx.recv().await {
-                if write_half
-                    .send(Message::text(text))
-                    .await
-                    .is_err()
-                {
+                if write_half.send(Message::text(text)).await.is_err() {
                     break;
                 }
             }
@@ -317,11 +308,7 @@ impl PiBridge {
         Ok(rx)
     }
 
-    pub fn send(
-        &self,
-        session_id: String,
-        json: &serde_json::Value,
-    ) -> Result<(), PiRpcError> {
+    pub fn send(&self, session_id: String, json: &serde_json::Value) -> Result<(), PiRpcError> {
         let mut msg = json.clone();
         msg["sessionId"] = serde_json::json!(session_id);
         self.send_json(&msg)
@@ -332,7 +319,9 @@ impl PiBridge {
         log!(
             "send: type={} sessionId={}",
             json.get("type").and_then(|t| t.as_str()).unwrap_or("?"),
-            json.get("sessionId").and_then(|s| s.as_str()).unwrap_or("?")
+            json.get("sessionId")
+                .and_then(|s| s.as_str())
+                .unwrap_or("?")
         );
         self.write_tx
             .send(text)
@@ -351,10 +340,7 @@ pub struct PiRpc {
 
 impl PiRpc {
     pub fn new(session_id: String, bridge: Arc<PiBridge>) -> Self {
-        Self {
-            session_id,
-            bridge,
-        }
+        Self { session_id, bridge }
     }
 
     fn send(&mut self, json: &serde_json::Value) -> Result<(), PiRpcError> {
@@ -459,7 +445,11 @@ impl PiRpc {
         self.send(&cmd)
     }
 
-    pub fn send_fork(&mut self, entry_id: &str, request_id: Option<&str>) -> Result<(), PiRpcError> {
+    pub fn send_fork(
+        &mut self,
+        entry_id: &str,
+        request_id: Option<&str>,
+    ) -> Result<(), PiRpcError> {
         let mut cmd = serde_json::json!({
             "type": "fork",
             "entryId": entry_id,
@@ -474,10 +464,7 @@ impl PiRpc {
         self.send(&cmd)
     }
 
-    pub fn send_get_fork_messages(
-        &mut self,
-        request_id: Option<&str>,
-    ) -> Result<(), PiRpcError> {
+    pub fn send_get_fork_messages(&mut self, request_id: Option<&str>) -> Result<(), PiRpcError> {
         let mut cmd = serde_json::json!({ "type": "get_fork_messages" });
         add_request_id(&mut cmd, request_id);
         self.send(&cmd)
@@ -594,7 +581,10 @@ impl PiRpc {
 fn find_runtime(bridge_dir: &PathBuf) -> Result<(String, Vec<String>), PiRpcError> {
     // Prefer bun because it can run TypeScript directly.
     if Command::new("bun").arg("--version").output().is_ok() {
-        return Ok(("bun".to_string(), vec!["run".to_string(), "src/index.ts".to_string()]));
+        return Ok((
+            "bun".to_string(),
+            vec!["run".to_string(), "src/index.ts".to_string()],
+        ));
     }
 
     // Use the local tsx binary if npm install was run.
@@ -899,8 +889,14 @@ fn parse_pi_line_value(val: &serde_json::Value) -> Option<BridgeEvent> {
 
             if command == "get_messages" && success {
                 if let Some(ref data_val) = data {
-                    if let Some(messages) = data_val.get("messages") {
-                        return parse_messages(messages);
+                    if data_val.get("messages").is_some() {
+                        return Some(BridgeEvent::Response {
+                            command: command.to_string(),
+                            success,
+                            data: data.clone(),
+                            error: error.clone(),
+                            request_id: request_id.clone(),
+                        });
                     }
                 }
                 log!("get_messages response missing data.messages");
@@ -959,12 +955,15 @@ fn parse_pi_line_value(val: &serde_json::Value) -> Option<BridgeEvent> {
 // History parsing
 // ---------------------------------------------------------------------------
 
-fn parse_messages(messages_val: &serde_json::Value) -> Option<BridgeEvent> {
+pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<LoadedMessage>> {
     let arr = messages_val.as_array()?;
     let mut loaded = Vec::new();
 
     for msg in arr {
-        let id = msg.get("id").and_then(|i| i.as_str()).map(|s| s.to_string());
+        let id = msg
+            .get("id")
+            .and_then(|i| i.as_str())
+            .map(|s| s.to_string());
         let role = msg.get("role")?.as_str()?.to_string();
 
         match role.as_str() {
@@ -1085,7 +1084,7 @@ fn parse_messages(messages_val: &serde_json::Value) -> Option<BridgeEvent> {
         }
     }
 
-    Some(BridgeEvent::MessagesLoaded { messages: loaded })
+    Some(loaded)
 }
 
 fn extract_text_parts(val: &serde_json::Value, out: &mut String) {

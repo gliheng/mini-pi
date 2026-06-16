@@ -27,11 +27,7 @@ struct MarkdownExample {
 }
 
 impl Render for MarkdownExample {
-    fn render(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let left_width = px(self.split_ratio * 1400.0);
         let right_width = px((1.0 - self.split_ratio) * 1400.0 - 4.0);
 
@@ -108,9 +104,13 @@ impl Render for MarkdownExample {
                     .h_full()
                     .bg(rgb(0x333333))
                     .cursor_col_resize()
-                    .on_drag(SplitterDrag, |_payload: &SplitterDrag, _position: gpui::Point<gpui::Pixels>, _window: &mut Window, cx: &mut App| {
-                        cx.new(|_cx| EmptyDragGhost)
-                    }),
+                    .on_drag(
+                        SplitterDrag,
+                        |_payload: &SplitterDrag,
+                         _position: gpui::Point<gpui::Pixels>,
+                         _window: &mut Window,
+                         cx: &mut App| { cx.new(|_cx| EmptyDragGhost) },
+                    ),
             )
             .child(
                 div()
