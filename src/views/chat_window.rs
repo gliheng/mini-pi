@@ -1133,6 +1133,10 @@ impl Render for ChatWindow {
         let mut reasoning_entities: Vec<Vec<Option<gpui::Entity<Reasoning>>>> = Vec::new();
         for (msg_idx, msg) in self.messages.iter().enumerate() {
             let mut msg_reasoning: Vec<Option<gpui::Entity<Reasoning>>> = Vec::new();
+            let part_count = msg.parts.len();
+            if let Some(row) = self.reasoning_displays.get_mut(msg_idx) {
+                row.truncate(part_count);
+            }
             for (part_idx, part) in msg.parts.iter().enumerate() {
                 if let MessagePart::Reasoning { text, .. } = part {
                     if msg_idx >= self.reasoning_displays.len() {
@@ -1154,17 +1158,30 @@ impl Render for ChatWindow {
                     };
                     msg_reasoning.push(Some(entity));
                 } else {
+                    if let Some(row) = self.reasoning_displays.get_mut(msg_idx)
+                        && part_idx < row.len()
+                    {
+                        row[part_idx] = None;
+                    }
                     msg_reasoning.push(None);
                 }
             }
             reasoning_entities.push(msg_reasoning);
         }
+        self.reasoning_displays.truncate(self.messages.len());
 
         // Ensure markdown displays exist for assistant text parts only
         let mut markdown_entities: Vec<Vec<Option<gpui::Entity<MarkdownRenderer>>>> = Vec::new();
         for (msg_idx, msg) in self.messages.iter().enumerate() {
             let mut msg_markdown: Vec<Option<gpui::Entity<MarkdownRenderer>>> = Vec::new();
             let is_assistant = matches!(msg.role, Role::Assistant);
+            let part_count = msg.parts.len();
+            if let Some(row) = self.markdown_displays.get_mut(msg_idx) {
+                row.truncate(part_count);
+                if !is_assistant {
+                    row.clear();
+                }
+            }
             for (part_idx, part) in msg.parts.iter().enumerate() {
                 if is_assistant && matches!(part, MessagePart::Text { .. }) {
                     if let MessagePart::Text { text, .. } = part {
@@ -1190,11 +1207,17 @@ impl Render for ChatWindow {
                         msg_markdown.push(None);
                     }
                 } else {
+                    if let Some(row) = self.markdown_displays.get_mut(msg_idx)
+                        && part_idx < row.len()
+                    {
+                        row[part_idx] = None;
+                    }
                     msg_markdown.push(None);
                 }
             }
             markdown_entities.push(msg_markdown);
         }
+        self.markdown_displays.truncate(self.messages.len());
 
         div()
             .relative()

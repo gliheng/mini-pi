@@ -98,7 +98,11 @@ impl MarkdownRenderer {
     }
 
     pub fn set_content(&mut self, content: impl Into<SharedString>) {
-        self.content = content.into();
+        let content = content.into();
+        if self.content == content {
+            return;
+        }
+        self.content = content;
         self.parsed = None;
     }
 }
@@ -210,7 +214,50 @@ pub(crate) fn strip_html_tags(html: &str) -> String {
             result.push(c);
         }
     }
-    result
+    decode_html_entities(&result)
+}
+
+fn decode_html_entities(text: &str) -> String {
+    let mut decoded = String::with_capacity(text.len());
+    let mut remaining = text;
+
+    while let Some(entity_start) = remaining.find('&') {
+        decoded.push_str(&remaining[..entity_start]);
+        remaining = &remaining[entity_start..];
+
+        let Some(entity_end) = remaining.find(';') else {
+            decoded.push_str(remaining);
+            return decoded;
+        };
+        let entity = &remaining[1..entity_end];
+        if let Some(character) = decode_html_entity(entity) {
+            decoded.push(character);
+        } else {
+            decoded.push_str(&remaining[..=entity_end]);
+        }
+        remaining = &remaining[entity_end + 1..];
+    }
+
+    decoded.push_str(remaining);
+    decoded
+}
+
+fn decode_html_entity(entity: &str) -> Option<char> {
+    match entity {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" | "#39" => Some('\''),
+        "nbsp" => Some(' '),
+        _ if entity.starts_with("#x") || entity.starts_with("#X") => {
+            u32::from_str_radix(&entity[2..], 16)
+                .ok()
+                .and_then(char::from_u32)
+        }
+        _ if entity.starts_with('#') => entity[1..].parse::<u32>().ok().and_then(char::from_u32),
+        _ => None,
+    }
 }
 
 impl Render for MarkdownRenderer {
@@ -276,5 +323,32 @@ mod tests {
         assert_eq!(lines.len(), 2, "expected two lines");
         assert_eq!(lines[0].0, "some random text");
         assert_eq!(lines[1].0, "another line");
+    }
+
+    #[test]
+    fn set_content_keeps_parse_cache_for_unchanged_text() {
+        let mut renderer = MarkdownRenderer::new("unchanged");
+        renderer.parsed = Some(parse_markdown("unchanged"));
+
+        renderer.set_content("unchanged");
+
+        assert!(renderer.parsed.is_some());
+    }
+
+    #[test]
+    fn html_text_extraction_decodes_common_entities() {
+        assert_eq!(
+            strip_html_tags("<span>Tom &amp; Jerry &#35;1</span>"),
+            "Tom & Jerry #1"
+        );
+        assert_eq!(strip_html_tags("2 &lt; 3 &gt; 1"), "2 < 3 > 1");
+    }
+
+    #[test]
+    fn html_text_extraction_is_lightweight_chat_fallback() {
+        assert_eq!(strip_html_tags("a<!-- hidden -->b"), "ab");
+        assert_eq!(strip_html_tags("<span>a <b>b</b></span>"), "a b");
+        assert_eq!(strip_html_tags("keep &madeup; entity"), "keep &madeup; entity");
+        assert_eq!(strip_html_tags("Use <code>cargo test</code>"), "Use cargo test");
     }
 }

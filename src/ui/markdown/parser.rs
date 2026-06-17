@@ -3,10 +3,10 @@ use std::ops::Range;
 
 use gpui::SharedString;
 use linkify::LinkFinder;
+pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
 use pulldown_cmark::{
     Alignment, BlockQuoteKind, CowStr, HeadingLevel, LinkType, MetadataBlockKind, Options, Parser,
 };
-pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
 
 /// Default parse options for mini-pi markdown.
 pub const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
@@ -135,6 +135,7 @@ pub enum CodeBlockKind {
 pub struct CodeBlockMetadata {
     pub content_range: Range<usize>,
     pub line_count: usize,
+    pub is_fenced_closed: bool,
 }
 
 #[derive(Default)]
@@ -246,16 +247,18 @@ pub fn parse_markdown_with_options(source: &str, options: ParseOptions) -> Parse
                             metadata: CodeBlockMetadata {
                                 content_range: range.clone(),
                                 line_count: 1,
+                                is_fenced_closed: false,
                             },
                         }
                     }
                     pulldown_cmark::Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Fenced(info)) => {
                         within_code_block = true;
                         let info = info.trim();
-                        let kind = if info.is_empty() {
+                        let language = info.split_whitespace().next().unwrap_or_default();
+                        let kind = if language.is_empty() {
                             CodeBlockKind::Fenced
                         } else {
-                            let language = SharedString::from(info.to_string());
+                            let language = SharedString::from(language.to_string());
                             language_names.insert(language.clone());
                             CodeBlockKind::FencedLang(language)
                         };
@@ -265,15 +268,16 @@ pub fn parse_markdown_with_options(source: &str, options: ParseOptions) -> Parse
                         let content_range =
                             range.start + content_range.start..range.start + content_range.end;
                         let line_count = source[content_range.clone()]
-                            .bytes()
-                            .filter(|b| *b == b'\n')
+                            .lines()
                             .count();
+                        let is_fenced_closed = is_fenced_code_block_closed(&source[range.clone()]);
 
                         MarkdownTag::CodeBlock {
                             kind,
                             metadata: CodeBlockMetadata {
                                 content_range,
                                 line_count,
+                                is_fenced_closed,
                             },
                         }
                     }
@@ -417,9 +421,10 @@ pub fn parse_markdown_with_options(source: &str, options: ParseOptions) -> Parse
                         let link_start_in_merged = link.start();
                         let link_end_in_merged = link.end();
 
-                        while ranges.peek().is_some_and(|range| {
-                            range.merged_range.end <= link_start_in_merged
-                        }) {
+                        while ranges
+                            .peek()
+                            .is_some_and(|range| range.merged_range.end <= link_start_in_merged)
+                        {
                             let range = ranges.next().unwrap();
                             let (event_range, event) =
                                 event_for(source, range.source_range, &range.parsed);
@@ -447,9 +452,10 @@ pub fn parse_markdown_with_options(source: &str, options: ParseOptions) -> Parse
                         let mut link_end_in_source = range.source_range.end;
                         let mut link_events = Vec::new();
 
-                        while ranges.peek().is_some_and(|range| {
-                            range.merged_range.end <= link_end_in_merged
-                        }) {
+                        while ranges
+                            .peek()
+                            .is_some_and(|range| range.merged_range.end <= link_end_in_merged)
+                        {
                             let range = ranges.next().unwrap();
                             link_end_in_source = range.source_range.end;
                             link_events.push(event_for(source, range.source_range, &range.parsed));
@@ -461,8 +467,7 @@ pub fn parse_markdown_with_options(source: &str, options: ParseOptions) -> Parse
                                 let (head, tail) = range.parsed.split_at(prefix_len);
                                 link_events.push(event_for(
                                     source,
-                                    range.source_range.start
-                                        ..range.source_range.start + prefix_len,
+                                    range.source_range.start..range.source_range.start + prefix_len,
                                     head,
                                 ));
                                 range.parsed = CowStr::Boxed(tail.into());
@@ -485,10 +490,7 @@ pub fn parse_markdown_with_options(source: &str, options: ParseOptions) -> Parse
                         for (event_range, event) in link_events {
                             state.push_event(event_range, event);
                         }
-                        state.push_event(
-                            link_range,
-                            MarkdownEvent::End(MarkdownTagEnd::Link),
-                        );
+                        state.push_event(link_range, MarkdownEvent::End(MarkdownTagEnd::Link));
                     }
                 }
 
@@ -570,6 +572,10 @@ fn build_heading_slugs(
                             slug.clear();
                             break;
                         };
+                        if *count >= MAX_DUPLICATE_HEADING_SLUGS {
+                            slug.clear();
+                            break;
+                        }
                         slug = format!("{base_slug}-{count}");
                         *count += 1;
                     }
@@ -579,7 +585,7 @@ fn build_heading_slugs(
                     inside_heading = false;
                 }
             }
-            MarkdownEvent::Text if inside_heading => {
+            MarkdownEvent::Text | MarkdownEvent::Code if inside_heading => {
                 if heading_source_start.is_none() {
                     heading_source_start = Some(range.start);
                 }
@@ -597,6 +603,8 @@ fn build_heading_slugs(
 
     slugs
 }
+
+const MAX_DUPLICATE_HEADING_SLUGS: usize = 128;
 
 fn build_footnote_definitions(
     events: &[(Range<usize>, MarkdownEvent)],
@@ -662,20 +670,77 @@ fn extract_code_content_range(text: &str) -> Range<usize> {
 }
 
 fn extract_code_block_content_range(text: &str) -> Range<usize> {
-    let mut range = 0..text.len();
-    if text.starts_with("```") {
-        range.start += 3;
-        if let Some(newline_ix) = text[range.clone()].find('\n') {
-            range.start += newline_ix + 1;
-        }
-    }
-    if !range.is_empty() && text.ends_with("```") {
-        range.end -= 3;
+    let Some(opening) = parse_opening_fence(text) else {
+        return 0..text.len();
+    };
+
+    let mut range = opening.content_start..text.len();
+    if let Some(closing_start) = closing_fence_start(text, opening) {
+        range.end = closing_start;
     }
     if range.start > range.end {
         range.end = range.start;
     }
     range
+}
+
+fn is_fenced_code_block_closed(text: &str) -> bool {
+    parse_opening_fence(text)
+        .and_then(|opening| closing_fence_start(text, opening))
+        .is_some()
+}
+
+#[derive(Clone, Copy)]
+struct OpeningFence {
+    character: char,
+    length: usize,
+    content_start: usize,
+}
+
+fn parse_opening_fence(text: &str) -> Option<OpeningFence> {
+    let character = text.chars().next().filter(|c| *c == '`' || *c == '~')?;
+    let length = text.chars().take_while(|c| *c == character).count();
+    if length < 3 {
+        return None;
+    }
+
+    let after_fence = length;
+    let content_start = text[after_fence..]
+        .find('\n')
+        .map_or(text.len(), |newline_ix| after_fence + newline_ix + 1);
+    Some(OpeningFence {
+        character,
+        length,
+        content_start,
+    })
+}
+
+fn closing_fence_start(text: &str, opening: OpeningFence) -> Option<usize> {
+    let trimmed_end = text.trim_end_matches(['\r', '\n']);
+    let closing_start = trimmed_end.rfind('\n')? + 1;
+    let closing_line = &trimmed_end[closing_start..];
+    let leading_spaces = closing_line.bytes().take_while(|b| *b == b' ').count();
+    if leading_spaces > 3 {
+        return None;
+    }
+
+    let after_indent = &closing_line[leading_spaces..];
+    let closing_fence_len = after_indent
+        .chars()
+        .take_while(|c| *c == opening.character)
+        .count();
+    if closing_fence_len < opening.length {
+        return None;
+    }
+
+    if after_indent[closing_fence_len..]
+        .chars()
+        .all(char::is_whitespace)
+    {
+        Some(closing_start)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -735,13 +800,15 @@ mod tests {
         let source = "Visit https://example.com here";
         let parsed = parse_markdown(source);
 
-        let has_autolink = parsed.events.iter().any(|(_, event)| matches!(
-            event,
-            MarkdownEvent::Start(MarkdownTag::Link {
-                link_type: LinkType::Autolink,
-                ..
-            })
-        ));
+        let has_autolink = parsed.events.iter().any(|(_, event)| {
+            matches!(
+                event,
+                MarkdownEvent::Start(MarkdownTag::Link {
+                    link_type: LinkType::Autolink,
+                    ..
+                })
+            )
+        });
         assert!(has_autolink, "expected autolink event: {parsed:?}");
     }
 
@@ -750,10 +817,12 @@ mod tests {
         let source = "-- dash";
         let parsed = parse_markdown(source);
 
-        assert!(parsed.events.iter().any(|(_, event)| matches!(
-            event,
-            MarkdownEvent::SubstitutedText(_)
-        )));
+        assert!(
+            parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, MarkdownEvent::SubstitutedText(_)))
+        );
     }
 
     #[test]
@@ -761,10 +830,12 @@ mod tests {
         let source = "5. First\n6. Second";
         let parsed = parse_markdown(source);
 
-        assert!(parsed.events.iter().any(|(_, event)| matches!(
-            event,
-            MarkdownEvent::Start(MarkdownTag::List(Some(5)))
-        )));
+        assert!(
+            parsed.events.iter().any(|(_, event)| matches!(
+                event,
+                MarkdownEvent::Start(MarkdownTag::List(Some(5)))
+            ))
+        );
     }
 
     #[test]
@@ -790,9 +861,11 @@ mod tests {
             event,
             MarkdownEvent::FootnoteReference(label) if label.as_ref() == "1"
         )));
-        assert!(parsed
-            .footnote_definitions
-            .contains_key(SharedString::from("1").as_ref()));
+        assert!(
+            parsed
+                .footnote_definitions
+                .contains_key(SharedString::from("1").as_ref())
+        );
     }
 
     #[test]
@@ -824,7 +897,153 @@ mod tests {
         if let Some((_, metadata)) = code_block {
             assert_eq!(metadata.line_count, 1);
             assert_eq!(&source[metadata.content_range.clone()], "fn main() {}\n");
+            assert!(metadata.is_fenced_closed);
         }
+    }
+
+    #[test]
+    fn fenced_language_uses_first_info_token() {
+        let source = "```rust title=\"main.rs\"\nfn main() {}\n```";
+        let parsed = parse_markdown(source);
+
+        assert!(parsed.events.iter().any(|(_, event)| matches!(
+            event,
+            MarkdownEvent::Start(MarkdownTag::CodeBlock {
+                kind: CodeBlockKind::FencedLang(language),
+                ..
+            }) if language.as_ref() == "rust"
+        )));
+        assert!(parsed.language_names.contains("rust"));
+        assert!(!parsed.language_names.contains("rust title=\"main.rs\""));
+    }
+
+    #[test]
+    fn unclosed_fenced_code_block_keeps_streamed_content() {
+        let source = "```rust\nfn main() {}";
+        let parsed = parse_markdown(source);
+
+        let metadata = parsed.events.iter().find_map(|(_, event)| match event {
+            MarkdownEvent::Start(MarkdownTag::CodeBlock { metadata, .. }) => Some(metadata.clone()),
+            _ => None,
+        });
+
+        let metadata = metadata.expect("expected code block metadata");
+        assert!(!metadata.is_fenced_closed);
+        assert_eq!(metadata.line_count, 1);
+        assert_eq!(&source[metadata.content_range], "fn main() {}");
+    }
+
+    #[test]
+    fn bare_fences_are_open_while_streaming() {
+        for source in ["```", "~~~", "```rust"] {
+            let parsed = parse_markdown(source);
+            let metadata = parsed.events.iter().find_map(|(_, event)| match event {
+                MarkdownEvent::Start(MarkdownTag::CodeBlock { metadata, .. }) => {
+                    Some(metadata.clone())
+                }
+                _ => None,
+            });
+
+            let metadata = metadata.expect("expected code block metadata");
+            assert!(
+                !metadata.is_fenced_closed,
+                "{source:?} should be treated as an open streaming fence"
+            );
+            assert_eq!(&source[metadata.content_range], "");
+        }
+    }
+
+    #[test]
+    fn opening_fences_with_only_newline_are_open() {
+        for source in ["```\n", "~~~\n"] {
+            let parsed = parse_markdown(source);
+            let metadata = parsed.events.iter().find_map(|(_, event)| match event {
+                MarkdownEvent::Start(MarkdownTag::CodeBlock { metadata, .. }) => {
+                    Some(metadata.clone())
+                }
+                _ => None,
+            });
+
+            let metadata = metadata.expect("expected code block metadata");
+            assert!(
+                !metadata.is_fenced_closed,
+                "{source:?} should be treated as an open streaming fence"
+            );
+            assert_eq!(&source[metadata.content_range], "");
+        }
+    }
+
+    #[test]
+    fn fenced_code_block_accepts_indented_closing_fence() {
+        let source = "```rust\nfn main() {}\n  ```\n";
+        let parsed = parse_markdown(source);
+
+        let metadata = parsed.events.iter().find_map(|(_, event)| match event {
+            MarkdownEvent::Start(MarkdownTag::CodeBlock { metadata, .. }) => {
+                Some(metadata.clone())
+            }
+            _ => None,
+        });
+
+        let metadata = metadata.expect("expected code block metadata");
+        assert!(metadata.is_fenced_closed);
+        assert_eq!(&source[metadata.content_range], "fn main() {}\n");
+    }
+
+    #[test]
+    fn fenced_code_block_rejects_invalid_indented_closing_fence() {
+        for source in [
+            "```rust\nfn main() {}\n\t```\n",
+            "```rust\nfn main() {}\n    ```\n",
+        ] {
+            let parsed = parse_markdown(source);
+
+            let metadata = parsed.events.iter().find_map(|(_, event)| match event {
+                MarkdownEvent::Start(MarkdownTag::CodeBlock { metadata, .. }) => {
+                    Some(metadata.clone())
+                }
+                _ => None,
+            });
+
+            let metadata = metadata.expect("expected code block metadata");
+            assert!(
+                !metadata.is_fenced_closed,
+                "{source:?} should not accept the final line as a closing fence"
+            );
+            assert!(source[metadata.content_range].ends_with("```\n"));
+        }
+    }
+
+    #[test]
+    fn fenced_code_block_accepts_longer_closing_fence() {
+        let source = "```rust\nfn main() {}\n````\n";
+        let parsed = parse_markdown(source);
+
+        let metadata = parsed.events.iter().find_map(|(_, event)| match event {
+            MarkdownEvent::Start(MarkdownTag::CodeBlock { metadata, .. }) => {
+                Some(metadata.clone())
+            }
+            _ => None,
+        });
+
+        let metadata = metadata.expect("expected code block metadata");
+        assert!(metadata.is_fenced_closed);
+        assert_eq!(&source[metadata.content_range], "fn main() {}\n");
+    }
+
+    #[test]
+    fn tilde_fenced_code_block_content_range() {
+        let source = "~~~rust\nfn main() {}\n~~~\n";
+        let parsed = parse_markdown(source);
+
+        let metadata = parsed.events.iter().find_map(|(_, event)| match event {
+            MarkdownEvent::Start(MarkdownTag::CodeBlock { metadata, .. }) => Some(metadata.clone()),
+            _ => None,
+        });
+
+        let metadata = metadata.expect("expected code block metadata");
+        assert!(metadata.is_fenced_closed);
+        assert_eq!(&source[metadata.content_range], "fn main() {}\n");
     }
 
     #[test]
@@ -834,5 +1053,13 @@ mod tests {
 
         assert_eq!(parsed.heading_slugs.get("hello-world"), Some(&2));
         assert_eq!(parsed.heading_slugs.get("hello-world-1"), Some(&18));
+    }
+
+    #[test]
+    fn heading_slugs_include_inline_code() {
+        let source = "# Use `cargo test`";
+        let parsed = parse_markdown_with_options(source, ParseOptions::all());
+
+        assert_eq!(parsed.heading_slugs.get("use-cargo-test"), Some(&2));
     }
 }
