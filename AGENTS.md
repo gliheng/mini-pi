@@ -44,7 +44,7 @@ src/rpc/
   pi_rpc.rs             # PiBridge shared WebSocket client, PiRpc session handle, BridgeEvent enum, JSON parser
 src/remote/
   controller.rs         # RemoteController: enable/disable, command dispatch, SSE broadcasting, cloudflared lifecycle
-  server.rs             # tiny_http REST server with Server-Sent Events
+  server.rs             # axum REST server with Server-Sent Events
   tunnel.rs             # cloudflared process management and quick-tunnel URL parsing
   qr.rs                 # QR code generation for the tunnel URL
   auth.rs               # Optional local bearer-token validation
@@ -152,7 +152,7 @@ Each chat thread opens its own window. Inside the window, `ChatWindow::spawn_pi`
 
 When enabled in the user settings panel (`remote_control.enabled` in `~/.config/mini-pi/config.json`):
 
-- `RemoteController` starts a local `tiny_http` server bound to `127.0.0.1:<bind_port>`, served by a fixed-size worker pool.
+- `RemoteController` starts a local `axum` server bound to `127.0.0.1:<bind_port>`, served by a dedicated Tokio runtime. Commands and SSE events are routed through Tokio channels.
 - It auto-spawns `cloudflared` to expose that port through a Cloudflare Tunnel (quick tunnel by default, or a named tunnel via `cloudflared.tunnel_token`; named tunnels also require `cloudflared.hostname`).
 - The user panel displays the public tunnel URL and a QR code for easy phone scanning.
 - The phone sends REST commands (`GET /threads`, `POST /threads/:id/message`, `GET /threads/:id/stream`, etc.) and receives live assistant replies via Server-Sent Events.
@@ -206,7 +206,7 @@ This application is a thin GUI wrapper around the `@earendil-works/pi-coding-age
 ## Testing
 
 - `cargo test` runs the unit tests in `src/ui/markdown.rs` and the remote-control tests in `src/remote/`.
-- The current codebase has **52 unit tests** total, including markdown parsing/rendering, tunnel URL extraction, bearer-token validation, SSE framing, and HTTP-server integration (status, auth, `since_id`, SSE CORS headers, and SSE heartbeat); all pass.
+- The current codebase has **58 unit tests** total, including markdown parsing/rendering, tunnel URL extraction, bearer-token validation, SSE framing, and HTTP-server integration (status, auth, `since_id`, SSE CORS headers, SSE heartbeat, and SSE query-token auth); all pass.
 - There are no integration tests and no CI workflows configured for this repository.
 
 ## Documentation

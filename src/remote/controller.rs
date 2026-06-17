@@ -1,10 +1,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
-use futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use futures::StreamExt;
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use gpui::{AppContext, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task, WeakEntity};
 use serde_json::json;
 
@@ -65,7 +63,7 @@ pub struct RemoteController {
     target_thread_id: Option<i64>,
     target_session: Option<WeakEntity<SessionHandle>>,
     session_subscription: Option<Subscription>,
-    sse_senders: Arc<Mutex<HashMap<i64, Vec<Sender<SseEvent>>>>>,
+    sse_senders: Arc<Mutex<HashMap<i64, Vec<UnboundedSender<SseEvent>>>>>,
     // Cached snapshots for delta-aware SSE streaming.
     last_state_json: Option<serde_json::Value>,
     last_messages: HashMap<String, serde_json::Value>,
@@ -137,7 +135,7 @@ impl RemoteController {
         cx.emit(RemoteControllerEvent::StatusChanged);
         cx.notify();
 
-        let (command_tx, command_rx) = mpsc::unbounded::<CommandEnvelope>();
+        let (command_tx, command_rx) = mpsc::unbounded_channel::<CommandEnvelope>();
         self.command_sender = Some(command_tx.clone());
         self.start_command_task(command_rx, cx);
 
@@ -199,7 +197,7 @@ impl RemoteController {
 
                     // Forward tunnel outcomes from a blocking thread so we can keep
                     // monitoring for process exit after the URL is known.
-                    let (fwd_tx, mut fwd_rx) = mpsc::unbounded::<tunnel::TunnelOutcome>();
+                    let (fwd_tx, mut fwd_rx) = mpsc::unbounded_channel::<tunnel::TunnelOutcome>();
                     std::thread::spawn(move || {
                         let mut url_seen = false;
                         loop {
@@ -213,13 +211,13 @@ impl RemoteController {
                                     if matches!(outcome, tunnel::TunnelOutcome::Url(_)) {
                                         url_seen = true;
                                     }
-                                    if fwd_tx.unbounded_send(outcome).is_err() {
+                                    if fwd_tx.send(outcome).is_err() {
                                         break;
                                     }
                                 }
                                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                                     if !url_seen {
-                                        let _ = fwd_tx.unbounded_send(
+                                        let _ = fwd_tx.send(
                                             tunnel::TunnelOutcome::Error(
                                                 "timed out waiting for cloudflared URL"
                                                     .to_string(),
@@ -234,7 +232,7 @@ impl RemoteController {
                     });
 
                     let mut url_seen = false;
-                    while let Some(outcome) = fwd_rx.next().await {
+                    while let Some(outcome) = fwd_rx.recv().await {
                         match outcome {
                             tunnel::TunnelOutcome::Url(url) if !url_seen => {
                                 url_seen = true;
@@ -317,7 +315,7 @@ impl RemoteController {
 
     fn start_command_task(&mut self, mut rx: UnboundedReceiver<CommandEnvelope>, cx: &mut Context<Self>) {
         let task = cx.spawn(async move |this, cx| {
-            while let Some(envelope) = rx.next().await {
+            while let Some(envelope) = rx.recv().await {
                 let respond_to = envelope.respond_to;
                 let command = envelope.command;
                 let result = this.update(cx, |this, cx| this.handle_command(command, cx));
@@ -781,7 +779,7 @@ impl RemoteController {
     fn add_sse_subscriber(
         &mut self,
         thread_id: i64,
-        sender: Sender<SseEvent>,
+        sender: UnboundedSender<SseEvent>,
         cx: &mut Context<Self>,
     ) {
         // Register the sender before building the snapshot so any session change

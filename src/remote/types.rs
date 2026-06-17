@@ -1,6 +1,5 @@
-use futures::channel::oneshot;
 use serde::{Deserialize, Serialize};
-use std::sync::mpsc::Sender;
+use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
 /// A command plus a channel to return the response.
 #[derive(Debug)]
@@ -42,7 +41,7 @@ pub enum RemoteCommand {
     },
     AddSseSubscriber {
         thread_id: i64,
-        sender: Sender<SseEvent>,
+        sender: UnboundedSender<SseEvent>,
     },
 }
 
@@ -64,18 +63,28 @@ impl SseEvent {
         }
     }
 
+    #[cfg(test)]
     pub fn to_bytes(&self) -> Vec<u8> {
         encode_sse(&self.event, &self.data.to_string())
     }
 
     /// An SSE comment frame suitable for heartbeats. EventSource ignores it.
+    #[cfg(test)]
     pub fn heartbeat_bytes() -> Vec<u8> {
         b":ping\n\n".to_vec()
+    }
+
+    /// Convert to an `axum` SSE event for streaming responses.
+    pub fn to_axum_event(&self) -> axum::response::sse::Event {
+        axum::response::sse::Event::default()
+            .event(self.event.clone())
+            .data(self.data.to_string())
     }
 }
 
 /// Encode an SSE frame. Newlines in the event name and multi-line data are escaped
 /// so the frame cannot be corrupted by user content.
+#[cfg(test)]
 fn encode_sse(event: &str, data: &str) -> Vec<u8> {
     // Event names cannot contain newlines; replace them with spaces.
     let event = event.replace('\n', " ");

@@ -24,9 +24,11 @@ percent-encoding = "2"
 fs2 = "0.4"
 syntect = "5"
 linkify = "0.9"
-tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "net"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-tungstenite = "0.26"
-tiny_http = "0.12"
+axum = "0.7"
+tower-http = { version = "0.6", features = ["cors"] }
 qrcode = { version = "0.14", default-features = false, features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 subtle = "2"
