@@ -26,6 +26,10 @@ syntect = "5"
 linkify = "0.9"
 tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 tokio-tungstenite = "0.26"
+tiny_http = "0.12"
+qrcode = { version = "0.14", default-features = false, features = ["image"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+subtle = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"

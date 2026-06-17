@@ -1,13 +1,13 @@
 use gpui::SharedString;
 use serde_json::Value;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Role {
     User,
     Assistant,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PartState {
     Streaming,
     Done,

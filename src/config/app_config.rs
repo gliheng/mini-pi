@@ -8,6 +8,59 @@ pub struct AppConfig {
     pub default_model: Option<String>,
     #[serde(default)]
     pub default_workspace_name: Option<String>,
+    #[serde(default)]
+    pub remote_control: RemoteControlConfig,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoteControlConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_bind_port")]
+    pub bind_port: u16,
+    #[serde(default)]
+    pub bearer_token: Option<String>,
+    #[serde(default)]
+    pub cloudflared: CloudflaredConfig,
+}
+
+impl Default for RemoteControlConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bind_port: default_bind_port(),
+            bearer_token: None,
+            cloudflared: CloudflaredConfig::default(),
+        }
+    }
+}
+
+fn default_bind_port() -> u16 {
+    9876
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CloudflaredConfig {
+    #[serde(default = "default_cloudflared_command")]
+    pub command: String,
+    #[serde(default)]
+    pub tunnel_token: Option<String>,
+    #[serde(default)]
+    pub hostname: Option<String>,
+}
+
+impl Default for CloudflaredConfig {
+    fn default() -> Self {
+        Self {
+            command: default_cloudflared_command(),
+            tunnel_token: None,
+            hostname: None,
+        }
+    }
+}
+
+fn default_cloudflared_command() -> String {
+    "cloudflared".to_string()
 }
 
 

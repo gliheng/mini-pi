@@ -7,6 +7,8 @@ use gpui::{
 use crate::auth::state::{self, AuthState};
 use crate::auth::supabase;
 use crate::core::app::AppStore;
+use crate::remote::qr::qr_image_source;
+use crate::remote::RemoteStatus;
 use crate::sync::settings_sync;
 use crate::ui::input::TextInput;
 
@@ -31,6 +33,7 @@ pub struct UserPanel {
     pub _email_sub: gpui::Subscription,
     pub _password_sub: gpui::Subscription,
     pub _confirm_password_sub: gpui::Subscription,
+    pub _remote_sub: Option<gpui::Subscription>,
 }
 
 impl UserPanel {
@@ -50,6 +53,13 @@ impl UserPanel {
             cx.notify();
         });
 
+        let remote_controller = cx.global::<AppStore>().remote_controller.clone();
+        let remote_sub = remote_controller.as_ref().map(|controller| {
+            cx.observe(controller, |_this, _controller, cx| {
+                cx.notify();
+            })
+        });
+
         Self {
             email_input,
             password_input,
@@ -59,6 +69,7 @@ impl UserPanel {
             _email_sub,
             _password_sub,
             _confirm_password_sub,
+            _remote_sub: remote_sub,
         }
     }
 }
@@ -299,6 +310,177 @@ impl Render for UserPanel {
     }
 }
 
+fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElement {
+    let Some(controller) = cx.global::<AppStore>().remote_controller.clone() else {
+        return div();
+    };
+
+    let c = controller.read(cx);
+    let enabled = c.is_enabled();
+    let status = c.status.clone();
+    let tunnel_url = c.tunnel_url.clone();
+    let error_message = c.error_message.clone();
+    let is_starting = c.is_starting();
+
+    let status_text: SharedString = match &status {
+        RemoteStatus::Disabled => "Off".into(),
+        RemoteStatus::Starting => "Starting...".into(),
+        RemoteStatus::Running => "Connected".into(),
+        RemoteStatus::Error(e) => format!("Error: {}", e).into(),
+    };
+    let status_color = match &status {
+        RemoteStatus::Running => rgb(0x22c55e),
+        RemoteStatus::Error(_) => rgb(0xef4444),
+        _ => rgb(0x888888),
+    };
+
+    let mut section = div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .px_2()
+                .py_1()
+                .text_xs()
+                .text_color(rgb(0x888888))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .child("REMOTE CONTROL"),
+        )
+        .child(
+            div()
+                .id("remote-toggle-row")
+                .w_full()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .px_4()
+                .py_3()
+                .rounded_lg()
+                .bg(rgb(0x252525))
+                .child(
+                    div()
+                        .flex_1()
+                        .text_sm()
+                        .text_color(rgb(0xe0e0e0))
+                        .child("Enable remote control"),
+                )
+                .child(
+                    div()
+                        .id("remote-toggle")
+                        .w(px(44.))
+                        .h(px(24.))
+                        .rounded_full()
+                        .bg(if enabled { rgb(0x6366f1) } else { rgb(0x444444) })
+                        .when(!is_starting, |s| s.cursor_pointer())
+                        .when(is_starting, |s| s.opacity(0.6))
+                        .child(
+                            div()
+                                .id("remote-toggle-knob")
+                                .size(px(20.))
+                                .rounded_full()
+                                .bg(rgb(0xffffff))
+                                .when(enabled, |s| s.ml(px(22.)))
+                                .when(!enabled, |s| s.ml(px(2.)))
+                                .mt(px(2.)),
+                        )
+                        .when(!is_starting, |s| {
+                            s.on_click(cx.listener(move |_this, _, _, cx| {
+                                if let Some(controller) =
+                                    cx.global::<AppStore>().remote_controller.clone()
+                                {
+                                    controller.update(cx, |c, cx| c.set_enabled(!c.is_enabled(), cx));
+                                }
+                            }))
+                        }),
+                ),
+        )
+        .child(
+            div()
+                .id("remote-status-row")
+                .w_full()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .px_4()
+                .py_2()
+                .rounded_lg()
+                .bg(rgb(0x252525))
+                .child(div().text_xs().text_color(rgb(0x888888)).child("Status"))
+                .child(div().flex_1())
+                .child(div().text_xs().text_color(status_color).child(status_text)),
+        );
+
+    if let Some(url) = tunnel_url {
+        let qr = qr_image_source(&url);
+        section = section.child(
+            div()
+                .id("remote-qr-card")
+                .w_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap_3()
+                .px_4()
+                .py_4()
+                .rounded_lg()
+                .bg(rgb(0x252525))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(0x888888))
+                        .child("Scan with your phone"),
+                )
+                .child(
+                    div().when_some(qr, |this, source| {
+                        this.child(gpui::img(source).size(px(160.)))
+                    }),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(0x6366f1))
+                        .child(SharedString::from(url)),
+                ),
+        );
+    }
+
+    if let Some(err) = error_message {
+        section = section.child(
+            div()
+                .id("remote-error-card")
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .px_4()
+                .py_3()
+                .rounded_lg()
+                .bg(rgb(0x2a1a1a))
+                .border_1()
+                .border_color(rgb(0x7f1d1d))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(0xfca5a5))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .child("Remote control failed"),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(0xfca5a5))
+                        .child(err),
+                ),
+        );
+    }
+
+    section
+}
+
 fn render_back_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
     div()
         .id("back-button")
@@ -429,6 +611,7 @@ fn render_auth_content(
                         .child(sync_row("Agent Settings", &sync_label))
                         .child(render_sync_button(cx)),
                 )
+                .child(render_remote_control_section(cx))
                 .child(
                     div()
                         .w_full()

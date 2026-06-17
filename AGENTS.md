@@ -4,7 +4,7 @@ A desktop GUI chat application that wraps the `pi` AI coding agent SDK. Built wi
 
 ## Project Overview
 
-`mini-pi` provides a native chat-window interface for interacting with the `pi` coding agent SDK. Users can create chat threads, select AI models, manage workspaces (project directories), and authenticate via Supabase to sync agent configuration across devices.
+`mini-pi` provides a native chat-window interface for interacting with the `pi` coding agent SDK. Users can create chat threads, select AI models, manage workspaces (project directories), authenticate via Supabase to sync agent configuration across devices, and optionally control the app remotely from a phone over a Cloudflare Tunnel.
 
 The application runs a Node.js/WebSocket bridge (`pi-bridge/`) that loads `@earendil-works/pi-coding-agent` and exposes the SDK over a single multiplexed WebSocket connection. Chat sessions are persisted locally in SQLite and as JSONL files, while agent configuration can be synced to a Supabase storage bucket.
 
@@ -32,7 +32,7 @@ src/core/
   app.rs                # AppStore GPUI Global and custom_window_options()
   assets.rs             # AssetSource implementation that loads SVGs from the assets/ directory
 src/config/
-  app_config.rs         # ~/.config/mini-pi/config.json (default_model, default_workspace_name)
+  app_config.rs         # ~/.config/mini-pi/config.json (default_model, default_workspace_name, remote_control)
   model_config.rs       # Hardcoded model list and provider/name helpers
 src/data/
   models.rs             # Domain enums: Role, PartState, MessagePart, Message, ChatState
@@ -42,6 +42,13 @@ src/auth/
   supabase.rs           # Supabase auth and Storage API client (hardcoded URL + anon key)
 src/rpc/
   pi_rpc.rs             # PiBridge shared WebSocket client, PiRpc session handle, BridgeEvent enum, JSON parser
+src/remote/
+  controller.rs         # RemoteController: enable/disable, command dispatch, SSE broadcasting, cloudflared lifecycle
+  server.rs             # tiny_http REST server with Server-Sent Events
+  tunnel.rs             # cloudflared process management and quick-tunnel URL parsing
+  qr.rs                 # QR code generation for the tunnel URL
+  auth.rs               # Optional local bearer-token validation
+  types.rs              # RemoteCommand / RemoteResponse / SseEvent types
 pi-bridge/
   package.json          # Node dependencies for the SDK bridge
   src/index.ts          # WebSocket server that runs @earendil-works/pi-coding-agent
@@ -60,7 +67,7 @@ src/utils/
 src/views/
   thread_list.rs        # Home window showing pinned/unpinned threads
   chat_window.rs        # Per-thread chat window, model dropdown, workspace bar, message rendering
-  user_panel.rs         # Account/auth/settings panel
+  user_panel.rs         # Account/auth/settings panel, including remote-control toggle and QR code
   title_bar.rs          # Custom title bar with pin, export, workspace, and avatar controls
   workspace_manager.rs  # Modal workspace picker
   reasoning.rs          # Collapsible thinking/reasoning display
@@ -96,7 +103,8 @@ cargo test
    - **Linux:** Vulkan drivers, `libxcb`, `libxkbcommon`, `libfontconfig`, `libssl`
    - **Windows:** Vulkan SDK or DirectX
 3. **Node.js** (with `npm`) or **bun** must be installed, and `pi-bridge/node_modules` must be present (`cd pi-bridge && npm install`). The app spawns the bridge automatically and connects to it over a local WebSocket.
-4. *(Optional)* **Cloudflare AI Gateway** environment variables for auto-generated thread titles:
+4. *(Optional)* **cloudflared** is required for the phone remote-control feature (the app can auto-spawn it; install with `brew install cloudflared` or from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/).
+5. *(Optional)* **Cloudflare AI Gateway** environment variables for auto-generated thread titles:
    - `CLOUDFLARE_API_KEY`
    - `CLOUDFLARE_ACCOUNT_ID`
    - `CLOUDFLARE_GATEWAY_ID`
@@ -139,6 +147,17 @@ Each chat thread opens its own window. Inside the window, `ChatWindow::spawn_pi`
 - Receives a per-session `futures::channel::mpsc` stream of `BridgeEvent`s from the bridge.
 - Sends commands (`prompt`, `set_model`, `fork`, etc.) over the shared WebSocket; the bridge forwards SDK events back with the same `sessionId`.
 - The `ChatWindow` GPUI task consumes the per-session event stream and updates messages/reasoning/tool-call state.
+
+### Remote Control
+
+When enabled in the user settings panel (`remote_control.enabled` in `~/.config/mini-pi/config.json`):
+
+- `RemoteController` starts a local `tiny_http` server bound to `127.0.0.1:<bind_port>`, served by a fixed-size worker pool.
+- It auto-spawns `cloudflared` to expose that port through a Cloudflare Tunnel (quick tunnel by default, or a named tunnel via `cloudflared.tunnel_token`; named tunnels also require `cloudflared.hostname`).
+- The user panel displays the public tunnel URL and a QR code for easy phone scanning.
+- The phone sends REST commands (`GET /threads`, `POST /threads/:id/message`, `GET /threads/:id/stream`, etc.) and receives live assistant replies via Server-Sent Events.
+- SSE streams send an initial full snapshot, delta events for changes, and periodic heartbeat pings to keep proxies alive.
+- Cloudflare Access is the recommended authentication layer at the tunnel edge; an optional local `bearer_token` can be configured for quick-tunnel mode.
 
 ### Window Management
 
@@ -186,8 +205,8 @@ This application is a thin GUI wrapper around the `@earendil-works/pi-coding-age
 
 ## Testing
 
-- `cargo test` runs the unit tests in `src/ui/markdown.rs`.
-- The current codebase has **11 markdown unit tests**; all pass.
+- `cargo test` runs the unit tests in `src/ui/markdown.rs` and the remote-control tests in `src/remote/`.
+- The current codebase has **52 unit tests** total, including markdown parsing/rendering, tunnel URL extraction, bearer-token validation, SSE framing, and HTTP-server integration (status, auth, `since_id`, SSE CORS headers, and SSE heartbeat); all pass.
 - There are no integration tests and no CI workflows configured for this repository.
 
 ## Documentation

@@ -2,6 +2,7 @@ pub mod auth;
 pub mod config;
 pub mod core;
 pub mod data;
+pub mod remote;
 pub mod rpc;
 pub mod sync;
 pub mod ui;

@@ -2,6 +2,7 @@ mod auth;
 mod config;
 mod core;
 mod data;
+mod remote;
 mod rpc;
 mod sync;
 mod ui;
@@ -19,6 +20,7 @@ use crate::core::app::{AppStore, custom_window_options};
 use crate::core::assets::Assets;
 use crate::core::session_manager::SessionManager;
 use crate::data::store::Store;
+use crate::remote::RemoteController;
 use crate::rpc::pi_rpc::PiBridge;
 use crate::sync::settings_sync;
 use crate::views::thread_list::ThreadList;
@@ -29,7 +31,12 @@ fn quit(_: &Quit, cx: &mut App) {
 
 fn main() {
     let store = Arc::new(Store::open().expect("failed to open database"));
-    let config = AppConfig::load();
+    let mut config = AppConfig::load();
+    // Remote control is always off on app startup.
+    config.remote_control.enabled = false;
+    if let Err(e) = config.save() {
+        eprintln!("[remote] failed to save startup config: {}", e);
+    }
     let assets_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
 
     let (auth, session) = match state::load_session(&store) {
@@ -75,6 +82,10 @@ fn main() {
     Application::new()
         .with_assets(Assets { base: assets_dir })
         .run(move |cx: &mut App| {
+            let remote_controller = cx.new(|cx| {
+                RemoteController::new(cx, config.remote_control.clone())
+            });
+
             cx.set_global(AppStore {
                 store: store.clone(),
                 config,
@@ -87,6 +98,7 @@ fn main() {
                 pi_bridge: pi_bridge.clone(),
                 session_manager: SessionManager::new(),
                 streaming_thread_ids: HashSet::new(),
+                remote_controller: Some(remote_controller),
             });
 
             if auth.is_logged_in() {
