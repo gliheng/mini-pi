@@ -75,6 +75,7 @@ impl Render for ThreadItem {
             .border_color(rgb(0x252525))
             .hover(|style| style.bg(rgb(0x252525)))
             .cursor_pointer()
+            .w_full()
             .flex()
             .flex_row()
             .items_center()
@@ -126,28 +127,43 @@ impl Render for ThreadItem {
             .child(
                 div()
                     .flex_1()
+                    .min_w_0()
                     .flex()
                     .flex_col()
                     .gap_1()
                     .child(
-                        div().flex().flex_row().items_center().gap_1().child(
-                            div()
-                                .text_sm()
-                                .text_color(rgb(0xe0e0e0))
-                                .overflow_x_hidden()
-                                .child(title),
-                        ),
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_1()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_sm()
+                                    .text_color(rgb(0xe0e0e0))
+                                    .overflow_x_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .child(title),
+                            ),
                     )
                     .child(
                         div()
+                            .w_full()
+                            .min_w_0()
                             .text_xs()
                             .text_color(rgb(0x666666))
                             .overflow_x_hidden()
+                            .whitespace_nowrap()
                             .child(preview),
                     ),
             )
             .child(
                 div()
+                    .flex_shrink_0()
                     .flex()
                     .flex_row()
                     .items_center()

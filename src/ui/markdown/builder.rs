@@ -598,7 +598,12 @@ impl<'a> MarkdownElementBuilder<'a> {
         // builder and returned by `build_with_mappings`.
         self.source_mappings.extend(mappings);
         let text_runs = self.pending_runs_to_text_runs(&text, &runs);
-        let styled = StyledText::new(text).with_runs(text_runs).into_any_element();
+        let styled = div()
+            .w_full()
+            .min_w_0()
+            .whitespace_normal()
+            .child(StyledText::new(text).with_runs(text_runs))
+            .into_any_element();
         self.push_child(styled);
     }
 
@@ -986,6 +991,14 @@ mod tests {
     #[test]
     fn builder_handles_inline_formatting() {
         let parsed = parse_markdown("Some **bold** and *italic* and `code` and ~~strike~~ text.");
+        let theme = default_theme();
+        let _element = MarkdownElementBuilder::build(&parsed, &theme);
+    }
+
+    #[test]
+    fn builder_handles_cjk_paragraph_text() {
+        let parsed =
+            parse_markdown("我可以使用浏览器自动化来帮你查天气！让我去查一下今天的天气信息。");
         let theme = default_theme();
         let _element = MarkdownElementBuilder::build(&parsed, &theme);
     }
