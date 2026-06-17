@@ -1,8 +1,11 @@
 use subtle::ConstantTimeEq;
 use tiny_http::{Header, Request, Response, StatusCode};
 
-/// Check the request's `Authorization: Bearer <token>` header against the configured token.
-/// If the token is missing or mismatched, respond immediately and return `None`.
+/// Check the request's bearer token against the configured token.
+/// The token may be provided either via the `Authorization: Bearer <token>` header
+/// or the `access_token` query parameter (needed for EventSource/SSE from browsers,
+/// which cannot set custom headers).
+/// If the token is missing or mismatched, respond immediately with 401.
 /// If no token is configured, every request is allowed.
 pub fn require_bearer_token<'a>(
     request: &'a Request,
@@ -12,7 +15,7 @@ pub fn require_bearer_token<'a>(
         return Ok(());
     };
 
-    let provided = request
+    let header_token = request
         .headers()
         .iter()
         .find(|h| h.field.equiv("authorization"))
@@ -23,7 +26,21 @@ pub fn require_bearer_token<'a>(
                 .map(|_| &s[7..])
         });
 
-    let provided = provided.unwrap_or("");
+    let query_token = request
+        .url()
+        .split_once('?')
+        .and_then(|(_, query)| {
+            query.split('&').find_map(|pair| {
+                let (k, v) = pair.split_once('=')?;
+                if k == "access_token" || k == "token" {
+                    Some(v)
+                } else {
+                    None
+                }
+            })
+        });
+
+    let provided = header_token.or(query_token).unwrap_or("");
     let expected_bytes = expected.as_bytes();
     let provided_bytes = provided.as_bytes();
 
@@ -84,5 +101,23 @@ mod tests {
     fn uppercase_bearer_scheme_allowed() {
         let req = make_request(Some("BEARER secret"));
         assert!(require_bearer_token(&req, &Some("secret".to_string())).is_ok());
+    }
+
+    #[test]
+    fn query_param_token_allowed() {
+        let req = tiny_http::TestRequest::new()
+            .with_method("GET".parse().unwrap())
+            .with_path("/threads/1/stream?access_token=secret")
+            .into();
+        assert!(require_bearer_token(&req, &Some("secret".to_string())).is_ok());
+    }
+
+    #[test]
+    fn query_param_token_rejected_when_wrong() {
+        let req = tiny_http::TestRequest::new()
+            .with_method("GET".parse().unwrap())
+            .with_path("/threads/1/stream?access_token=wrong")
+            .into();
+        assert!(require_bearer_token(&req, &Some("secret".to_string())).is_err());
     }
 }
