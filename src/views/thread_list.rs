@@ -152,13 +152,21 @@ impl Render for ThreadItem {
                     )
                     .child(
                         div()
-                            .w_full()
                             .min_w_0()
-                            .text_xs()
-                            .text_color(rgb(0x666666))
-                            .overflow_x_hidden()
-                            .whitespace_nowrap()
-                            .child(preview),
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_xs()
+                                    .text_color(rgb(0x666666))
+                                    .overflow_x_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .child(preview),
+                            ),
                     ),
             )
             .child(

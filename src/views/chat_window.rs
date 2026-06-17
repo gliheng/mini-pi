@@ -1099,7 +1099,7 @@ impl ChatWindow {
 }
 
 impl Render for ChatWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let status = match &self.state {
             ChatState::Idle => None,
             ChatState::Loading => Some(SharedString::from("Loading...")),
@@ -1180,6 +1180,7 @@ impl Render for ChatWindow {
 
         // Ensure markdown displays exist for assistant text parts only
         let mut markdown_entities: Vec<Vec<Option<gpui::Entity<MarkdownRenderer>>>> = Vec::new();
+        let assistant_text_width = (window.viewport_size().width - px(80.)).max(px(320.));
         for (msg_idx, msg) in self.messages.iter().enumerate() {
             let mut msg_markdown: Vec<Option<gpui::Entity<MarkdownRenderer>>> = Vec::new();
             let is_assistant = matches!(msg.role, Role::Assistant);
@@ -1375,6 +1376,7 @@ impl Render for ChatWindow {
                                                                         div()
                                                                             .py_2()
                                                                             .rounded_md()
+                                                                            .when(!is_user, |this| this.w_full().min_w_0())
                                                                             .when(is_user, |this| {
                                                                                 this.px_3()
                                                                                     .bg(rgb(0x6366f1))
@@ -1389,7 +1391,18 @@ impl Render for ChatWindow {
                                                                             })
                                                                             .when(!is_streaming_empty, |this| {
                                                                                 if let Some(md) = markdown_entity {
-                                                                                    this.child(md)
+                                                                                    this.child(
+                                                                                        div()
+                                                                                            .flex()
+                                                                                            .w(assistant_text_width)
+                                                                                            .min_w_0()
+                                                                                            .child(
+                                                                                                div()
+                                                                                                    .flex_1()
+                                                                                                    .min_w_0()
+                                                                                                    .child(md),
+                                                                                            ),
+                                                                                    )
                                                                                 } else {
                                                                                     this.child(text.clone())
                                                                                 }
