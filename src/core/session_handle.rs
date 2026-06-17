@@ -24,6 +24,7 @@ pub struct WorkspaceInfo {
 #[derive(Clone, Debug)]
 pub enum SessionEvent {
     Changed,
+    ExportHtmlSucceeded { path: PathBuf },
 }
 
 pub struct SessionHandle {
@@ -899,6 +900,9 @@ impl SessionHandle {
                         if let Some(ref data_val) = data
                             && let Some(path) = data_val.get("path").and_then(|p| p.as_str()) {
                                 eprintln!("[mini-pi] session exported to: {}", path);
+                                cx.emit(SessionEvent::ExportHtmlSucceeded {
+                                    path: PathBuf::from(path),
+                                });
                             }
                     } else {
                         let err = error.as_deref().unwrap_or("export failed");

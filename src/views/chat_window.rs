@@ -1,6 +1,7 @@
 use std::{
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 
 use crate::views::title_bar::{TitleBarEvent, TitleBarVariant};
@@ -330,8 +331,15 @@ impl ChatWindow {
         self.sync_from_session(cx);
         self.session_subscription = Some(cx.subscribe(
             &session,
-            |this, _session, _event: &SessionEvent, cx| {
+            |this, _session, event: &SessionEvent, cx| {
                 this.sync_from_session(cx);
+                if let SessionEvent::ExportHtmlSucceeded { path } = event {
+                    this.toast.update(cx, |toast, cx| {
+                        toast.set_message("Session exported to HTML");
+                        toast.set_action("Reveal", path.clone());
+                        toast.show_for(Duration::from_secs(5), cx);
+                    });
+                }
                 cx.notify();
             },
         ));
