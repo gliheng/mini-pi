@@ -515,7 +515,10 @@ impl SessionHandle {
                     parts: vec![],
                 });
             }
-            BridgeEvent::AgentEnd => {
+            BridgeEvent::AgentEnd { messages } => {
+                if let Some(messages) = messages {
+                    self.apply_final_agent_messages(messages);
+                }
                 for msg in self.messages.iter_mut() {
                     for part in msg.parts.iter_mut() {
                         match part {
@@ -1067,4 +1070,62 @@ impl SessionHandle {
             }
         }
     }
+
+    fn apply_final_agent_messages(&mut self, loaded: Vec<LoadedMessage>) {
+        let mut assistant_messages = loaded
+            .into_iter()
+            .filter(|msg| msg.role == "assistant" && !msg.parts.is_empty())
+            .collect::<Vec<_>>();
+        let Some(final_assistant) = assistant_messages.pop() else {
+            return;
+        };
+
+        let Some(target) = self
+            .messages
+            .iter_mut()
+            .rev()
+            .find(|msg| matches!(msg.role, Role::Assistant))
+        else {
+            return;
+        };
+
+        let parts = loaded_parts_to_message_parts(final_assistant.parts);
+        if parts.is_empty() {
+            return;
+        }
+
+        if target.entry_id.is_none() {
+            target.entry_id = final_assistant.id;
+        }
+        target.parts = parts;
+    }
+}
+
+fn loaded_parts_to_message_parts(parts: Vec<LoadedPart>) -> Vec<MessagePart> {
+    parts
+        .into_iter()
+        .filter_map(|part| match part {
+            LoadedPart::Text { text } => Some(MessagePart::Text {
+                text: text.into(),
+                state: Some(PartState::Done),
+            }),
+            LoadedPart::Thinking { text } => Some(MessagePart::Reasoning {
+                text: text.into(),
+                state: Some(PartState::Done),
+                provider_metadata: None,
+            }),
+            LoadedPart::ToolCall { name, args } => Some(MessagePart::ToolCall {
+                tool_call_id: SharedString::from(""),
+                name: name.into(),
+                args: args.into(),
+                state: Some(PartState::Done),
+            }),
+            LoadedPart::ToolResult { name, output } => Some(MessagePart::ToolResult {
+                tool_call_id: SharedString::from(""),
+                name: name.into(),
+                output: output.into(),
+                state: Some(PartState::Done),
+            }),
+        })
+        .collect()
 }

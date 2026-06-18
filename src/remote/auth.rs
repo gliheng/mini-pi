@@ -1,10 +1,10 @@
 use axum::{
+    Json,
     body::Body,
     extract::{Request, State},
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -15,8 +15,7 @@ use crate::remote::server::AppState;
 /// Axum middleware that enforces the optional bearer token.
 ///
 /// The token may be provided either via the `Authorization: Bearer <token>` header
-/// or the `access_token` query parameter (needed for EventSource/SSE from browsers,
-/// which cannot set custom headers). If no token is configured, every request is allowed.
+/// or the `access_token` query parameter. If no token is configured, every request is allowed.
 pub async fn require_bearer_token(
     State(state): State<Arc<AppState>>,
     req: Request<Body>,
@@ -56,19 +55,16 @@ fn extract_token(req: &Request<Body>) -> Option<&str> {
                 .map(|_| &s[7..])
         });
 
-    let query_token = req
-        .uri()
-        .query()
-        .and_then(|query| {
-            query.split('&').find_map(|pair| {
-                let (k, v) = pair.split_once('=')?;
-                if k == "access_token" || k == "token" {
-                    Some(v)
-                } else {
-                    None
-                }
-            })
-        });
+    let query_token = req.uri().query().and_then(|query| {
+        query.split('&').find_map(|pair| {
+            let (k, v) = pair.split_once('=')?;
+            if k == "access_token" || k == "token" {
+                Some(v)
+            } else {
+                None
+            }
+        })
+    });
 
     header_token.or(query_token)
 }
@@ -119,13 +115,13 @@ mod tests {
 
     #[test]
     fn query_param_token_allowed() {
-        let req = make_request(None, "/threads/1/stream?access_token=secret");
+        let req = make_request(None, "/threads/1/message?access_token=secret");
         assert_eq!(extract_token(&req), Some("secret"));
     }
 
     #[test]
     fn query_param_token_rejected_when_wrong() {
-        let req = make_request(None, "/threads/1/stream?access_token=wrong");
+        let req = make_request(None, "/threads/1/message?access_token=wrong");
         assert_eq!(extract_token(&req), Some("wrong"));
     }
 

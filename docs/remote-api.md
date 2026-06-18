@@ -2,7 +2,7 @@
 
 `mini-pi` can expose its chat sessions over HTTP so you can build a custom frontend (mobile web app, dashboard, automation script, etc.) that talks to the running desktop app. The desktop app starts a local HTTP server and tunnels it to the public internet via `cloudflared`.
 
-This guide explains how to enable remote control and how to use the exposed REST and Server-Sent Events (SSE) APIs from a frontend.
+This guide explains how to enable remote control and how to use the exposed REST and AI SDK streaming APIs from a frontend.
 
 ---
 
@@ -13,7 +13,7 @@ This guide explains how to enable remote control and how to use the exposed REST
 - [Authentication](#authentication)
 - [Base URL](#base-url)
 - [REST Endpoints](#rest-endpoints)
-- [SSE Streaming](#sse-streaming)
+- [Message Streaming](#message-streaming)
 - [Data Schemas](#data-schemas)
 - [Frontend Workflow Example](#frontend-workflow-example)
 - [Error Handling](#error-handling)
@@ -31,7 +31,7 @@ When remote control is enabled, the desktop app:
 3. Displays the public tunnel URL and a QR code in the user settings panel.
 4. Accepts HTTP requests from any client that can reach the tunnel URL.
 
-The API is intentionally small and stateful: it operates on the app’s existing SQLite-backed threads and the single active "target" session. A frontend can list threads, open one, send messages, and subscribe to live updates.
+The API is intentionally small and stateful: it operates on the app’s existing SQLite-backed threads and the single active "target" session. A frontend can list threads, open one, and send messages through streaming POST requests.
 
 ---
 
@@ -236,16 +236,27 @@ Sends a user message to the thread.
 { "message": "Refactor this function to use Result" }
 ```
 
-**Response `202 Accepted`**
+**Response `200 OK`**
 
-```json
-{
-  "message_id": "msg-uuid-3",
-  "status": "accepted"
-}
+```http
+Content-Type: text/event-stream
+X-Vercel-AI-UI-Message-Stream: v1
+Cache-Control: no-cache
+Connection: keep-alive
+X-Accel-Buffering: no
 ```
 
-The assistant response streams through the SSE endpoint.
+The response body is a data-only Server-Sent Events stream using the AI SDK UI message chunk protocol.
+
+```
+data: {"type":"start","messageId":"msg-uuid-4"}
+data: {"type":"text-start","id":"text-0"}
+data: {"type":"text-delta","id":"text-0","delta":"Here is"}
+data: {"type":"text-end","id":"text-0"}
+data: {"type":"finish-step"}
+data: {"type":"finish","finishReason":"stop"}
+data: [DONE]
+```
 
 ---
 
@@ -307,78 +318,9 @@ Changes the workspace for the thread.
 
 ---
 
-## SSE Streaming
+## Message Streaming
 
-### `GET /threads/:id/stream`
-
-Opens a long-lived Server-Sent Events stream for live thread updates. The connection sends:
-
-1. An initial `update` event with the full thread snapshot.
-2. `delta` events whenever messages are added, updated, removed, or the chat state changes.
-3. `:ping` comment heartbeats every 5 seconds to keep proxies and browsers alive.
-
-**Request**
-
-```http
-GET /threads/42/stream HTTP/1.1
-Authorization: Bearer <token>
-Accept: text/event-stream
-```
-
-**Initial `update` event**
-
-```
-event: update
-data: {"state":"idle","messages":[{"id":"...",...}]}
-
-```
-
-**`delta` event while streaming**
-
-```
-event: delta
-data: {"state":"streaming","added_messages":[],"updated_messages":[{"id":"...","parts":[{"type":"text","text":"Hel","state":"Streaming"}]}],"removed_message_ids":[]}
-
-```
-
-**Heartbeat**
-
-```
-: ping
-
-```
-
-### Delta fields
-
-| Field | Description |
-|-------|-------------|
-| `state` | New chat state if it changed; otherwise `null`. |
-| `added_messages` | Full message objects that appeared since the last event. |
-| `updated_messages` | Full message objects whose content changed (e.g. streaming text). |
-| `removed_message_ids` | IDs of messages that were removed. |
-
-### Consuming SSE from JavaScript
-
-```javascript
-const evtSource = new EventSource(`/threads/${threadId}/stream`);
-
-evtSource.addEventListener('update', (e) => {
-  const snapshot = JSON.parse(e.data);
-  renderMessages(snapshot.messages);
-});
-
-evtSource.addEventListener('delta', (e) => {
-  const delta = JSON.parse(e.data);
-  if (delta.state) updateState(delta.state);
-  delta.added_messages.forEach(addMessage);
-  delta.updated_messages.forEach(updateMessage);
-  delta.removed_message_ids.forEach(removeMessage);
-});
-```
-
-> **Note:** `EventSource` does not support custom headers such as `Authorization`. If you use a bearer token, either:
-> - Put the token in the URL query string as `?access_token=<token>` (also accepted as `?token=<token>`), or
-> - Use a library like `eventsource-parser` or manual `fetch` + `ReadableStream` parsing with the header.
+Use `POST /threads/:id/message` as the streaming request. The stream emits AI SDK `UIMessageChunk` objects, including text, reasoning, tool input/output, error, and finish chunks.
 
 ---
 
@@ -475,18 +417,9 @@ A typical web frontend flow:
    const { thread_id } = await res.json();
    ```
 
-4. **Start SSE stream**
+4. **Send a message and consume the stream**
    ```javascript
-   const stream = new EventSource(
-     `${BASE_URL}/threads/${thread_id}/stream?access_token=${TOKEN}`
-   );
-   stream.addEventListener('update', (e) => renderSnapshot(JSON.parse(e.data)));
-   stream.addEventListener('delta', (e) => applyDelta(JSON.parse(e.data)));
-   ```
-
-5. **Send a message**
-   ```javascript
-   await fetch(`${BASE_URL}/threads/${thread_id}/message`, {
+   const res = await fetch(`${BASE_URL}/threads/${thread_id}/message`, {
      method: 'POST',
      headers: {
        'Authorization': `Bearer ${TOKEN}`,
@@ -494,10 +427,11 @@ A typical web frontend flow:
      },
      body: JSON.stringify({ message: 'Hello!' })
    });
+   // Parse res.body as AI SDK UIMessageChunk data-SSE until data: [DONE].
    ```
 
-6. **Render deltas as they arrive**
-   The assistant response updates in real time through the SSE stream.
+5. **Render chunks as they arrive**
+   Text, reasoning, tool, error, and finish chunks arrive on the POST response body.
 
 ---
 
@@ -509,14 +443,13 @@ The API uses standard HTTP status codes:
 |--------|---------|
 | `200` | Success |
 | `201` | Thread created |
-| `202` | Message accepted |
 | `204` | CORS preflight (`OPTIONS`) |
 | `400` | Bad request (invalid thread id, unknown model, malformed body) |
 | `401` | Missing or invalid bearer token |
 | `404` | Thread or workspace not found, or unknown route |
 | `405` | Method not allowed |
 | `500` | Server-side error |
-| `503` | Remote controller unavailable (SSE only) |
+| `503` | Remote controller unavailable |
 
 Error bodies follow this shape:
 
@@ -558,5 +491,4 @@ This lets a browser frontend hosted on a different origin talk to the tunnel URL
 
 - Only one thread is the active "target" at a time. Opening or creating a thread replaces the target session.
 - There is no endpoint to list workspaces or models; those must be known by the frontend or hardcoded.
-- SSE streams are tied to a single thread; you must open one stream per thread you want to watch.
-- Streaming message caches are trimmed after 1000 messages, at which point a full snapshot is sent.
+- Message streams are tied to the POST request that submitted the prompt.

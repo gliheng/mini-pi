@@ -48,7 +48,7 @@ src/remote/
   tunnel.rs             # cloudflared process management and quick-tunnel URL parsing
   qr.rs                 # QR code generation for the tunnel URL
   auth.rs               # Optional local bearer-token validation
-  types.rs              # RemoteCommand / RemoteResponse / SseEvent types
+  types.rs              # RemoteCommand / RemoteResponse / AI stream event types
 pi-bridge/
   package.json          # Node dependencies for the SDK bridge
   src/index.ts          # WebSocket server that runs @earendil-works/pi-coding-agent
@@ -155,8 +155,8 @@ When enabled in the user settings panel (`remote_control.enabled` in `~/.config/
 - `RemoteController` starts a local `axum` server bound to `127.0.0.1:<bind_port>`, served by a dedicated Tokio runtime. Commands and SSE events are routed through Tokio channels.
 - It auto-spawns `cloudflared` to expose that port through a Cloudflare Tunnel (quick tunnel by default, or a named tunnel via `cloudflared.tunnel_token`; named tunnels also require `cloudflared.hostname`).
 - The user panel displays the public tunnel URL and a QR code for easy phone scanning.
-- The phone sends REST commands (`GET /threads`, `POST /threads/:id/message`, `GET /threads/:id/stream`, etc.) and receives live assistant replies via Server-Sent Events.
-- SSE streams send an initial full snapshot, delta events for changes, and periodic heartbeat pings to keep proxies alive.
+- The phone sends REST commands (`GET /threads`, `POST /threads/:id/message`, etc.) and receives live assistant replies from the streaming message POST response.
+- Message responses stream AI SDK UI message chunks over data-only Server-Sent Events.
 - Cloudflare Access is the recommended authentication layer at the tunnel edge; an optional local `bearer_token` can be configured for quick-tunnel mode.
 
 ### Window Management

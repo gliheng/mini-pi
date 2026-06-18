@@ -3,13 +3,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
+    Router,
     body::Bytes,
     extract::{DefaultBodyLimit, Path, Query, State},
-    http::{header, Method, StatusCode},
+    http::{Method, StatusCode, header},
     middleware,
     response::{IntoResponse, Json, Response, Sse},
     routing::{get, post},
-    Router,
 };
 use futures::StreamExt;
 use serde::Deserialize;
@@ -111,7 +111,6 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/threads", get(list_threads).post(create_thread))
         .route("/threads/:id/open", post(open_thread))
         .route("/threads/:id/messages", get(get_messages))
-        .route("/threads/:id/stream", get(stream_handler))
         .route("/threads/:id/message", post(send_message))
         .route("/threads/:id/abort", post(abort))
         .route("/threads/:id/model", post(set_model))
@@ -189,7 +188,11 @@ async fn get_messages(
     json_response(http_status_for(&value, 200), value)
 }
 
-async fn send_message(State(state): State<Arc<AppState>>, Path(id): Path<String>, body: Bytes) -> Response {
+async fn send_message(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Response {
     let thread_id = match parse_thread_id(&id) {
         Ok(id) => id,
         Err(response) => return response.into(),
@@ -198,15 +201,31 @@ async fn send_message(State(state): State<Arc<AppState>>, Path(id): Path<String>
         Ok(p) => p,
         Err(response) => return response.into(),
     };
+    let (stream_tx, stream_rx) = mpsc::unbounded_channel();
     let value = send_command(
-        RemoteCommand::SendMessage {
+        RemoteCommand::SendMessageStream {
             thread_id,
             message: payload.message,
+            sender: stream_tx,
         },
         &state.command_sender,
     )
     .await;
-    json_response(http_status_for(&value, 202), value)
+
+    if value.get("error").is_some() {
+        return json_response(http_status_for(&value, 500), value);
+    }
+
+    let stream = UnboundedReceiverStream::new(stream_rx)
+        .map(|event| Ok::<_, std::convert::Infallible>(event.to_axum_event()));
+
+    ai_stream_response(
+        Sse::new(stream).keep_alive(
+            axum::response::sse::KeepAlive::new()
+                .interval(HEARTBEAT_INTERVAL)
+                .text("ping"),
+        ),
+    )
 }
 
 async fn abort(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
@@ -218,7 +237,11 @@ async fn abort(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Re
     json_response(http_status_for(&value, 200), value)
 }
 
-async fn set_model(State(state): State<Arc<AppState>>, Path(id): Path<String>, body: Bytes) -> Response {
+async fn set_model(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Response {
     let thread_id = match parse_thread_id(&id) {
         Ok(id) => id,
         Err(response) => return response.into(),
@@ -262,37 +285,6 @@ async fn set_workspace(
     json_response(http_status_for(&value, 200), value)
 }
 
-async fn stream_handler(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
-    let thread_id = match parse_thread_id(&id) {
-        Ok(id) => id,
-        Err(response) => return response.into(),
-    };
-
-    let (sse_tx, sse_rx) = mpsc::unbounded_channel();
-    let value = send_command(
-        RemoteCommand::AddSseSubscriber {
-            thread_id,
-            sender: sse_tx,
-        },
-        &state.command_sender,
-    )
-    .await;
-
-    if value.get("error").is_some() {
-        return json_response(StatusCode::SERVICE_UNAVAILABLE, value);
-    }
-
-    let stream =
-        UnboundedReceiverStream::new(sse_rx).map(|event| Ok::<_, std::convert::Infallible>(event.to_axum_event()));
-    Sse::new(stream)
-        .keep_alive(
-            axum::response::sse::KeepAlive::new()
-                .interval(HEARTBEAT_INTERVAL)
-                .text("ping"),
-        )
-        .into_response()
-}
-
 async fn send_command(
     command: RemoteCommand,
     command_sender: &mpsc::UnboundedSender<CommandEnvelope>,
@@ -321,9 +313,10 @@ enum ParseError {
 impl From<ParseError> for Response {
     fn from(err: ParseError) -> Self {
         match err {
-            ParseError::BadThreadId => {
-                json_response(StatusCode::BAD_REQUEST, json!({ "error": "invalid thread id" }))
-            }
+            ParseError::BadThreadId => json_response(
+                StatusCode::BAD_REQUEST,
+                json!({ "error": "invalid thread id" }),
+            ),
             ParseError::InvalidBody(msg) => {
                 json_response(StatusCode::BAD_REQUEST, json!({ "error": msg }))
             }
@@ -338,12 +331,30 @@ fn parse_thread_id(id: &str) -> Result<i64, ParseError> {
 fn parse_json_body<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, ParseError> {
     let body = String::from_utf8(body.to_vec())
         .map_err(|_| ParseError::InvalidBody("invalid UTF-8 body".to_string()))?;
-    serde_json::from_str(&body)
-        .map_err(|e| ParseError::InvalidBody(format!("invalid body: {}", e)))
+    serde_json::from_str(&body).map_err(|e| ParseError::InvalidBody(format!("invalid body: {}", e)))
 }
 
 fn json_response(status: StatusCode, value: RemoteResponse) -> Response {
     (status, Json(value)).into_response()
+}
+
+fn ai_stream_response<S, E>(sse: Sse<S>) -> Response
+where
+    S: futures::Stream<Item = Result<axum::response::sse::Event, E>> + Send + 'static,
+    E: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let mut response = sse.into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        "x-vercel-ai-ui-message-stream",
+        header::HeaderValue::from_static("v1"),
+    );
+    headers.insert("x-accel-buffering", header::HeaderValue::from_static("no"));
+    headers.insert(
+        header::CONNECTION,
+        header::HeaderValue::from_static("keep-alive"),
+    );
+    response
 }
 
 /// Map a command result to an HTTP status code. Errors that clearly indicate a
@@ -367,9 +378,8 @@ fn http_status_for(value: &RemoteResponse, ok_status: u16) -> StatusCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote::types::AiStreamEvent;
     use futures::executor::block_on;
-    use std::io::{BufRead, BufReader, Write};
-    use std::time::{Duration, Instant};
 
     fn make_dummy_messages() -> Vec<serde_json::Value> {
         vec![
@@ -396,7 +406,6 @@ mod tests {
 
     fn spawn_dummy_controller(mut rx: tokio::sync::mpsc::UnboundedReceiver<CommandEnvelope>) {
         std::thread::spawn(move || {
-            let mut sse_senders: Vec<tokio::sync::mpsc::UnboundedSender<crate::remote::types::SseEvent>> = Vec::new();
             while let Some(envelope) = block_on(rx.recv()) {
                 let value = match envelope.command {
                     RemoteCommand::Status => {
@@ -415,58 +424,39 @@ mod tests {
                             .unwrap_or(0);
                         json!(messages.into_iter().skip(start_idx).collect::<Vec<_>>())
                     }
-                    RemoteCommand::AddSseSubscriber { sender, .. } => {
-                        // Keep the sender alive so the SSE stream can send heartbeats
-                        // even when no further events are produced.
-                        sse_senders.push(sender.clone());
-                        let _ = sender.send(crate::remote::types::SseEvent::new(
-                            "update",
-                            json!({
-                                "state": "idle",
-                                "messages": make_dummy_messages(),
-                            }),
-                        ));
-                        json!(null)
+                    RemoteCommand::SendMessageStream { sender, .. } => {
+                        let _ = sender.send(AiStreamEvent::Chunk(json!({
+                            "type": "start",
+                            "messageId": "assistant-1",
+                        })));
+                        let _ = sender.send(AiStreamEvent::Chunk(json!({
+                            "type": "text-start",
+                            "id": "text-0",
+                        })));
+                        let _ = sender.send(AiStreamEvent::Chunk(json!({
+                            "type": "text-delta",
+                            "id": "text-0",
+                            "delta": "hello",
+                        })));
+                        let _ = sender.send(AiStreamEvent::Chunk(json!({
+                            "type": "text-end",
+                            "id": "text-0",
+                        })));
+                        let _ = sender.send(AiStreamEvent::Chunk(json!({
+                            "type": "finish-step",
+                        })));
+                        let _ = sender.send(AiStreamEvent::Chunk(json!({
+                            "type": "finish",
+                            "finishReason": "stop",
+                        })));
+                        let _ = sender.send(AiStreamEvent::Done);
+                        json!({ "status": "streaming" })
                     }
                     _ => json!({ "error": "unexpected command" }),
                 };
                 let _ = envelope.respond_to.send(value);
             }
         });
-    }
-
-    fn connect_and_send_request(port: u16, path: &str, token: Option<&str>) -> std::net::TcpStream {
-        let mut stream = std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
-        let auth = token
-            .map(|t| format!("Authorization: Bearer {}\r\n", t))
-            .unwrap_or_default();
-        stream
-            .write_all(
-                format!(
-                    "GET {} HTTP/1.1\r\nHost: 127.0.0.1\r\n{}\r\n",
-                    path, auth
-                )
-                .as_bytes(),
-            )
-            .unwrap();
-        stream
-    }
-
-    fn read_headers<R: BufRead>(reader: &mut R) -> Vec<String> {
-        let mut headers = Vec::new();
-        let mut line = String::new();
-        loop {
-            line.clear();
-            let n = reader.read_line(&mut line).expect("failed to read header");
-            if n == 0 {
-                panic!("connection closed before headers completed");
-            }
-            if line == "\r\n" || line == "\n" {
-                break;
-            }
-            headers.push(line.clone());
-        }
-        headers
     }
 
     #[test]
@@ -489,7 +479,8 @@ mod tests {
     fn server_rejects_bearer_token() {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         spawn_dummy_controller(rx);
-        let (_handle, port) = start(0, Some("secret".to_string()), tx).expect("server should start");
+        let (_handle, port) =
+            start(0, Some("secret".to_string()), tx).expect("server should start");
 
         let client = reqwest::blocking::Client::new();
         let response = client
@@ -503,7 +494,8 @@ mod tests {
     fn server_allows_with_bearer_token() {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         spawn_dummy_controller(rx);
-        let (_handle, port) = start(0, Some("secret".to_string()), tx).expect("server should start");
+        let (_handle, port) =
+            start(0, Some("secret".to_string()), tx).expect("server should start");
 
         let client = reqwest::blocking::Client::new();
         let response = client
@@ -540,93 +532,47 @@ mod tests {
     }
 
     #[test]
-    fn sse_response_includes_cors_headers() {
+    fn post_message_stream_returns_ai_sdk_sse() {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         spawn_dummy_controller(rx);
         let (_handle, port) = start(0, None, tx).expect("server should start");
 
-        let stream = connect_and_send_request(port, "/threads/1/stream", None);
-        let mut reader = BufReader::new(stream);
-        let headers = read_headers(&mut reader);
+        let client = reqwest::blocking::Client::new();
+        let response = client
+            .post(&format!("http://127.0.0.1:{}/threads/1/message", port))
+            .header("Origin", "https://example.com")
+            .json(&json!({ "message": "hello" }))
+            .send()
+            .expect("request should succeed");
 
-        let found = headers.iter().any(|h| {
-            h.to_ascii_lowercase()
-                .starts_with("access-control-allow-origin:")
-        });
-        assert!(found, "missing CORS header in SSE response: {:?}", headers);
-    }
+        assert_eq!(response.status(), 200);
+        assert_eq!(
+            response
+                .headers()
+                .get("x-vercel-ai-ui-message-stream")
+                .and_then(|value| value.to_str().ok()),
+            Some("v1")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("x-accel-buffering")
+                .and_then(|value| value.to_str().ok()),
+            Some("no")
+        );
+        assert!(
+            response
+                .headers()
+                .contains_key("access-control-allow-origin"),
+            "missing CORS header"
+        );
 
-    #[test]
-    fn sse_stream_sends_heartbeat() {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        spawn_dummy_controller(rx);
-        let (_handle, port) = start(0, None, tx).expect("server should start");
-
-        let stream = connect_and_send_request(port, "/threads/1/stream", None);
-        let mut reader = BufReader::new(stream.try_clone().unwrap());
-        read_headers(&mut reader);
-
-        let start = Instant::now();
-        let mut line = String::new();
-        loop {
-            line.clear();
-            reader.read_line(&mut line).unwrap();
-            if line.starts_with(": ping") {
-                break;
-            }
-            assert!(
-                start.elapsed() < Duration::from_secs(10),
-                "timed out waiting for heartbeat"
-            );
-        }
-    }
-
-    #[test]
-    fn sse_rejects_missing_query_token() {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        spawn_dummy_controller(rx);
-        let (_handle, port) = start(0, Some("secret".to_string()), tx).expect("server should start");
-
-        let mut stream =
-            std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
-        stream
-            .write_all(
-                "GET /threads/1/stream HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".as_bytes(),
-            )
-            .unwrap();
-        let mut reader = BufReader::new(stream);
-        let headers = read_headers(&mut reader);
-        let status = headers
-            .first()
-            .expect("missing status line")
-            .split_whitespace()
-            .nth(1)
-            .expect("missing status code");
-        assert_eq!(status, "401", "expected 401 without token, got: {:?}", headers);
-    }
-
-    #[test]
-    fn sse_accepts_query_token() {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        spawn_dummy_controller(rx);
-        let (_handle, port) = start(0, Some("secret".to_string()), tx).expect("server should start");
-
-        let mut stream =
-            std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
-        stream
-            .write_all(
-                "GET /threads/1/stream?access_token=secret HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
-                    .as_bytes(),
-            )
-            .unwrap();
-        let mut reader = BufReader::new(stream);
-        let headers = read_headers(&mut reader);
-        let status = headers
-            .first()
-            .expect("missing status line")
-            .split_whitespace()
-            .nth(1)
-            .expect("missing status code");
-        assert_eq!(status, "200", "expected 200 with query token, got: {:?}", headers);
+        let body = response.text().expect("response body should be readable");
+        assert!(body.contains("\"type\":\"start\""));
+        assert!(body.contains("\"messageId\":\"assistant-1\""));
+        assert!(body.contains("\"type\":\"text-delta\""));
+        assert!(body.contains("\"id\":\"text-0\""));
+        assert!(body.contains("\"delta\":\"hello\""));
+        assert!(body.contains("data: [DONE]"));
     }
 }

@@ -19,7 +19,9 @@ use crate::utils::format::truncate_str;
 #[derive(Debug, Clone)]
 pub enum BridgeEvent {
     AgentStart,
-    AgentEnd,
+    AgentEnd {
+        messages: Option<Vec<LoadedMessage>>,
+    },
     Disconnected,
     MessageStart {
         message: Option<serde_json::Value>,
@@ -186,9 +188,10 @@ impl PiBridge {
                 let reader = std::io::BufReader::new(stderr);
                 for line in reader.lines() {
                     if let Ok(text) = line
-                        && !text.is_empty() {
-                            eprintln!("[pi-bridge] {}", text);
-                        }
+                        && !text.is_empty()
+                    {
+                        eprintln!("[pi-bridge] {}", text);
+                    }
                 }
             });
         }
@@ -660,19 +663,20 @@ fn add_request_id(cmd: &mut serde_json::Value, request_id: Option<&str>) {
 
 fn add_images(cmd: &mut serde_json::Value, images: Option<&[ImageContent]>) {
     if let Some(imgs) = images
-        && !imgs.is_empty() {
-            let img_vals: Vec<serde_json::Value> = imgs
-                .iter()
-                .map(|img| {
-                    serde_json::json!({
-                        "type": "image",
-                        "data": img.data,
-                        "mimeType": img.mime_type,
-                    })
+        && !imgs.is_empty()
+    {
+        let img_vals: Vec<serde_json::Value> = imgs
+            .iter()
+            .map(|img| {
+                serde_json::json!({
+                    "type": "image",
+                    "data": img.data,
+                    "mimeType": img.mime_type,
                 })
-                .collect();
-            cmd["images"] = serde_json::json!(img_vals);
-        }
+            })
+            .collect();
+        cmd["images"] = serde_json::json!(img_vals);
+    }
 }
 
 fn parse_bridge_message(text: &str) -> Option<(String, BridgeEvent)> {
@@ -717,7 +721,9 @@ fn parse_pi_line_value(val: &serde_json::Value) -> Option<BridgeEvent> {
     match event_type {
         // -- lifecycle ---------------------------------------------------
         "agent_start" => Some(BridgeEvent::AgentStart),
-        "agent_end" => Some(BridgeEvent::AgentEnd),
+        "agent_end" => Some(BridgeEvent::AgentEnd {
+            messages: val.get("messages").and_then(parse_loaded_messages),
+        }),
 
         // -- message -----------------------------------------------------
         "message_start" => {
@@ -818,9 +824,10 @@ fn parse_pi_line_value(val: &serde_json::Value) -> Option<BridgeEvent> {
         "tool_execution_update" => {
             let mut output = String::new();
             if let Some(pr) = val.get("partialResult")
-                && let Some(content) = pr.get("content") {
-                    extract_text_parts(content, &mut output);
-                }
+                && let Some(content) = pr.get("content")
+            {
+                extract_text_parts(content, &mut output);
+            }
             Some(BridgeEvent::ToolUpdate {
                 call_id: val
                     .get("toolCallId")
@@ -849,9 +856,10 @@ fn parse_pi_line_value(val: &serde_json::Value) -> Option<BridgeEvent> {
                 .to_string();
             let mut output = String::new();
             if let Some(result) = val.get("result")
-                && let Some(content) = result.get("content") {
-                    extract_text_parts(content, &mut output);
-                }
+                && let Some(content) = result.get("content")
+            {
+                extract_text_parts(content, &mut output);
+            }
             let is_error = val
                 .get("isError")
                 .and_then(|e| e.as_bool())
@@ -898,15 +906,16 @@ fn parse_pi_line_value(val: &serde_json::Value) -> Option<BridgeEvent> {
 
             if command == "get_messages" && success {
                 if let Some(ref data_val) = data
-                    && data_val.get("messages").is_some() {
-                        return Some(BridgeEvent::Response {
-                            command: command.to_string(),
-                            success,
-                            data: data.clone(),
-                            error: error.clone(),
-                            request_id: request_id.clone(),
-                        });
-                    }
+                    && data_val.get("messages").is_some()
+                {
+                    return Some(BridgeEvent::Response {
+                        command: command.to_string(),
+                        success,
+                        data: data.clone(),
+                        error: error.clone(),
+                        request_id: request_id.clone(),
+                    });
+                }
                 log!("get_messages response missing data.messages");
             }
 

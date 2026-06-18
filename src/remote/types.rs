@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
 /// A command plus a channel to return the response.
@@ -20,9 +20,10 @@ pub enum RemoteCommand {
     OpenThread {
         thread_id: i64,
     },
-    SendMessage {
+    SendMessageStream {
         thread_id: i64,
         message: String,
+        sender: UnboundedSender<AiStreamEvent>,
     },
     GetMessages {
         thread_id: i64,
@@ -39,56 +40,40 @@ pub enum RemoteCommand {
         thread_id: i64,
         workspace_id: i64,
     },
-    AddSseSubscriber {
-        thread_id: i64,
-        sender: UnboundedSender<SseEvent>,
-    },
 }
 
 /// JSON response returned for ordinary (non-SSE) requests.
 pub type RemoteResponse = serde_json::Value;
 
-/// Events streamed to SSE clients.
+/// Data-only SSE events compatible with the AI SDK UI message stream protocol.
 #[derive(Debug, Clone)]
-pub struct SseEvent {
-    pub event: String,
-    pub data: serde_json::Value,
+pub enum AiStreamEvent {
+    Chunk(serde_json::Value),
+    Done,
 }
 
-impl SseEvent {
-    pub fn new(event: impl Into<String>, data: impl Serialize) -> Self {
-        Self {
-            event: event.into(),
-            data: serde_json::to_value(data).unwrap_or(serde_json::Value::Null),
-        }
-    }
-
+impl AiStreamEvent {
     #[cfg(test)]
     pub fn to_bytes(&self) -> Vec<u8> {
-        encode_sse(&self.event, &self.data.to_string())
-    }
-
-    /// An SSE comment frame suitable for heartbeats. EventSource ignores it.
-    #[cfg(test)]
-    pub fn heartbeat_bytes() -> Vec<u8> {
-        b":ping\n\n".to_vec()
+        match self {
+            Self::Chunk(data) => encode_data_sse(&data.to_string()),
+            Self::Done => encode_data_sse("[DONE]"),
+        }
     }
 
     /// Convert to an `axum` SSE event for streaming responses.
     pub fn to_axum_event(&self) -> axum::response::sse::Event {
-        axum::response::sse::Event::default()
-            .event(self.event.clone())
-            .data(self.data.to_string())
+        match self {
+            Self::Chunk(data) => axum::response::sse::Event::default().data(data.to_string()),
+            Self::Done => axum::response::sse::Event::default().data("[DONE]"),
+        }
     }
 }
 
-/// Encode an SSE frame. Newlines in the event name and multi-line data are escaped
-/// so the frame cannot be corrupted by user content.
+/// Encode a data-only SSE frame. Multi-line data is split into multiple data lines.
 #[cfg(test)]
-fn encode_sse(event: &str, data: &str) -> Vec<u8> {
-    // Event names cannot contain newlines; replace them with spaces.
-    let event = event.replace('\n', " ");
-    let mut out = format!("event: {}\n", event);
+fn encode_data_sse(data: &str) -> Vec<u8> {
+    let mut out = String::new();
     for line in data.split('\n') {
         out.push_str(&format!("data: {}\n", line));
     }
@@ -123,19 +108,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sse_event_single_line() {
-        let ev = SseEvent::new("update", serde_json::json!({"x": 1}));
-        assert_eq!(String::from_utf8(ev.to_bytes()).unwrap(), "event: update\ndata: {\"x\":1}\n\n");
+    fn ai_stream_event_single_line() {
+        let ev = AiStreamEvent::Chunk(serde_json::json!({"x": 1}));
+        assert_eq!(
+            String::from_utf8(ev.to_bytes()).unwrap(),
+            "data: {\"x\":1}\n\n"
+        );
     }
 
     #[test]
-    fn sse_event_escapes_newlines() {
-        let ev = SseEvent::new("up\ndate", serde_json::json!("line1\nline2"));
-        assert_eq!(String::from_utf8(ev.to_bytes()).unwrap(), "event: up date\ndata: \"line1\\nline2\"\n\n");
-    }
-
-    #[test]
-    fn sse_heartbeat_is_comment() {
-        assert_eq!(String::from_utf8(SseEvent::heartbeat_bytes()).unwrap(), ":ping\n\n");
+    fn ai_stream_done_is_data_frame() {
+        assert_eq!(
+            String::from_utf8(AiStreamEvent::Done.to_bytes()).unwrap(),
+            "data: [DONE]\n\n"
+        );
     }
 }

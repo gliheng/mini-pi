@@ -1,20 +1,21 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 
+use gpui::{
+    AppContext, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
+};
+use serde_json::{Value, json};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use gpui::{AppContext, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task, WeakEntity};
-use serde_json::json;
 
 use crate::config::app_config::RemoteControlConfig;
 use crate::config::model_config;
 use crate::core::app::AppStore;
 use crate::core::session_handle::{SessionEvent, SessionHandle, WorkspaceInfo};
-use crate::data::models::{ChatState, Message, MessagePart, Role};
+use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::data::store::{StoreError, ThreadMeta};
 use crate::remote::server;
 use crate::remote::tunnel;
-use crate::remote::types::{CommandEnvelope, RemoteCommand, RemoteResponse, SseEvent};
+use crate::remote::types::{AiStreamEvent, CommandEnvelope, RemoteCommand, RemoteResponse};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum RemoteStatus {
@@ -63,13 +64,404 @@ pub struct RemoteController {
     target_thread_id: Option<i64>,
     target_session: Option<WeakEntity<SessionHandle>>,
     session_subscription: Option<Subscription>,
-    sse_senders: Arc<Mutex<HashMap<i64, Vec<UnboundedSender<SseEvent>>>>>,
-    // Cached snapshots for delta-aware SSE streaming.
-    last_state_json: Option<serde_json::Value>,
-    last_messages: HashMap<String, serde_json::Value>,
+    active_streams: Vec<AiSubmitStream>,
 }
 
 impl EventEmitter<RemoteControllerEvent> for RemoteController {}
+
+#[derive(Debug)]
+struct AiSubmitStream {
+    thread_id: i64,
+    sender: UnboundedSender<AiStreamEvent>,
+    initial_message_ids: HashSet<String>,
+    assistant_message_id: Option<String>,
+    part_states: Vec<AiPartState>,
+    finished: bool,
+}
+
+#[derive(Clone, Debug)]
+enum AiPartState {
+    Text {
+        id: String,
+        sent_len: usize,
+        done: bool,
+    },
+    Reasoning {
+        id: String,
+        sent_len: usize,
+        done: bool,
+    },
+    Tool {
+        id: String,
+        name: String,
+        sent_args_len: usize,
+        input_available: bool,
+        output_available: bool,
+    },
+}
+
+impl AiSubmitStream {
+    fn new(
+        thread_id: i64,
+        sender: UnboundedSender<AiStreamEvent>,
+        initial_message_ids: HashSet<String>,
+    ) -> Self {
+        Self {
+            thread_id,
+            sender,
+            initial_message_ids,
+            assistant_message_id: None,
+            part_states: Vec::new(),
+            finished: false,
+        }
+    }
+
+    fn send_chunk(&mut self, chunk: Value) -> bool {
+        self.sender.send(AiStreamEvent::Chunk(chunk)).is_ok()
+    }
+
+    fn send_done(&mut self) -> bool {
+        self.finished = true;
+        self.sender.send(AiStreamEvent::Done).is_ok()
+    }
+
+    fn update(&mut self, messages: &[Message], state: &ChatState) -> bool {
+        if self.finished {
+            return false;
+        }
+
+        let Some(message) = self.resolve_assistant_message(messages) else {
+            if let ChatState::Error(msg) = state {
+                return self.finish_with_error(msg.to_string());
+            }
+            return true;
+        };
+
+        if self.assistant_message_id.is_none() {
+            self.assistant_message_id = Some(message.id.clone());
+            if !self.send_chunk(json!({
+                "type": "start",
+                "messageId": message.id,
+            })) {
+                return false;
+            }
+        }
+
+        if !self.sync_parts(&message.parts) {
+            return false;
+        }
+
+        match state {
+            ChatState::Idle if self.assistant_message_id.is_some() => self.finish_success(),
+            ChatState::Error(msg) => self.finish_with_error(msg.to_string()),
+            _ => true,
+        }
+    }
+
+    fn resolve_assistant_message<'a>(&mut self, messages: &'a [Message]) -> Option<&'a Message> {
+        if let Some(ref id) = self.assistant_message_id {
+            return messages.iter().find(|m| m.id == *id);
+        }
+
+        messages.iter().find(|m| {
+            matches!(m.role, Role::Assistant) && !self.initial_message_ids.contains(&m.id)
+        })
+    }
+
+    fn sync_parts(&mut self, parts: &[MessagePart]) -> bool {
+        for index in 0..parts.len() {
+            if self.part_states.len() <= index {
+                if !self.start_part(index, &parts[index]) {
+                    return false;
+                }
+            }
+            if !self.update_part(index, &parts[index]) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn start_part(&mut self, index: usize, part: &MessagePart) -> bool {
+        match part {
+            MessagePart::Text { .. } => {
+                let id = format!("text-{}", index);
+                if !self.send_chunk(json!({ "type": "text-start", "id": id })) {
+                    return false;
+                }
+                self.part_states.push(AiPartState::Text {
+                    id,
+                    sent_len: 0,
+                    done: false,
+                });
+            }
+            MessagePart::Reasoning { .. } => {
+                let id = format!("reasoning-{}", index);
+                if !self.send_chunk(json!({ "type": "reasoning-start", "id": id })) {
+                    return false;
+                }
+                self.part_states.push(AiPartState::Reasoning {
+                    id,
+                    sent_len: 0,
+                    done: false,
+                });
+            }
+            MessagePart::ToolCall {
+                tool_call_id, name, ..
+            } => {
+                let id = stable_tool_call_id(tool_call_id, index);
+                if !self.send_chunk(json!({
+                    "type": "tool-input-start",
+                    "toolCallId": id,
+                    "toolName": name.to_string(),
+                })) {
+                    return false;
+                }
+                self.part_states.push(AiPartState::Tool {
+                    id,
+                    name: name.to_string(),
+                    sent_args_len: 0,
+                    input_available: false,
+                    output_available: false,
+                });
+            }
+            MessagePart::ToolResult { .. } => {
+                let previous_tool = self.part_states.iter().rev().find_map(|state| {
+                    if let AiPartState::Tool { id, name, .. } = state {
+                        Some((id.clone(), name.clone()))
+                    } else {
+                        None
+                    }
+                });
+                let (id, name) =
+                    previous_tool.unwrap_or_else(|| (format!("tool-{}", index), String::new()));
+                self.part_states.push(AiPartState::Tool {
+                    id,
+                    name,
+                    sent_args_len: 0,
+                    input_available: true,
+                    output_available: false,
+                });
+            }
+        }
+        true
+    }
+
+    fn update_part(&mut self, index: usize, part: &MessagePart) -> bool {
+        let Some(state) = self.part_states.get_mut(index).cloned() else {
+            return true;
+        };
+
+        match (state, part) {
+            (AiPartState::Text { id, sent_len, done }, MessagePart::Text { text, state }) => {
+                let text = text.to_string();
+                if let Some(delta) = unsent_suffix(&text, sent_len) {
+                    if !self.send_chunk(json!({
+                        "type": "text-delta",
+                        "id": id,
+                        "delta": delta,
+                    })) {
+                        return false;
+                    }
+                }
+                let is_done = done || matches!(state, Some(PartState::Done));
+                if is_done && !done && !self.send_chunk(json!({ "type": "text-end", "id": id })) {
+                    return false;
+                }
+                self.part_states[index] = AiPartState::Text {
+                    id,
+                    sent_len: text.len(),
+                    done: is_done,
+                };
+            }
+            (
+                AiPartState::Reasoning { id, sent_len, done },
+                MessagePart::Reasoning { text, state, .. },
+            ) => {
+                let text = text.to_string();
+                if let Some(delta) = unsent_suffix(&text, sent_len) {
+                    if !self.send_chunk(json!({
+                        "type": "reasoning-delta",
+                        "id": id,
+                        "delta": delta,
+                    })) {
+                        return false;
+                    }
+                }
+                let is_done = done || matches!(state, Some(PartState::Done));
+                if is_done
+                    && !done
+                    && !self.send_chunk(json!({ "type": "reasoning-end", "id": id }))
+                {
+                    return false;
+                }
+                self.part_states[index] = AiPartState::Reasoning {
+                    id,
+                    sent_len: text.len(),
+                    done: is_done,
+                };
+            }
+            (
+                AiPartState::Tool {
+                    id,
+                    name,
+                    sent_args_len,
+                    input_available,
+                    output_available,
+                },
+                MessagePart::ToolCall {
+                    name: part_name,
+                    args,
+                    state,
+                    ..
+                },
+            ) => {
+                let name = if name.is_empty() {
+                    part_name.to_string()
+                } else {
+                    name
+                };
+                let args = args.to_string();
+                if let Some(delta) = unsent_suffix(&args, sent_args_len) {
+                    if !self.send_chunk(json!({
+                        "type": "tool-input-delta",
+                        "toolCallId": id,
+                        "inputTextDelta": delta,
+                    })) {
+                        return false;
+                    }
+                }
+                let input_done = input_available || matches!(state, Some(PartState::Done));
+                if input_done
+                    && !input_available
+                    && !self.send_chunk(json!({
+                        "type": "tool-input-available",
+                        "toolCallId": id,
+                        "toolName": name,
+                        "input": parse_tool_input(&args),
+                    }))
+                {
+                    return false;
+                }
+                self.part_states[index] = AiPartState::Tool {
+                    id,
+                    name,
+                    sent_args_len: args.len(),
+                    input_available: input_done,
+                    output_available,
+                };
+            }
+            (
+                AiPartState::Tool {
+                    id,
+                    name,
+                    sent_args_len,
+                    input_available,
+                    output_available,
+                },
+                MessagePart::ToolResult { output, .. },
+            ) => {
+                if !output_available
+                    && !self.send_chunk(json!({
+                        "type": "tool-output-available",
+                        "toolCallId": id,
+                        "output": output.to_string(),
+                    }))
+                {
+                    return false;
+                }
+                self.part_states[index] = AiPartState::Tool {
+                    id,
+                    name,
+                    sent_args_len,
+                    input_available,
+                    output_available: true,
+                };
+            }
+            _ => {}
+        }
+
+        true
+    }
+
+    fn finish_success(&mut self) -> bool {
+        if !self.close_open_parts() {
+            return false;
+        }
+        if !self.send_chunk(json!({ "type": "finish-step" })) {
+            return false;
+        }
+        if !self.send_chunk(json!({ "type": "finish", "finishReason": "stop" })) {
+            return false;
+        }
+        let _ = self.send_done();
+        false
+    }
+
+    fn finish_with_error(&mut self, message: String) -> bool {
+        if !self.close_open_parts() {
+            return false;
+        }
+        if !self.send_chunk(json!({ "type": "error", "errorText": message })) {
+            return false;
+        }
+        if !self.send_chunk(json!({ "type": "finish", "finishReason": "error" })) {
+            return false;
+        }
+        let _ = self.send_done();
+        false
+    }
+
+    fn close_open_parts(&mut self) -> bool {
+        for index in 0..self.part_states.len() {
+            match self.part_states[index].clone() {
+                AiPartState::Text { id, sent_len, done } if !done => {
+                    if !self.send_chunk(json!({ "type": "text-end", "id": id })) {
+                        return false;
+                    }
+                    self.part_states[index] = AiPartState::Text {
+                        id,
+                        sent_len,
+                        done: true,
+                    };
+                }
+                AiPartState::Reasoning { id, sent_len, done } if !done => {
+                    if !self.send_chunk(json!({ "type": "reasoning-end", "id": id })) {
+                        return false;
+                    }
+                    self.part_states[index] = AiPartState::Reasoning {
+                        id,
+                        sent_len,
+                        done: true,
+                    };
+                }
+                _ => {}
+            }
+        }
+        true
+    }
+}
+
+fn stable_tool_call_id(tool_call_id: &gpui::SharedString, index: usize) -> String {
+    let id = tool_call_id.to_string();
+    if id.is_empty() {
+        format!("tool-{}", index)
+    } else {
+        id
+    }
+}
+
+fn parse_tool_input(input: &str) -> Value {
+    serde_json::from_str(input).unwrap_or_else(|_| json!(input))
+}
+
+fn unsent_suffix(value: &str, sent_len: usize) -> Option<String> {
+    if sent_len < value.len() && value.is_char_boundary(sent_len) {
+        Some(value[sent_len..].to_string())
+    } else {
+        None
+    }
+}
 
 impl RemoteController {
     pub fn new(_cx: &mut Context<Self>, config: RemoteControlConfig) -> Self {
@@ -87,9 +479,7 @@ impl RemoteController {
             target_thread_id: None,
             target_session: None,
             session_subscription: None,
-            sse_senders: Arc::new(Mutex::new(HashMap::new())),
-            last_state_json: None,
-            last_messages: HashMap::new(),
+            active_streams: Vec::new(),
         }
     }
 
@@ -174,7 +564,12 @@ impl RemoteController {
 
         cx.spawn(async move |_, cx| {
             let start_result = smol::unblock(move || {
-                tunnel::start(&command_path, token.as_deref(), hostname.as_deref(), bound_port)
+                tunnel::start(
+                    &command_path,
+                    token.as_deref(),
+                    hostname.as_deref(),
+                    bound_port,
+                )
             })
             .await;
 
@@ -217,12 +612,9 @@ impl RemoteController {
                                 }
                                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                                     if !url_seen {
-                                        let _ = fwd_tx.send(
-                                            tunnel::TunnelOutcome::Error(
-                                                "timed out waiting for cloudflared URL"
-                                                    .to_string(),
-                                            ),
-                                        );
+                                        let _ = fwd_tx.send(tunnel::TunnelOutcome::Error(
+                                            "timed out waiting for cloudflared URL".to_string(),
+                                        ));
                                         break;
                                     }
                                 }
@@ -282,8 +674,6 @@ impl RemoteController {
         self.target_thread_id = None;
         self.target_session = None;
         self.session_subscription = None;
-        self.last_state_json = None;
-        self.last_messages.clear();
         cx.emit(RemoteControllerEvent::StatusChanged);
         cx.notify();
     }
@@ -293,7 +683,7 @@ impl RemoteController {
         self.server_handle = None;
         self.command_sender = None;
         self.command_task = None;
-        self.clear_sse_senders();
+        self.finish_active_streams_with_error("remote control stopped");
     }
 
     fn set_error(&mut self, message: String, cx: &mut Context<Self>) {
@@ -306,14 +696,16 @@ impl RemoteController {
         self.target_thread_id = None;
         self.target_session = None;
         self.session_subscription = None;
-        self.last_state_json = None;
-        self.last_messages.clear();
         self.save_config(cx);
         cx.emit(RemoteControllerEvent::StatusChanged);
         cx.notify();
     }
 
-    fn start_command_task(&mut self, mut rx: UnboundedReceiver<CommandEnvelope>, cx: &mut Context<Self>) {
+    fn start_command_task(
+        &mut self,
+        mut rx: UnboundedReceiver<CommandEnvelope>,
+        cx: &mut Context<Self>,
+    ) {
         let task = cx.spawn(async move |this, cx| {
             while let Some(envelope) = rx.recv().await {
                 let respond_to = envelope.respond_to;
@@ -338,23 +730,24 @@ impl RemoteController {
                 model_id,
             } => self.create_thread(workspace_id, model_id, cx),
             RemoteCommand::OpenThread { thread_id } => self.open_thread(thread_id, cx),
-            RemoteCommand::SendMessage { thread_id, message } => {
-                self.send_message(thread_id, message, cx)
-            }
-            RemoteCommand::GetMessages { thread_id, since_id } => {
-                self.get_messages(thread_id, since_id, cx)
-            }
+            RemoteCommand::SendMessageStream {
+                thread_id,
+                message,
+                sender,
+            } => self.send_message_stream(thread_id, message, sender, cx),
+            RemoteCommand::GetMessages {
+                thread_id,
+                since_id,
+            } => self.get_messages(thread_id, since_id, cx),
             RemoteCommand::Abort { thread_id } => self.abort(thread_id, cx),
-            RemoteCommand::SetModel { thread_id, model_id } => {
-                self.set_model(thread_id, model_id, cx)
-            }
-            RemoteCommand::SetWorkspace { thread_id, workspace_id } => {
-                self.set_workspace(thread_id, workspace_id, cx)
-            }
-            RemoteCommand::AddSseSubscriber { thread_id, sender } => {
-                self.add_sse_subscriber(thread_id, sender, cx);
-                json!(null)
-            }
+            RemoteCommand::SetModel {
+                thread_id,
+                model_id,
+            } => self.set_model(thread_id, model_id, cx),
+            RemoteCommand::SetWorkspace {
+                thread_id,
+                workspace_id,
+            } => self.set_workspace(thread_id, workspace_id, cx),
         }
     }
 
@@ -468,9 +861,8 @@ impl RemoteController {
             }
         };
 
-        let session = cx.update_global(|app: &mut AppStore, _| {
-            app.session_manager.get(&session_file)
-        });
+        let session =
+            cx.update_global(|app: &mut AppStore, _| app.session_manager.get(&session_file));
 
         let session = match session {
             Some(s) => s,
@@ -509,10 +901,11 @@ impl RemoteController {
         json!({ "thread_id": thread_id })
     }
 
-    fn send_message(
+    fn send_message_stream(
         &mut self,
         thread_id: i64,
         message: String,
+        sender: UnboundedSender<AiStreamEvent>,
         cx: &mut Context<Self>,
     ) -> RemoteResponse {
         let session = match self.ensure_target_session(thread_id, cx) {
@@ -521,19 +914,29 @@ impl RemoteController {
             Err(e) => return json!({ "error": e }),
         };
 
-        let message_id = session.update(cx, |session, cx| {
-            session.send_message(message.into(), cx);
+        let initial_message_ids = session.update(cx, |session, _cx| {
             session
                 .messages
                 .iter()
-                .rev()
-                .find(|m| matches!(m.role, Role::User))
-                .map(|m| m.id.clone())
+                .map(|message| message.id.clone())
+                .collect::<HashSet<_>>()
         });
 
-        match message_id {
-            Some(id) => json!({ "message_id": id, "status": "accepted" }),
-            None => json!({ "error": "message was not accepted" }),
+        let initial_ids_for_acceptance = initial_message_ids.clone();
+        let accepted = session.update(cx, |session, cx| {
+            session.send_message(message.into(), cx);
+            session.messages.iter().any(|m| {
+                matches!(m.role, Role::User) && !initial_ids_for_acceptance.contains(&m.id)
+            })
+        });
+
+        if accepted {
+            self.active_streams
+                .push(AiSubmitStream::new(thread_id, sender, initial_message_ids));
+            self.on_session_changed(cx);
+            json!({ "status": "streaming" })
+        } else {
+            json!({ "error": "message was not accepted" })
         }
     }
 
@@ -554,11 +957,12 @@ impl RemoteController {
                     .and_then(|sid| msgs.iter().position(|m| m.id == *sid))
                     .map(|i| i + 1)
                     .unwrap_or(0);
-                json!(msgs
-                    .iter()
-                    .skip(start_idx)
-                    .map(message_to_json)
-                    .collect::<Vec<_>>())
+                json!(
+                    msgs.iter()
+                        .skip(start_idx)
+                        .map(message_to_json)
+                        .collect::<Vec<_>>()
+                )
             }
             None => json!({ "error": "thread not found" }),
         }
@@ -628,7 +1032,16 @@ impl RemoteController {
             .unwrap_or_else(|| json!({}));
         let mut md = md;
         md["workspace_id"] = json!(workspace_id);
-        store.update_thread(thread_id, None, None, None, None, None, None, Some(Some(&md)))
+        store.update_thread(
+            thread_id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(Some(&md)),
+        )
     }
 
     fn ensure_target_session(
@@ -645,7 +1058,10 @@ impl RemoteController {
         }
         let response = self.open_thread(thread_id, cx);
         if response.get("error").is_some() {
-            return Err(response["error"].as_str().unwrap_or("open thread failed").to_string());
+            return Err(response["error"]
+                .as_str()
+                .unwrap_or("open thread failed")
+                .to_string());
         }
         Ok(self.target_session.as_ref().and_then(|w| w.upgrade()))
     }
@@ -671,7 +1087,11 @@ impl RemoteController {
             .and_then(|sf| cx.update_global(|app: &mut AppStore, _| app.session_manager.get(&sf)))
     }
 
-    fn find_session(&self, thread_id: i64, cx: &mut Context<Self>) -> Option<WeakEntity<SessionHandle>> {
+    fn find_session(
+        &self,
+        thread_id: i64,
+        cx: &mut Context<Self>,
+    ) -> Option<WeakEntity<SessionHandle>> {
         self.resolve_session(thread_id, cx).map(|e| e.downgrade())
     }
 
@@ -683,8 +1103,6 @@ impl RemoteController {
     ) {
         self.target_thread_id = Some(thread_id);
         self.target_session = session.clone();
-        self.last_state_json = None;
-        self.last_messages.clear();
         self.session_subscription = session.and_then(|session| {
             let entity = session.upgrade()?;
             Some(cx.subscribe(
@@ -699,8 +1117,12 @@ impl RemoteController {
     }
 
     fn on_session_changed(&mut self, cx: &mut Context<Self>) {
-        let Some(thread_id) = self.target_thread_id else { return };
-        let Some(ref weak) = self.target_session else { return };
+        let Some(thread_id) = self.target_thread_id else {
+            return;
+        };
+        let Some(ref weak) = self.target_session else {
+            return;
+        };
         let Some(session) = weak.upgrade() else {
             // Session was dropped; release the target so we don't leak references.
             self.target_thread_id = None;
@@ -712,114 +1134,15 @@ impl RemoteController {
         let messages = session.messages.clone();
         let state = session.state.clone();
 
-        // Build a delta by comparing freshly serialized messages against the cache.
-        // This is slightly more work than only serializing the last message, but it
-        // guarantees that edits or state changes to any message are detected.
-        let mut added = Vec::new();
-        let mut updated = Vec::new();
-        let mut removed = Vec::new();
-        let mut current_ids = std::collections::HashSet::new();
-
-        for msg in messages.iter() {
-            current_ids.insert(msg.id.clone());
-            let json = message_to_json(msg);
-            match self.last_messages.get(&msg.id) {
-                Some(prev) if prev == &json => {}
-                Some(_) => updated.push(json.clone()),
-                None => added.push(json.clone()),
-            }
-            self.last_messages.insert(msg.id.clone(), json);
-        }
-
-        for id in self.last_messages.keys().cloned().collect::<Vec<_>>() {
-            if !current_ids.contains(&id) {
-                removed.push(id.clone());
-                self.last_messages.remove(&id);
-            }
-        }
-
-        // Prevent the cache from growing without bound on long conversations.
-        const MAX_CACHED_MESSAGES: usize = 1000;
-        const CACHE_TRIM_TO: usize = 500;
-        if self.last_messages.len() > MAX_CACHED_MESSAGES {
-            // Send a full snapshot so clients don't misinterpret rebuilt cache entries
-            // as brand-new messages.
-            let snapshot = json!({
-                "state": chat_state_to_json(&state),
-                "messages": messages.iter().map(message_to_json).collect::<Vec<_>>(),
-            });
-            self.broadcast(thread_id, SseEvent::new("update", snapshot));
-            // Rebuild the cache from the most recent messages.
-            self.last_messages.clear();
-            for msg in messages.iter().rev().take(CACHE_TRIM_TO) {
-                self.last_messages.insert(msg.id.clone(), message_to_json(msg));
-            }
-            self.last_state_json = Some(chat_state_to_json(&state));
-            return;
-        }
-
-        let state_json = chat_state_to_json(&state);
-        let state_changed = self.last_state_json.as_ref() != Some(&state_json);
-        if state_changed {
-            self.last_state_json = Some(state_json.clone());
-        }
-
-        if !added.is_empty() || !updated.is_empty() || !removed.is_empty() || state_changed {
-            let data = json!({
-                "state": if state_changed { Some(state_json) } else { None::<serde_json::Value> },
-                "added_messages": added,
-                "updated_messages": updated,
-                "removed_message_ids": removed,
-            });
-            let event = SseEvent::new("delta", data);
-            self.broadcast(thread_id, event);
-        }
+        self.active_streams
+            .retain_mut(|stream| stream.thread_id != thread_id || stream.update(&messages, &state));
     }
 
-    fn add_sse_subscriber(
-        &mut self,
-        thread_id: i64,
-        sender: UnboundedSender<SseEvent>,
-        cx: &mut Context<Self>,
-    ) {
-        // Register the sender before building the snapshot so any session change
-        // that happens during snapshot construction is not missed.
-        {
-            let mut map = self.sse_senders.lock().unwrap();
-            map.entry(thread_id).or_default().push(sender.clone());
+    fn finish_active_streams_with_error(&mut self, message: &str) {
+        for stream in self.active_streams.iter_mut() {
+            let _ = stream.finish_with_error(message.to_string());
         }
-
-        // Send an initial full snapshot so the client never waits on an empty stream.
-        let snapshot = self.build_full_snapshot(thread_id, cx);
-        let _ = sender.send(SseEvent::new("update", snapshot));
-    }
-
-    fn build_full_snapshot(&self, thread_id: i64, cx: &mut Context<Self>) -> serde_json::Value {
-        let (messages, state) = self
-            .resolve_session(thread_id, cx)
-            .map(|e| {
-                let s = e.read(cx);
-                (s.messages.clone(), s.state.clone())
-            })
-            .unwrap_or_else(|| (Vec::new(), ChatState::Idle));
-
-        json!({
-            "state": chat_state_to_json(&state),
-            "messages": messages.iter().map(message_to_json).collect::<Vec<_>>(),
-        })
-    }
-
-    fn broadcast(&mut self, thread_id: i64, event: SseEvent) {
-        let mut map = self.sse_senders.lock().unwrap();
-        let senders = map.get_mut(&thread_id);
-        if let Some(senders) = senders {
-            senders.retain(|s| s.send(event.clone()).is_ok());
-        }
-    }
-
-    fn clear_sse_senders(&self) {
-        let mut map = self.sse_senders.lock().unwrap();
-        map.clear();
+        self.active_streams.clear();
     }
 
     fn resolve_workspace(
@@ -894,10 +1217,7 @@ fn part_to_json(p: &MessagePart) -> serde_json::Value {
             "state": state.as_ref().map(|s| format!("{:?}", s)),
         }),
         MessagePart::ToolCall {
-            name,
-            args,
-            state,
-            ..
+            name, args, state, ..
         } => json!({
             "type": "tool_call",
             "name": name.to_string(),
@@ -918,11 +1238,112 @@ fn part_to_json(p: &MessagePart) -> serde_json::Value {
     }
 }
 
-fn chat_state_to_json(state: &ChatState) -> serde_json::Value {
-    match state {
-        ChatState::Idle => json!("idle"),
-        ChatState::Loading => json!("loading"),
-        ChatState::Streaming => json!("streaming"),
-        ChatState::Error(msg) => json!({ "error": msg.to_string() }),
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::SharedString;
+
+    fn assistant_with_text(id: &str, text: &str, state: Option<PartState>) -> Message {
+        Message {
+            id: id.to_string(),
+            entry_id: None,
+            role: Role::Assistant,
+            parts: vec![MessagePart::Text {
+                text: SharedString::from(text.to_string()),
+                state,
+            }],
+        }
+    }
+
+    fn assistant_empty(id: &str) -> Message {
+        Message {
+            id: id.to_string(),
+            entry_id: None,
+            role: Role::Assistant,
+            parts: vec![],
+        }
+    }
+
+    fn recv_chunk_type(rx: &mut UnboundedReceiver<AiStreamEvent>) -> Option<String> {
+        match rx.try_recv().ok()? {
+            AiStreamEvent::Chunk(value) => value
+                .get("type")
+                .and_then(|value| value.as_str())
+                .map(|value| value.to_string()),
+            AiStreamEvent::Done => Some("[DONE]".to_string()),
+        }
+    }
+
+    #[test]
+    fn ai_submit_stream_closes_after_done() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut stream = AiSubmitStream::new(1, tx, HashSet::new());
+        let message = assistant_with_text("assistant-1", "hello", Some(PartState::Done));
+
+        assert!(!stream.update(&[message], &ChatState::Idle));
+
+        let mut types = Vec::new();
+        while let Some(kind) = recv_chunk_type(&mut rx) {
+            types.push(kind);
+        }
+
+        assert_eq!(
+            types,
+            vec![
+                "start",
+                "text-start",
+                "text-delta",
+                "text-end",
+                "finish-step",
+                "finish",
+                "[DONE]"
+            ]
+        );
+    }
+
+    #[test]
+    fn ai_submit_stream_ignores_rewritten_non_suffix_text() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut stream = AiSubmitStream::new(1, tx, HashSet::new());
+        let first = assistant_with_text("assistant-1", "abcd", Some(PartState::Streaming));
+        let rewritten = assistant_with_text("assistant-1", "éfg", Some(PartState::Streaming));
+
+        assert!(stream.update(&[first], &ChatState::Streaming));
+        assert!(stream.update(&[rewritten], &ChatState::Streaming));
+
+        let mut deltas = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let AiStreamEvent::Chunk(value) = event
+                && value.get("type").and_then(|value| value.as_str()) == Some("text-delta")
+            {
+                deltas.push(value["delta"].as_str().unwrap_or_default().to_string());
+            }
+        }
+
+        assert_eq!(deltas, vec!["abcd"]);
+    }
+
+    #[test]
+    fn ai_submit_stream_emits_final_parts_after_empty_placeholder() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut stream = AiSubmitStream::new(1, tx, HashSet::new());
+        let empty = assistant_empty("assistant-1");
+        let final_message = assistant_with_text("assistant-1", "done", Some(PartState::Done));
+
+        assert!(stream.update(&[empty], &ChatState::Streaming));
+        assert!(!stream.update(&[final_message], &ChatState::Idle));
+
+        let mut chunks = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            chunks.push(event);
+        }
+
+        assert!(chunks.iter().any(|event| matches!(
+            event,
+            AiStreamEvent::Chunk(value)
+                if value.get("type").and_then(|value| value.as_str()) == Some("text-delta")
+                    && value.get("delta").and_then(|value| value.as_str()) == Some("done")
+        )));
+        assert!(matches!(chunks.last(), Some(AiStreamEvent::Done)));
     }
 }
