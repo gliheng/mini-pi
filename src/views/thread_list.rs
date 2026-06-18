@@ -2,15 +2,16 @@ use std::sync::Arc;
 
 use gpui::{
     AnyWindowHandle, BorrowAppContext, Bounds, BoxShadow, Context, FocusHandle, Focusable, Hsla,
-    IntoElement, ParentElement, Render, SharedString, Styled, Window, div, linear_color_stop,
-    linear_gradient, point, prelude::*, px, rgb, size, svg,
+    IntoElement, ParentElement, Render, ScrollHandle, ScrollWheelEvent, SharedString, Styled,
+    Window, div, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size, svg,
 };
 
 use crate::auth::state::{self, AuthState};
 use crate::core::actions::CloseWindow;
 use crate::core::app::{AppStore, custom_window_options};
-use crate::data::store::{Store, ThreadMeta};
+use crate::data::store::{PaginatedThreads, Store, ThreadMeta};
 use crate::sync::settings_sync;
+use crate::ui::loader::loader;
 use crate::utils::format::format_relative_time;
 use crate::views::chat_window::ChatWindow;
 use crate::views::pi_agent_import::{PiAgentImport, PiAgentImportEvent};
@@ -339,6 +340,12 @@ pub struct ThreadList {
     pub thread_items: Vec<gpui::Entity<ThreadItem>>,
     pub store: Arc<Store>,
     pub show_import_prompt: bool,
+    pub scroll_handle: ScrollHandle,
+    pub page: usize,
+    pub per_page: usize,
+    pub total_pages: usize,
+    pub total: usize,
+    pub loading_more: bool,
     pub _subscription: gpui::Subscription,
     pub _titlebar_subscription: gpui::Subscription,
     pub _user_panel_subscription: gpui::Subscription,
@@ -347,16 +354,9 @@ pub struct ThreadList {
 
 impl ThreadList {
     pub fn new(cx: &mut Context<Self>, store: Arc<Store>) -> Self {
-        let threads = store.list_threads().unwrap_or_default();
-        let thread_items = threads
-            .iter()
-            .map(|t| cx.new(|_| ThreadItem::new(t.clone(), store.clone())))
-            .collect();
         let title_bar = cx.new(|_| TitleBar::new("Mini Pi", TitleBarVariant::Home));
         let subscription = cx.observe_global::<AppStore>(move |this, cx| {
-            let threads = this.store.list_threads().unwrap_or_default();
-            this.sync_thread_items(&threads, cx);
-            cx.notify();
+            this.load_threads(cx);
         });
 
         let user_panel = cx.new(UserPanel::new);
@@ -431,18 +431,121 @@ impl ThreadList {
         let has_pi_settings = import_prompt.read(cx).has_files();
         let show_import_prompt = is_first && has_pi_settings;
 
-        Self {
+        let mut thread_list = Self {
             title_bar,
             user_panel,
             import_prompt,
             focus_handle: cx.focus_handle(),
-            thread_items,
+            thread_items: Vec::new(),
             store,
             show_import_prompt,
+            scroll_handle: ScrollHandle::new(),
+            page: 1,
+            per_page: 20,
+            total_pages: 0,
+            total: 0,
+            loading_more: false,
             _subscription: subscription,
             _titlebar_subscription: titlebar_subscription,
             _user_panel_subscription: user_panel_subscription,
             _import_prompt_subscription: import_prompt_subscription,
+        };
+        thread_list.load_threads(cx);
+        thread_list
+    }
+
+    fn load_threads(&mut self, cx: &mut Context<Self>) {
+        self.page = 1;
+        self.loading_more = false;
+        let per_page = self.per_page.max(1);
+        match self.store.list_threads_paginated(1, per_page) {
+            Ok(PaginatedThreads {
+                threads,
+                page,
+                per_page,
+                total,
+            }) => {
+                self.page = page;
+                self.per_page = per_page;
+                self.total = total;
+                self.total_pages = if total == 0 {
+                    0
+                } else {
+                    (total + per_page - 1) / per_page
+                };
+                self.sync_thread_items(&threads, cx);
+            }
+            Err(_) => {
+                self.thread_items.clear();
+                self.total = 0;
+                self.total_pages = 0;
+            }
+        }
+        cx.notify();
+    }
+
+    fn load_more_threads(&mut self, cx: &mut Context<Self>) {
+        if self.loading_more || self.total_pages == 0 || self.page >= self.total_pages {
+            return;
+        }
+        self.loading_more = true;
+        cx.notify();
+
+        let next_page = self.page + 1;
+        let per_page = self.per_page.max(1);
+        let store = self.store.clone();
+
+        cx.spawn(async move |this, cx| {
+            let result = store.list_threads_paginated(next_page, per_page);
+            let _ = this.update(cx, |this, cx| {
+                this.loading_more = false;
+                match result {
+                    Ok(PaginatedThreads {
+                        threads,
+                        page,
+                        per_page,
+                        total,
+                    }) => {
+                        this.page = page;
+                        this.per_page = per_page;
+                        this.total = total;
+                        this.total_pages = if total == 0 {
+                            0
+                        } else {
+                            (total + per_page - 1) / per_page
+                        };
+                        this.append_threads(&threads, cx);
+                    }
+                    Err(_) => {}
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn append_threads(&mut self, threads: &[ThreadMeta], cx: &mut Context<Self>) {
+        for thread in threads {
+            if !self
+                .thread_items
+                .iter()
+                .any(|item| item.read(cx).thread.id == thread.id)
+            {
+                let item = cx.new(|_| ThreadItem::new(thread.clone(), self.store.clone()));
+                self.thread_items.push(item);
+            }
+        }
+    }
+
+    fn check_scroll_for_more(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let max_y = self.scroll_handle.max_offset().height;
+        if max_y <= px(0.) {
+            return;
+        }
+        let offset_y = self.scroll_handle.offset().y;
+        let threshold = px(80.);
+        if offset_y.abs() >= max_y - threshold {
+            self.load_more_threads(cx);
         }
     }
 
@@ -512,6 +615,10 @@ impl Render for ThreadList {
                     .id("thread-list")
                     .flex_1()
                     .overflow_y_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .on_scroll_wheel(cx.listener(|this, _event: &ScrollWheelEvent, window, cx| {
+                        this.check_scroll_for_more(window, cx);
+                    }))
                     .flex()
                     .flex_col()
                     .when(!pinned.is_empty(), |el| {
@@ -541,6 +648,17 @@ impl Render for ThreadList {
                                 .path("logo.svg")
                                 .text_color(rgb(0x252525))
                                 .size(px(180.)),
+                        )
+                    })
+                    .when(self.loading_more, |el| {
+                        el.child(
+                            div()
+                                .id("thread-list-loader")
+                                .py_4()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(loader()),
                         )
                     }),
             )

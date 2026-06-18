@@ -20,6 +20,14 @@ pub struct ThreadMeta {
     pub updated_at: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct PaginatedThreads {
+    pub threads: Vec<ThreadMeta>,
+    pub page: usize,
+    pub per_page: usize,
+    pub total: usize,
+}
+
 const MIGRATIONS: &[(&str, &str)] = &[
     (
         "001_init",
@@ -195,6 +203,59 @@ impl Store {
             .map_err(StoreError::Rusqlite)?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(StoreError::Rusqlite)
+    }
+
+    pub fn list_threads_paginated(
+        &self,
+        page: usize,
+        per_page: usize,
+    ) -> Result<PaginatedThreads, StoreError> {
+        let page = page.max(1);
+        let per_page = per_page.max(1);
+        let offset = (page - 1) * per_page;
+
+        let total: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM threads", [], |row| row.get(0))
+            .map_err(StoreError::Rusqlite)?;
+
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, title, preview, session_file, model, thinking_level, pinned, metadata, created_at, updated_at \
+                 FROM threads ORDER BY pinned DESC, updated_at DESC \
+                 LIMIT ?1 OFFSET ?2",
+            )
+            .map_err(StoreError::Rusqlite)?;
+        let rows = stmt
+            .query_map(params![per_page as i64, offset as i64], |row| {
+                let metadata_str: Option<String> = row.get(7)?;
+                let metadata = metadata_str
+                    .and_then(|s| serde_json::from_str(&s).ok());
+                Ok(ThreadMeta {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    preview: row.get(2)?,
+                    session_file: row.get(3)?,
+                    model: row.get(4)?,
+                    thinking_level: row.get(5)?,
+                    pinned: row.get::<_, i32>(6)? != 0,
+                    metadata,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                })
+            })
+            .map_err(StoreError::Rusqlite)?;
+        let threads = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::Rusqlite)?;
+
+        Ok(PaginatedThreads {
+            threads,
+            page,
+            per_page,
+            total: total as usize,
+        })
     }
 
     pub fn get_thread(&self, id: i64) -> Result<Option<ThreadMeta>, StoreError> {

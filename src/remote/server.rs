@@ -129,8 +129,34 @@ async fn status_handler(State(state): State<Arc<AppState>>) -> Response {
     json_response(StatusCode::OK, value)
 }
 
-async fn list_threads(State(state): State<Arc<AppState>>) -> Response {
-    let value = send_command(RemoteCommand::ListThreads, &state.command_sender).await;
+#[derive(Deserialize)]
+struct ThreadsQuery {
+    #[serde(default = "default_page")]
+    page: usize,
+    #[serde(default = "default_per_page")]
+    per_page: usize,
+}
+
+fn default_page() -> usize {
+    1
+}
+
+fn default_per_page() -> usize {
+    20
+}
+
+async fn list_threads(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ThreadsQuery>,
+) -> Response {
+    let value = send_command(
+        RemoteCommand::ListThreads {
+            page: query.page,
+            per_page: query.per_page,
+        },
+        &state.command_sender,
+    )
+    .await;
     json_response(http_status_for(&value, 200), value)
 }
 
@@ -411,6 +437,40 @@ mod tests {
                     RemoteCommand::Status => {
                         json!({ "enabled": true, "status": "running", "tunnel_url": "https://example.com" })
                     }
+                    RemoteCommand::ListThreads { page, per_page } => {
+                        let all_threads: Vec<serde_json::Value> = (1..=5)
+                            .map(|id| {
+                                json!({
+                                    "id": id,
+                                    "title": format!("thread {}", id),
+                                    "preview": null,
+                                    "session_file": null,
+                                    "model": null,
+                                    "thinking_level": null,
+                                    "pinned": false,
+                                    "metadata": {},
+                                    "created_at": "2024-01-01T00:00:00Z",
+                                    "updated_at": "2024-01-01T00:00:00Z",
+                                })
+                            })
+                            .collect();
+                        let offset = (page - 1) * per_page;
+                        let threads = all_threads
+                            .into_iter()
+                            .skip(offset)
+                            .take(per_page)
+                            .collect::<Vec<_>>();
+                        let total_pages = (5 + per_page - 1) / per_page;
+                        json!({
+                            "threads": threads,
+                            "pagination": {
+                                "page": page,
+                                "per_page": per_page,
+                                "total": 5,
+                                "total_pages": total_pages,
+                            }
+                        })
+                    }
                     RemoteCommand::GetMessages { since_id, .. } => {
                         let messages = make_dummy_messages();
                         let start_idx = since_id
@@ -504,6 +564,50 @@ mod tests {
             .send()
             .expect("request should succeed");
         assert_eq!(response.status(), 200);
+    }
+
+    #[test]
+    fn list_threads_uses_pagination_defaults() {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        spawn_dummy_controller(rx);
+        let (_handle, port) = start(0, None, tx).expect("server should start");
+
+        let client = reqwest::blocking::Client::new();
+        let response = client
+            .get(&format!("http://127.0.0.1:{}/threads", port))
+            .send()
+            .expect("request should succeed");
+        assert_eq!(response.status(), 200);
+        let body: serde_json::Value = response.json().expect("response should be JSON");
+        assert!(body["threads"].is_array());
+        assert_eq!(body["pagination"]["page"], 1);
+        assert_eq!(body["pagination"]["per_page"], 20);
+        assert_eq!(body["pagination"]["total"], 5);
+    }
+
+    #[test]
+    fn list_threads_honors_pagination_params() {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        spawn_dummy_controller(rx);
+        let (_handle, port) = start(0, None, tx).expect("server should start");
+
+        let client = reqwest::blocking::Client::new();
+        let response = client
+            .get(&format!("http://127.0.0.1:{}/threads?page=2&per_page=2", port))
+            .send()
+            .expect("request should succeed");
+        assert_eq!(response.status(), 200);
+        let body: serde_json::Value = response.json().expect("response should be JSON");
+        let ids: Vec<i64> = body["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v["id"].as_i64().unwrap())
+            .collect();
+        assert_eq!(ids, vec![3, 4]);
+        assert_eq!(body["pagination"]["page"], 2);
+        assert_eq!(body["pagination"]["per_page"], 2);
+        assert_eq!(body["pagination"]["total_pages"], 3);
     }
 
     #[test]

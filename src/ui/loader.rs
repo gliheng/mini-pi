@@ -43,21 +43,36 @@ fn animated_dot(
     id: &'static str,
     phase_offset: f32,
 ) -> impl IntoElement {
+    // Fixed-size container keeps the dot centered so surrounding layout doesn't
+    // shift while the inner dot scales.
     div()
-        .id(id)
+        .id(SharedString::from(format!("{}-container", id)))
         .size(size)
-        .rounded_full()
-        .bg(color)
-        .with_animation(
-            id,
-            Animation::new(Duration::from_millis(1200)).repeat(),
-            move |this, progress| {
-                // Offset progress so dots pulse in sequence
-                let phased = (progress + phase_offset) % 1.0;
-                // Smooth sine wave: 0.3 -> 1.0 -> 0.3
-                let opacity = 0.3 + 0.7 * (phased * std::f32::consts::PI * 2.0).sin().abs();
-                this.opacity(opacity)
-            },
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            div()
+                .id(id)
+                .size(size)
+                .rounded_full()
+                .bg(color)
+                .with_animation(
+                    id,
+                    Animation::new(Duration::from_millis(1200)).repeat(),
+                    move |this, progress| {
+                        // Offset progress so dots pulse in sequence
+                        let phased = (progress + phase_offset) % 1.0;
+                        // Smooth sine wave: 0.3 -> 1.0 -> 0.3
+                        let opacity =
+                            0.3 + 0.7 * (phased * std::f32::consts::PI * 2.0).sin().abs();
+                        // Dot size bounces between 60% and 100% for a stronger pulse
+                        let scale =
+                            0.6 + 0.4 * (phased * std::f32::consts::PI * 2.0).sin().abs();
+                        let current_size = size * scale;
+                        this.opacity(opacity).w(current_size).h(current_size)
+                    },
+                ),
         )
 }
 

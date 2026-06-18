@@ -12,7 +12,10 @@ pub struct CommandEnvelope {
 #[derive(Debug, Clone)]
 pub enum RemoteCommand {
     Status,
-    ListThreads,
+    ListThreads {
+        page: usize,
+        per_page: usize,
+    },
     CreateThread {
         workspace_id: Option<i64>,
         model_id: Option<String>,

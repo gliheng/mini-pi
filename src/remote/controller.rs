@@ -732,7 +732,9 @@ impl RemoteController {
     fn handle_command(&mut self, command: RemoteCommand, cx: &mut Context<Self>) -> RemoteResponse {
         match command {
             RemoteCommand::Status => self.status_response(),
-            RemoteCommand::ListThreads => self.list_threads_response(cx),
+            RemoteCommand::ListThreads { page, per_page } => {
+                self.list_threads_response(page, per_page, cx)
+            }
             RemoteCommand::CreateThread {
                 workspace_id,
                 model_id,
@@ -769,10 +771,30 @@ impl RemoteController {
         })
     }
 
-    fn list_threads_response(&self, cx: &mut Context<Self>) -> RemoteResponse {
+    fn list_threads_response(
+        &self,
+        page: usize,
+        per_page: usize,
+        cx: &mut Context<Self>,
+    ) -> RemoteResponse {
         let store = cx.global::<AppStore>().store.clone();
-        match store.list_threads() {
-            Ok(threads) => json!(threads.iter().map(thread_to_json).collect::<Vec<_>>()),
+        match store.list_threads_paginated(page, per_page) {
+            Ok(result) => {
+                let total_pages = if result.total == 0 {
+                    0
+                } else {
+                    (result.total + result.per_page - 1) / result.per_page
+                };
+                json!({
+                    "threads": result.threads.iter().map(thread_to_json).collect::<Vec<_>>(),
+                    "pagination": {
+                        "page": result.page,
+                        "per_page": result.per_page,
+                        "total": result.total,
+                        "total_pages": total_pages,
+                    }
+                })
+            }
             Err(e) => json!({ "error": e.to_string() }),
         }
     }
