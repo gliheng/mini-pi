@@ -1150,3 +1150,73 @@ impl std::error::Error for PiRpcError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_text_delta_event() {
+        let val = serde_json::json!({
+            "type": "message_update",
+            "assistantMessageEvent": {
+                "type": "text_delta",
+                "delta": "hello"
+            }
+        });
+        let event = parse_pi_line_value(&val);
+        assert!(
+            matches!(event, Some(BridgeEvent::TextDelta { ref content }) if content == "hello"),
+            "text_delta event should parse: {:?}",
+            event
+        );
+    }
+
+    #[test]
+    fn parse_text_start_and_end_events() {
+        let start = serde_json::json!({
+            "type": "message_update",
+            "assistantMessageEvent": { "type": "text_start" }
+        });
+        assert!(matches!(
+            parse_pi_line_value(&start),
+            Some(BridgeEvent::TextStart)
+        ));
+
+        let end = serde_json::json!({
+            "type": "message_update",
+            "assistantMessageEvent": {
+                "type": "text_end",
+                "content": "hello"
+            }
+        });
+        assert!(
+            matches!(parse_pi_line_value(&end), Some(BridgeEvent::TextEnd { content }) if content == "hello")
+        );
+    }
+
+    #[test]
+    fn parse_agent_end_with_messages() {
+        let val = serde_json::json!({
+            "type": "agent_end",
+            "messages": [
+                {
+                    "id": "msg-1",
+                    "role": "assistant",
+                    "content": [{ "type": "text", "text": "hello" }]
+                }
+            ]
+        });
+        let event = parse_pi_line_value(&val);
+        match event {
+            Some(BridgeEvent::AgentEnd { messages: Some(messages) }) => {
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].role, "assistant");
+                assert!(
+                    matches!(&messages[0].parts[0], LoadedPart::Text { text } if text == "hello")
+                );
+            }
+            other => panic!("expected AgentEnd with messages, got {:?}", other),
+        }
+    }
+}

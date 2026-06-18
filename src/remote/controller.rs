@@ -137,7 +137,16 @@ impl AiSubmitStream {
             return true;
         };
 
-        if self.assistant_message_id.is_none() {
+        let switched = self
+            .assistant_message_id
+            .as_ref()
+            .map(|id| id != &message.id)
+            .unwrap_or(true);
+
+        if switched {
+            // The SDK started a new assistant message mid-turn (e.g. after a tool
+            // result). Reset our part tracking and emit a fresh start event.
+            self.part_states.clear();
             self.assistant_message_id = Some(message.id.clone());
             if !self.send_chunk(json!({
                 "type": "start",
@@ -159,11 +168,10 @@ impl AiSubmitStream {
     }
 
     fn resolve_assistant_message<'a>(&mut self, messages: &'a [Message]) -> Option<&'a Message> {
-        if let Some(ref id) = self.assistant_message_id {
-            return messages.iter().find(|m| m.id == *id);
-        }
-
-        messages.iter().find(|m| {
+        // The current assistant turn is always the most recent one not present when
+        // the stream started. This handles the SDK creating a new assistant message
+        // after a tool result while the same user request is still streaming.
+        messages.iter().rev().find(|m| {
             matches!(m.role, Role::Assistant) && !self.initial_message_ids.contains(&m.id)
         })
     }
@@ -1345,5 +1353,162 @@ mod tests {
                     && value.get("delta").and_then(|value| value.as_str()) == Some("done")
         )));
         assert!(matches!(chunks.last(), Some(AiStreamEvent::Done)));
+    }
+
+    #[test]
+    fn ai_submit_stream_finishes_empty_assistant_message() {
+        // Reproduces the reported SSE output where the assistant message is
+        // created but never receives any text parts before the turn ends.
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut stream = AiSubmitStream::new(1, tx, HashSet::new());
+        let empty = assistant_empty("assistant-1");
+
+        assert!(stream.update(&[empty.clone()], &ChatState::Streaming));
+        assert!(!stream.update(&[empty], &ChatState::Idle));
+
+        let mut types = Vec::new();
+        while let Some(kind) = recv_chunk_type(&mut rx) {
+            types.push(kind);
+        }
+
+        assert_eq!(
+            types,
+            vec!["start", "finish-step", "finish", "[DONE]"]
+        );
+        assert!(
+            types.iter().all(|t| t != "text-start" && t != "text-delta" && t != "text-end"),
+            "empty assistant message should not emit text chunks"
+        );
+    }
+
+    #[test]
+    fn ai_submit_stream_emits_text_deltas_after_empty_start() {
+        // Verifies that real chunks are forwarded when the assistant message
+        // starts empty and is populated during streaming.
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut stream = AiSubmitStream::new(1, tx, HashSet::new());
+        let empty = assistant_empty("assistant-1");
+        let streaming =
+            assistant_with_text("assistant-1", "hello", Some(PartState::Streaming));
+        let done = assistant_with_text("assistant-1", "hello", Some(PartState::Done));
+
+        assert!(stream.update(&[empty], &ChatState::Streaming));
+        assert!(stream.update(&[streaming], &ChatState::Streaming));
+        assert!(!stream.update(&[done], &ChatState::Idle));
+
+        let mut types = Vec::new();
+        while let Some(kind) = recv_chunk_type(&mut rx) {
+            types.push(kind);
+        }
+
+        assert_eq!(
+            types,
+            vec![
+                "start",
+                "text-start",
+                "text-delta",
+                "text-end",
+                "finish-step",
+                "finish",
+                "[DONE]"
+            ]
+        );
+    }
+
+    #[test]
+    fn ai_submit_stream_prefers_latest_assistant_message() {
+        // Regression: a stale assistant message from a previous turn may still
+        // carry a Streaming text part. The stream must latch onto the most recent
+        // assistant message, not the stale one.
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut stream = AiSubmitStream::new(1, tx, HashSet::new());
+
+        let stale = Message {
+            id: "stale".to_string(),
+            entry_id: None,
+            role: Role::Assistant,
+            parts: vec![MessagePart::Text {
+                text: SharedString::from("old streaming text"),
+                state: Some(PartState::Streaming),
+            }],
+        };
+        let new_empty = assistant_empty("new");
+        let new_with_text = assistant_with_text("new", "hello", Some(PartState::Streaming));
+        let new_done = assistant_with_text("new", "hello", Some(PartState::Done));
+
+        assert!(stream.update(&[stale, new_empty], &ChatState::Streaming));
+        assert!(stream.update(&[new_with_text.clone()], &ChatState::Streaming));
+        assert!(!stream.update(&[new_done], &ChatState::Idle));
+
+        let mut deltas = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let AiStreamEvent::Chunk(value) = event
+                && value.get("type").and_then(|v| v.as_str()) == Some("text-delta")
+            {
+                deltas.push(value["delta"].as_str().unwrap_or_default().to_string());
+            }
+        }
+
+        assert_eq!(deltas, vec!["hello"]);
+    }
+
+    #[test]
+    fn ai_submit_stream_switches_to_new_assistant_after_tool_call() {
+        // Regression: the SDK creates a new assistant message after a tool result
+        // while the same user request is still streaming. The stream must switch
+        // to the new assistant message and emit its text chunks.
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut stream = AiSubmitStream::new(1, tx, HashSet::new());
+
+        let first = Message {
+            id: "first".to_string(),
+            entry_id: None,
+            role: Role::Assistant,
+            parts: vec![
+                MessagePart::ToolCall {
+                    name: SharedString::from("kimi_datasource"),
+                    args: SharedString::from("{\"data_source_name\":\"stock\"}"),
+                    state: Some(PartState::Done),
+                    tool_call_id: SharedString::from("tool-1"),
+                },
+                MessagePart::ToolResult {
+                    name: SharedString::from("kimi_datasource"),
+                    output: SharedString::from("result"),
+                    state: Some(PartState::Done),
+                    tool_call_id: SharedString::from("tool-1"),
+                },
+            ],
+        };
+        let second_empty = assistant_empty("second");
+        let second_with_text = assistant_with_text("second", "腾讯股价...", Some(PartState::Streaming));
+        let second_done = assistant_with_text("second", "腾讯股价...", Some(PartState::Done));
+
+        assert!(stream.update(&[first.clone()], &ChatState::Streaming));
+        assert!(stream.update(&[first, second_empty], &ChatState::Streaming));
+        assert!(stream.update(&[second_with_text.clone()], &ChatState::Streaming));
+        assert!(!stream.update(&[second_done], &ChatState::Idle));
+
+        let mut types = Vec::new();
+        while let Some(kind) = recv_chunk_type(&mut rx) {
+            types.push(kind);
+        }
+
+        assert_eq!(
+            types,
+            vec![
+                "start",
+                "tool-input-start",
+                "tool-input-delta",
+                "tool-input-available",
+                "tool-output-available",
+                "start",
+                "text-start",
+                "text-delta",
+                "text-end",
+                "finish-step",
+                "finish",
+                "[DONE]"
+            ]
+        );
     }
 }
