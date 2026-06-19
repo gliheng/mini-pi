@@ -1,0 +1,6 @@
+{
+  "name": "pi-commander",
+  "main": "./.output/server/index.mjs",
+  "compatibility_date": "2025-06-18",
+  "compatibility_flags": ["nodejs_compat"]
+}
