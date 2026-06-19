@@ -1194,11 +1194,30 @@ impl RemoteController {
                     })
                 })
                 .ok_or_else(|| format!("workspace {} not found", id)),
-            None => Ok(workspaces.first().map(|ws| WorkspaceInfo {
-                id: ws.id,
-                path: PathBuf::from(&ws.path),
-                name: ws.name.clone(),
-            })),
+            None => {
+                // Prefer the "Default" workspace used by the local UI so remote
+                // sessions start in ~/.mini-pi/workspace instead of whichever
+                // workspace happened to be created first.
+                if let Some(ws) = workspaces.iter().find(|w| w.name == "Default") {
+                    return Ok(Some(WorkspaceInfo {
+                        id: ws.id,
+                        path: PathBuf::from(&ws.path),
+                        name: ws.name.clone(),
+                    }));
+                }
+
+                let default_dir = store.default_workspace_dir();
+                std::fs::create_dir_all(&default_dir).map_err(|e| e.to_string())?;
+                let default_path_str = default_dir.to_string_lossy().to_string();
+                let ws = store
+                    .create_workspace("Default", &default_path_str)
+                    .map_err(|e| e.to_string())?;
+                Ok(Some(WorkspaceInfo {
+                    id: ws.id,
+                    path: PathBuf::from(&ws.path),
+                    name: ws.name,
+                }))
+            }
         }
     }
 

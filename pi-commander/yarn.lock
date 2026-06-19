@@ -6993,7 +6993,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"consola@npm:^3.2.3, consola@npm:^3.4.2":
+"consola@npm:^3.2.3, consola@npm:^3.4.0, consola@npm:^3.4.2":
   version: 3.4.2
   resolution: "consola@npm:3.4.2"
   checksum: 10c0/7cebe57ecf646ba74b300bcce23bff43034ed6fbec9f7e39c27cee1dc00df8a21cd336b466ad32e304ea70fba04ec9e890c200270de9a526ce021ba8a7e4c11a
@@ -10787,6 +10787,17 @@ __metadata:
   languageName: node
   linkType: hard
 
+"nitro-cloudflare-dev@npm:^0.2.2":
+  version: 0.2.2
+  resolution: "nitro-cloudflare-dev@npm:0.2.2"
+  dependencies:
+    consola: "npm:^3.4.0"
+    mlly: "npm:^1.7.4"
+    pkg-types: "npm:^2.1.0"
+  checksum: 10c0/e0a7eeb01e2928656b9cf82471ae117b2d47255bfc28e0d0e9db4576ed30c762555b937123a6214f03cd860ee01c194aba23612891a55d49189e8c89c16d6cf6
+  languageName: node
+  linkType: hard
+
 "nitropack@npm:^2.13.4":
   version: 2.13.4
   resolution: "nitropack@npm:2.13.4"
@@ -11752,6 +11763,8 @@ __metadata:
     date-fns: "npm:^4.4.0"
     eslint: "npm:^10.5.0"
     motion-v: "npm:^2.3.0"
+    nitro-cloudflare-dev: "npm:^0.2.2"
+    nitropack: "npm:^2.13.4"
     nuxt: "npm:^4.4.8"
     nuxt-charts: "npm:^2.1.4"
     qr-scanner: "npm:^1.4.2"
@@ -11797,7 +11810,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"pkg-types@npm:^2.3.0, pkg-types@npm:^2.3.1":
+"pkg-types@npm:^2.1.0, pkg-types@npm:^2.3.0, pkg-types@npm:^2.3.1":
   version: 2.3.1
   resolution: "pkg-types@npm:2.3.1"
   dependencies:

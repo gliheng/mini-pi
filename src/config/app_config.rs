@@ -7,8 +7,6 @@ pub struct AppConfig {
     #[serde(default)]
     pub default_model: Option<String>,
     #[serde(default)]
-    pub default_workspace_name: Option<String>,
-    #[serde(default)]
     pub remote_control: RemoteControlConfig,
 }
 

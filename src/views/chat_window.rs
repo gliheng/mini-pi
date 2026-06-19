@@ -90,13 +90,10 @@ impl ChatWindow {
             }
         }
         Self::sort_workspaces(&mut workspaces);
-        let config_workspace_name = cx
-            .global::<AppStore>()
-            .config
-            .default_workspace_name
-            .clone();
-        let selected_workspace_id = config_workspace_name
-            .and_then(|name| workspaces.iter().find(|ws| ws.name == name).map(|ws| ws.id))
+        let selected_workspace_id = workspaces
+            .iter()
+            .find(|ws| ws.name == "Default")
+            .map(|ws| ws.id)
             .or_else(|| workspaces.first().map(|ws| ws.id));
 
         // Build model dropdown items
@@ -430,17 +427,10 @@ impl ChatWindow {
                     match store.create_workspace(&name, &path_str) {
                         Ok(workspace) => {
                             let ws_id = workspace.id;
-                            let ws_name = workspace.name.clone();
                             let _ = weak.update(cx, |window, cx| {
                                 window.workspaces.push(workspace);
                                 Self::sort_workspaces(&mut window.workspaces);
                                 window.selected_workspace_id = Some(ws_id);
-                                cx.update_global(|app_store: &mut AppStore, _| {
-                                    app_store.config.default_workspace_name = Some(ws_name);
-                                    if let Err(e) = app_store.config.save() {
-                                        eprintln!("[mini-pi] failed to save config: {}", e);
-                                    }
-                                });
                                 window.sync_workspace_manager(cx);
                                 cx.notify();
                             });
@@ -460,25 +450,11 @@ impl ChatWindow {
             return;
         }
 
-        let deleted_name = self
-            .workspaces
-            .iter()
-            .find(|ws| ws.id == workspace_id)
-            .map(|ws| ws.name.clone());
         self.workspaces
             .retain(|workspace| workspace.id != workspace_id);
         if self.selected_workspace_id == Some(workspace_id) {
             self.selected_workspace_id = self.workspaces.first().map(|workspace| workspace.id);
         }
-        cx.update_global(|app_store: &mut AppStore, _| {
-            if let Some(ref name) = deleted_name
-                && app_store.config.default_workspace_name.as_deref() == Some(name) {
-                    app_store.config.default_workspace_name = None;
-                    if let Err(e) = app_store.config.save() {
-                        eprintln!("[mini-pi] failed to save config: {}", e);
-                    }
-                }
-        });
         self.sync_workspace_manager(cx);
         cx.notify();
     }
@@ -1628,19 +1604,11 @@ impl Render for ChatWindow {
                                 .on_click(cx.listener(move |this, _, _window, cx| {
                                     this.selected_workspace_id = Some(ws_id);
                                     let ws_dir = this.workspaces.iter().find(|w| w.id == ws_id).map(|w| PathBuf::from(&w.path));
-                                    let ws_name_for_global = ws_name.clone();
-                                    let ws_name_for_input = ws_name.clone();
                                     if let Some(dir) = ws_dir {
                                         this.chat_input.update(cx, |ci, cx| {
-                                            ci.set_workspace(ws_id, dir, ws_name_for_input, cx);
+                                            ci.set_workspace(ws_id, dir, ws_name.clone(), cx);
                                         });
                                     }
-                                    cx.update_global(|app_store: &mut AppStore, _| {
-                                        app_store.config.default_workspace_name = Some(ws_name_for_global);
-                                        if let Err(e) = app_store.config.save() {
-                                            eprintln!("[mini-pi] failed to save config: {}", e);
-                                        }
-                                    });
                                     cx.notify();
                                 }))
                         }))

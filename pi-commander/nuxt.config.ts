@@ -5,7 +5,8 @@ export default defineNuxtConfig({
     '@nuxt/ui',
     '@comark/nuxt',
     '@nuxthub/core',
-    'nuxt-charts'
+    'nuxt-charts',
+    'nitro-cloudflare-dev'
   ],
 
   devtools: {
@@ -22,12 +23,18 @@ export default defineNuxtConfig({
     viewTransition: true
   },
 
-  compatibilityDate: '2024-07-11',
+  compatibilityDate: '2025-06-18',
 
   nitro: {
-    preset: 'cloudflare-module',
+    preset: "cloudflare_module",
+
     experimental: {
       openAPI: true
+    },
+
+    cloudflare: {
+      deployConfig: true,
+      nodeCompat: true
     }
   },
 
