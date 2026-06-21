@@ -139,32 +139,36 @@ pub fn pi_agent_source_dir() -> Option<PathBuf> {
     if dir.exists() { Some(dir) } else { None }
 }
 
+const WHITELISTED_FILES: &[&str] = &["auth.json"];
+
 pub fn list_pi_agent_json_files() -> Vec<(String, PathBuf)> {
     let Some(source) = pi_agent_source_dir() else {
         return Vec::new();
     };
-    let mut files = Vec::new();
-    collect_json_files(&source, &source, &mut files);
-    files
+    list_pi_agent_json_files_in_dir(&source)
 }
 
-fn collect_json_files(base: &PathBuf, current: &PathBuf, out: &mut Vec<(String, PathBuf)>) {
-    let Ok(entries) = std::fs::read_dir(current) else {
-        return;
+fn list_pi_agent_json_files_in_dir(dir: &PathBuf) -> Vec<(String, PathBuf)> {
+    let mut files = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return files;
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
-            collect_json_files(base, &path, out);
-        } else if path.extension().and_then(|e| e.to_str()) == Some("json") {
-            let rel = path
-                .strip_prefix(base)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .to_string();
-            out.push((rel, path));
+        if !path.is_file() {
+            continue;
         }
+        let name = path
+            .file_name()
+            .unwrap_or(path.as_os_str())
+            .to_string_lossy()
+            .to_string();
+        if !WHITELISTED_FILES.contains(&name.as_str()) {
+            continue;
+        }
+        files.push((name, path));
     }
+    files
 }
 
 pub fn import_from_pi_agent() -> Result<usize, std::io::Error> {
@@ -174,13 +178,41 @@ pub fn import_from_pi_agent() -> Result<usize, std::io::Error> {
     }
     let target = agent_dir();
     let mut imported = 0;
-    for (rel, src) in files {
-        let dst = target.join(&rel);
-        if let Some(parent) = dst.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+    for (_rel, src) in files {
+        let dst = target.join(src.file_name().unwrap_or(src.as_os_str()));
         std::fs::copy(&src, &dst)?;
         imported += 1;
     }
     Ok(imported)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn list_pi_agent_json_files_only_includes_whitelisted_files() {
+        let temp = std::env::temp_dir().join(format!(
+            "mini-pi-agent-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+
+        let mut f = std::fs::File::create(temp.join("auth.json")).unwrap();
+        f.write_all(b"{}").unwrap();
+
+        let mut f = std::fs::File::create(temp.join("model.json")).unwrap();
+        f.write_all(b"{}").unwrap();
+
+        let mut f = std::fs::File::create(temp.join("providers.json")).unwrap();
+        f.write_all(b"{}").unwrap();
+
+        let files = list_pi_agent_json_files_in_dir(&temp);
+        let _ = std::fs::remove_dir_all(&temp);
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].0, "auth.json");
+    }
 }

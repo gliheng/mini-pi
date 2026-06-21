@@ -19,6 +19,7 @@ use gpui::{App, AppContext, Application, Bounds, KeyBinding, px, size};
 
 use crate::auth::state::{self, AuthState};
 use crate::config::app_config::AppConfig;
+use crate::config::model_config;
 use crate::core::actions::Quit;
 use crate::core::app::{AppStore, custom_window_options};
 use crate::core::assets::Assets;
@@ -70,7 +71,8 @@ fn main() {
         None => (AuthState::LoggedOut, None),
     };
 
-    let sync_meta = settings_sync::load_sync_meta();
+    let sync_meta = settings_sync::load_sync_meta(&store);
+    let initial_sync_meta = sync_meta.clone();
 
     let pi_bridge = match PiBridge::spawn() {
         Ok(bridge) => {
@@ -86,6 +88,24 @@ fn main() {
     Application::new()
         .with_assets(Assets { base: assets_dir })
         .run(move |cx: &mut App| {
+            let models = pi_bridge
+                .as_ref()
+                .map(|bridge| match model_config::load_models(bridge) {
+                    Ok(models) => models,
+                    Err(e) => {
+                        eprintln!("[mini-pi] failed to load model list: {}", e);
+                        Vec::new()
+                    }
+                })
+                .unwrap_or_default();
+            eprintln!("[mini-pi] loaded {} models", models.len());
+            for m in &models {
+                eprintln!(
+                    "[mini-pi]   model: id={} name={} thinking_level_map={:?}",
+                    m.id, m.name, m.thinking_level_map
+                );
+            }
+
             let remote_controller =
                 cx.new(|cx| RemoteController::new(cx, config.remote_control.clone()));
 
@@ -102,6 +122,7 @@ fn main() {
                 session_manager: SessionManager::new(),
                 streaming_thread_ids: HashSet::new(),
                 remote_controller: Some(remote_controller),
+                models,
             });
 
             if auth.is_logged_in() {
@@ -109,14 +130,16 @@ fn main() {
                     let _ = state::agent_dir();
                     let access_token = sess.access_token.clone();
                     let user_id = sess.user.id.clone();
+                    let initial_meta = initial_sync_meta.clone();
                     cx.spawn(async move |cx| {
                         let result = smol::unblock(move || {
-                            settings_sync::sync_changes(&access_token, &user_id)
+                            settings_sync::sync_changes(&access_token, &user_id, initial_meta)
                         })
                         .await;
                         let _ = cx.update_global(|app: &mut AppStore, _| {
                             app.sync_status = match result {
                                 Ok(meta) => {
+                                    let _ = settings_sync::save_sync_meta(&app.store, &meta);
                                     app.sync_meta = meta;
                                     settings_sync::SyncStatus::Synced
                                 }

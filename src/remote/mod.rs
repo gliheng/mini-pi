@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod cloudflared;
 pub mod controller;
 pub mod qr;
 pub mod server;

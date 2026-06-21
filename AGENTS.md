@@ -44,6 +44,7 @@ src/rpc/
   pi_rpc.rs             # PiBridge shared WebSocket client, PiRpc session handle, BridgeEvent enum, JSON parser
 src/remote/
   controller.rs         # RemoteController: enable/disable, command dispatch, SSE broadcasting, cloudflared lifecycle
+  cloudflared.rs        # Auto-download and resolve cloudflared binary in ~/.mini-pi/bin/
   server.rs             # axum REST server with Server-Sent Events
   tunnel.rs             # cloudflared process management and quick-tunnel URL parsing
   qr.rs                 # QR code generation for the tunnel URL
@@ -103,7 +104,7 @@ cargo test
    - **Linux:** Vulkan drivers, `libxcb`, `libxkbcommon`, `libfontconfig`, `libssl`
    - **Windows:** Vulkan SDK or DirectX
 3. **Node.js** (with `npm`) or **bun** must be installed, and `pi-bridge/node_modules` must be present (`cd pi-bridge && npm install`). The app spawns the bridge automatically and connects to it over a local WebSocket.
-4. *(Optional)* **cloudflared** is required for the phone remote-control feature (the app can auto-spawn it; install with `brew install cloudflared` or from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/).
+4. *(Optional)* **cloudflared** is used for the phone remote-control feature. If it is not installed on the system, the app offers to download the official binary into `~/.mini-pi/bin/` when the user enables remote control. You can also install it manually with `brew install cloudflared` or from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/.
 5. *(Optional)* **Cloudflare AI Gateway** environment variables for auto-generated thread titles:
    - `CLOUDFLARE_API_KEY`
    - `CLOUDFLARE_ACCOUNT_ID`
@@ -118,7 +119,7 @@ cargo test
 - **Agent config:** `~/.mini-pi/agent/` — passed to the SDK bridge via `--agent-dir`; imported from `~/.pi/agent/` on first run
 - **App config:** `~/.config/mini-pi/config.json`
 - **Auth session:** Stored in the `user_settings` table of `~/.mini-pi/mini-pi.db` under key `supabase_session`
-- **Sync metadata:** `~/.mini-pi/sync_meta.json`
+- **Sync metadata:** Stored in the `user_settings` table of `~/.mini-pi/mini-pi.db` under key `sync_meta` (migrated from legacy `~/.mini-pi/sync_meta.json` on first read)
 
 ### Database Migrations
 
@@ -154,6 +155,7 @@ When enabled in the user settings panel (`remote_control.enabled` in `~/.config/
 
 - `RemoteController` starts a local `axum` server bound to `127.0.0.1:<bind_port>`, served by a dedicated Tokio runtime. Commands and SSE events are routed through Tokio channels.
 - It auto-spawns `cloudflared` to expose that port through a Cloudflare Tunnel (quick tunnel by default, or a named tunnel via `cloudflared.tunnel_token`; named tunnels also require `cloudflared.hostname`).
+- If no bundled `cloudflared` binary exists in `~/.mini-pi/bin/`, `UserPanel` shows a modal that downloads the platform-specific official release into `~/.mini-pi/bin/`, updates `remote_control.cloudflared.command`, and starts the tunnel.
 - The user panel displays the public tunnel URL and a QR code for easy phone scanning.
 - The phone sends REST commands (`GET /threads`, `POST /threads/:id/message`, etc.) and receives live assistant replies from the streaming message POST response.
 - Message responses stream AI SDK UI message chunks over data-only Server-Sent Events.
@@ -220,7 +222,7 @@ This application is a thin GUI wrapper around the `@earendil-works/pi-coding-age
 ## Notes for Agents
 
 - `docs/` contains internal reference material, not project user documentation.
-- The model list is hardcoded in `src/config/model_config.rs`. New models must be added there. Model IDs use a `<provider>:<model>` format parsed by `parse_model_id`.
+- The model list is loaded dynamically at startup from the SDK bridge via `ModelRegistry.getAvailable()` and stored in `AppStore.models`. `src/config/model_config.rs` exposes the helpers (`all_models`, `get_model_name`, `model_display_name`, `parse_model_id`) that take a `&[ModelInfo]` slice. Model IDs use a `<provider>:<model>` format parsed by `parse_model_id`.
 - When adding database changes, append a new migration tuple to `MIGRATIONS` in `src/data/store.rs`.
 - Assets are loaded from the source tree at runtime via `core::assets::Assets`. Running the binary outside the repository requires the `assets/` directory to be present at the expected path.
 - The app is primarily developed and tested on macOS. Windows-specific and Linux-specific code exists (e.g. `CREATE_NO_WINDOW`, client-side titlebar controls, `wmctrl`) but may need verification.

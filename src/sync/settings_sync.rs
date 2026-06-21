@@ -1,5 +1,6 @@
 use crate::auth::state;
 use crate::auth::supabase;
+use crate::data::store::{Store, StoreError};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -23,6 +24,8 @@ fn with_sync_lock<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String>
     result
 }
 
+const SYNC_META_KEY: &str = "sync_meta";
+
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct SyncMeta {
     pub files: HashMap<String, FileSyncInfo>,
@@ -34,26 +37,40 @@ pub struct FileSyncInfo {
     pub last_synced: String,
 }
 
-fn sync_meta_path() -> PathBuf {
+fn legacy_sync_meta_path() -> PathBuf {
     let dir = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".mini-pi");
     dir.join("sync_meta.json")
 }
 
-pub fn load_sync_meta() -> SyncMeta {
-    let path = sync_meta_path();
-    if !path.exists() {
-        return SyncMeta::default();
+pub fn load_sync_meta(store: &Store) -> SyncMeta {
+    match store.get_user_setting(SYNC_META_KEY) {
+        Ok(Some(value)) => serde_json::from_str(&value).unwrap_or_default(),
+        Ok(None) => {
+            let legacy_path = legacy_sync_meta_path();
+            if legacy_path.exists() {
+                let content = std::fs::read_to_string(&legacy_path).unwrap_or_default();
+                let meta: SyncMeta = serde_json::from_str(&content).unwrap_or_default();
+                let _ = save_sync_meta(store, &meta);
+                let _ = std::fs::remove_file(&legacy_path);
+                meta
+            } else {
+                SyncMeta::default()
+            }
+        }
+        Err(_) => SyncMeta::default(),
     }
-    let content = std::fs::read_to_string(&path).unwrap_or_default();
-    serde_json::from_str(&content).unwrap_or_default()
 }
 
-pub fn save_sync_meta(meta: &SyncMeta) -> Result<(), std::io::Error> {
-    let path = sync_meta_path();
-    let content = serde_json::to_string_pretty(meta)?;
-    std::fs::write(&path, content)
+pub fn save_sync_meta(store: &Store, meta: &SyncMeta) -> Result<(), StoreError> {
+    let value = serde_json::to_string_pretty(meta).map_err(|e| {
+        StoreError::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("failed to serialize sync meta: {}", e),
+        ))
+    })?;
+    store.set_user_setting(SYNC_META_KEY, &value)
 }
 
 fn file_hash(data: &[u8]) -> String {
@@ -113,13 +130,17 @@ pub enum SyncStatus {
     Error(String),
 }
 
-pub fn pull_from_remote(access_token: &str, user_id: &str) -> Result<SyncMeta, String> {
+pub fn pull_from_remote(
+    access_token: &str,
+    user_id: &str,
+    initial_meta: SyncMeta,
+) -> Result<SyncMeta, String> {
     with_sync_lock(|| {
         let agent_dir = state::agent_dir();
         let remote_files =
             supabase::list_files(access_token, user_id).map_err(|e| e.to_string())?;
 
-        let mut meta = SyncMeta::default();
+        let mut meta = initial_meta;
 
         for file in &remote_files {
             if file.name.ends_with('/') {
@@ -152,15 +173,18 @@ pub fn pull_from_remote(access_token: &str, user_id: &str) -> Result<SyncMeta, S
             );
         }
 
-        let _ = save_sync_meta(&meta);
         Ok(meta)
     })
 }
 
-pub fn push_to_remote(access_token: &str, user_id: &str) -> Result<SyncMeta, String> {
+pub fn push_to_remote(
+    access_token: &str,
+    user_id: &str,
+    initial_meta: SyncMeta,
+) -> Result<SyncMeta, String> {
     with_sync_lock(|| {
         let local_files = scan_agent_files();
-        let mut meta = SyncMeta::default();
+        let mut meta = initial_meta;
 
         for (relative_path, full_path) in &local_files {
             let data = std::fs::read(full_path).map_err(|e| e.to_string())?;
@@ -180,19 +204,20 @@ pub fn push_to_remote(access_token: &str, user_id: &str) -> Result<SyncMeta, Str
             );
         }
 
-        let _ = save_sync_meta(&meta);
         Ok(meta)
     })
 }
 
-pub fn sync_changes(access_token: &str, user_id: &str) -> Result<SyncMeta, String> {
+pub fn sync_changes(
+    access_token: &str,
+    user_id: &str,
+    initial_meta: SyncMeta,
+) -> Result<SyncMeta, String> {
     with_sync_lock(|| {
-        let mut meta = load_sync_meta();
+        let mut meta = initial_meta;
         let local_files = scan_agent_files();
 
         let local_map: HashMap<String, PathBuf> = local_files.into_iter().collect();
-
-        let mut changed = false;
 
         for (relative_path, full_path) in &local_map {
             let data = match std::fs::read(full_path) {
@@ -218,7 +243,6 @@ pub fn sync_changes(access_token: &str, user_id: &str) -> Result<SyncMeta, Strin
                         last_synced: now,
                     },
                 );
-                changed = true;
             }
         }
 
@@ -254,7 +278,6 @@ pub fn sync_changes(access_token: &str, user_id: &str) -> Result<SyncMeta, Strin
                         last_synced: now,
                     },
                 );
-                changed = true;
             }
         }
 
@@ -275,12 +298,7 @@ pub fn sync_changes(access_token: &str, user_id: &str) -> Result<SyncMeta, Strin
                         last_synced: now,
                     },
                 );
-                changed = true;
             }
-        }
-
-        if changed {
-            let _ = save_sync_meta(&meta);
         }
 
         Ok(meta)

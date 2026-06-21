@@ -12,36 +12,38 @@ pub struct CommandEnvelope {
 #[derive(Debug, Clone)]
 pub enum RemoteCommand {
     Status,
+    GetModels,
+    ListWorkspaces,
     ListThreads {
         page: usize,
         per_page: usize,
     },
     CreateThread {
-        workspace_id: Option<i64>,
+        workspace_id: Option<String>,
         model_id: Option<String>,
     },
     OpenThread {
-        thread_id: i64,
+        thread_id: String,
     },
     SendMessageStream {
-        thread_id: i64,
+        thread_id: String,
         message: String,
         sender: UnboundedSender<AiStreamEvent>,
     },
     GetMessages {
-        thread_id: i64,
+        thread_id: String,
         since_id: Option<String>,
     },
     Abort {
-        thread_id: i64,
+        thread_id: String,
     },
     SetModel {
-        thread_id: i64,
+        thread_id: String,
         model_id: String,
     },
     SetWorkspace {
-        thread_id: i64,
-        workspace_id: i64,
+        thread_id: String,
+        workspace_id: String,
     },
 }
 
@@ -97,12 +99,12 @@ pub struct SetModelBody {
 
 #[derive(Debug, Deserialize)]
 pub struct SetWorkspaceBody {
-    pub workspace_id: i64,
+    pub workspace_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct CreateThreadBody {
-    pub workspace_id: Option<i64>,
+    pub workspace_id: Option<String>,
     pub model_id: Option<String>,
 }
 

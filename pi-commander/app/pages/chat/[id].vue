@@ -6,9 +6,10 @@ const route = useRoute()
 const toast = useToast()
 const config = usePiRemoteConfig()
 const remote = usePiRemote()
+const voice = useVoiceInput()
 const { model } = useModels()
 
-const threadId = computed(() => Number(route.params.id))
+const threadId = computed(() => String(route.params.id))
 
 const messages = ref<UIMessage[]>([])
 const status = ref<ChatStatus>('ready')
@@ -18,6 +19,40 @@ const title = ref<string | null>(null)
 const loadingThread = ref(true)
 
 let activeAbortController: AbortController | null = null
+
+const canUseVoice = computed(() =>
+  voice.supported.value
+  && status.value !== 'streaming'
+  && status.value !== 'submitted'
+)
+
+async function toggleVoiceInput() {
+  if (voice.isRecording.value) {
+    try {
+      const blob = await voice.stopRecording()
+      const text = await voice.transcribe(blob)
+      input.value = input.value.trimEnd()
+      input.value = input.value ? `${input.value} ${text}` : text
+    } catch (err) {
+      toast.add({
+        description: err instanceof Error ? err.message : String(err),
+        icon: 'i-lucide-alert-circle',
+        color: 'error'
+      })
+    }
+    return
+  }
+
+  try {
+    await voice.startRecording()
+  } catch (err) {
+    toast.add({
+      description: err instanceof Error ? err.message : String(err),
+      icon: 'i-lucide-alert-circle',
+      color: 'error'
+    })
+  }
+}
 
 async function loadThread() {
   loadingThread.value = true
@@ -123,7 +158,7 @@ async function handleAbort() {
 }
 
 watch(model, async (newModel) => {
-  if (!threadId.value || Number.isNaN(threadId.value)) return
+  if (!threadId.value) return
   try {
     await remote.setModel(threadId.value, newModel)
   } catch (err) {
@@ -195,6 +230,17 @@ watch(model, async (newModel) => {
             <template #footer>
               <div class="flex items-center gap-1">
                 <ModelSelect />
+
+                <UButton
+                  :icon="voice.isRecording.value ? 'i-lucide-square' : 'i-lucide-mic'"
+                  :color="voice.isRecording.value ? 'error' : 'neutral'"
+                  :loading="voice.isTranscribing.value"
+                  :disabled="!voice.isRecording.value && !canUseVoice"
+                  variant="ghost"
+                  size="sm"
+                  :aria-label="voice.isRecording.value ? 'Stop recording' : 'Start voice input'"
+                  @click="toggleVoiceInput"
+                />
               </div>
 
               <UChatPromptSubmit

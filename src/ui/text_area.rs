@@ -87,7 +87,7 @@ pub struct TextArea {
     pub workspace_dir: Option<PathBuf>,
     pub workspace_name: Option<String>,
     pub just_selected_mention: bool,
-    cached_workspace_id: Option<i64>,
+    cached_workspace_id: Option<String>,
 
     pub enable_slash_commands: bool,
     pub slash_command_active: bool,
@@ -197,8 +197,8 @@ impl TextArea {
         self.just_selected_mention = false;
     }
 
-    pub fn set_workspace(&mut self, id: i64, dir: PathBuf, name: String, cx: &mut Context<Self>) {
-        if self.cached_workspace_id == Some(id) {
+    pub fn set_workspace(&mut self, id: String, dir: PathBuf, name: String, cx: &mut Context<Self>) {
+        if self.cached_workspace_id == Some(id.clone()) {
             return;
         }
         self.cached_workspace_id = Some(id);

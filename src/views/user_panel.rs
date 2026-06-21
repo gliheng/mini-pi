@@ -10,6 +10,7 @@ use crate::auth::state::{self, AuthState};
 use crate::auth::supabase;
 use crate::core::app::AppStore;
 use crate::remote::RemoteStatus;
+use crate::remote::cloudflared;
 use crate::remote::controller::TunnelLog;
 use crate::remote::qr::qr_image_source;
 use crate::sync::settings_sync;
@@ -26,6 +27,13 @@ pub enum UserPanelEvent {
 pub enum AuthDialog {
     Login,
     Signup,
+}
+
+#[derive(Clone)]
+pub enum CloudflaredDialog {
+    Prompt,
+    Downloading,
+    Error(String),
 }
 
 struct StatusLogTooltip {
@@ -55,6 +63,7 @@ pub struct UserPanel {
     pub confirm_password_input: gpui::Entity<TextInput>,
     pub auth_error: Option<String>,
     pub auth_dialog: Option<AuthDialog>,
+    pub cloudflared_dialog: Option<CloudflaredDialog>,
     pub toast: gpui::Entity<Toast>,
     pub _email_sub: gpui::Subscription,
     pub _password_sub: gpui::Subscription,
@@ -98,6 +107,7 @@ impl UserPanel {
             confirm_password_input,
             auth_error: None,
             auth_dialog: None,
+            cloudflared_dialog: None,
             toast,
             _email_sub,
             _password_sub,
@@ -105,6 +115,38 @@ impl UserPanel {
             _remote_sub: remote_sub,
             _toast_sub,
         }
+    }
+
+    fn start_cloudflared_download(&mut self, cx: &mut Context<Self>) {
+        self.cloudflared_dialog = Some(CloudflaredDialog::Downloading);
+        cx.notify();
+
+        let weak = cx.entity().downgrade();
+        cx.spawn(async move |_, cx| {
+            let result = smol::unblock(move || cloudflared::download_and_install()).await;
+            let _ = weak.update(cx, |this, cx| {
+                match result {
+                    Ok(path) => {
+                        let controller = cx.update_global(|app: &mut AppStore, _| {
+                            app.remote_controller.clone()
+                        });
+                        if let Some(controller) = controller {
+                            let command = path.to_string_lossy().to_string();
+                            controller.update(cx, |c, cx| {
+                                c.config.cloudflared.command = command;
+                                c.set_enabled(true, cx);
+                            });
+                        }
+                        this.cloudflared_dialog = None;
+                    }
+                    Err(e) => {
+                        this.cloudflared_dialog = Some(CloudflaredDialog::Error(e));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 }
 
@@ -333,6 +375,9 @@ impl Render for UserPanel {
                                 }),
                         ),
                 )
+                .when(self.cloudflared_dialog.is_some(), |this| {
+                    this.child(render_cloudflared_dialog(self, cx))
+                })
                 .when(self.toast.read(cx).visible, |this| {
                     this.child(render_toast_overlay(self, cx))
                 })
@@ -344,6 +389,9 @@ impl Render for UserPanel {
                 .size_full()
                 .relative()
                 .child(content)
+                .when(self.cloudflared_dialog.is_some(), |this| {
+                    this.child(render_cloudflared_dialog(self, cx))
+                })
                 .when(self.toast.read(cx).visible, |this| {
                     this.child(render_toast_overlay(self, cx))
                 })
@@ -362,6 +410,152 @@ fn render_toast_overlay(panel: &UserPanel, _cx: &mut Context<UserPanel>) -> impl
         .items_center()
         .justify_center()
         .child(panel.toast.clone())
+}
+
+fn render_cloudflared_dialog(
+    panel: &mut UserPanel,
+    cx: &mut Context<UserPanel>,
+) -> impl IntoElement {
+    let state = panel.cloudflared_dialog.clone().unwrap();
+    let (title, body, primary_label, is_downloading, error_msg): (
+        SharedString,
+        SharedString,
+        SharedString,
+        bool,
+        Option<String>,
+    ) = match &state {
+        CloudflaredDialog::Prompt => (
+            "Cloudflared required".into(),
+            "Remote control needs the cloudflared tunnel binary. Download it to the app data folder now?".into(),
+            "Download & Start".into(),
+            false,
+            None,
+        ),
+        CloudflaredDialog::Downloading => (
+            "Downloading cloudflared".into(),
+            "Downloading and installing cloudflared...".into(),
+            "Downloading...".into(),
+            true,
+            None,
+        ),
+        CloudflaredDialog::Error(e) => (
+            "Download failed".into(),
+            "Could not download cloudflared.".into(),
+            "Retry".into(),
+            false,
+            Some(e.clone()),
+        ),
+    };
+
+    div()
+        .id("cloudflared-dialog-overlay")
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .bg(gpui::rgba(0x00000099))
+        .flex()
+        .items_center()
+        .justify_center()
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.cloudflared_dialog = None;
+            cx.notify();
+        }))
+        .child(
+            div()
+                .id("cloudflared-dialog-card")
+                .mx_8()
+                .w(px(360.))
+                .flex()
+                .flex_col()
+                .gap_4()
+                .px_6()
+                .py_6()
+                .rounded_xl()
+                .bg(rgb(0x1f1f1f))
+                .border_1()
+                .border_color(rgb(0x333333))
+                .on_click(|_, _, cx| {
+                    cx.stop_propagation();
+                })
+                .child(
+                    div()
+                        .text_xl()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(rgb(0xe0e0e0))
+                        .child(title),
+                )
+                .child(div().text_sm().text_color(rgb(0x888888)).child(body))
+                .when_some(error_msg, |this, err| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(0xfca5a5))
+                            .child(err),
+                    )
+                })
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_3()
+                        .child(
+                            div()
+                                .id("cloudflared-download-btn")
+                                .flex_1()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .px_4()
+                                .py_2()
+                                .rounded_lg()
+                                .bg(if is_downloading {
+                                    rgb(0x333333)
+                                } else {
+                                    rgb(0x4f46e5)
+                                })
+                                .cursor_pointer()
+                                .text_color(if is_downloading {
+                                    rgb(0x888888)
+                                } else {
+                                    rgb(0xffffff)
+                                })
+                                .text_sm()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .when(!is_downloading, |s| {
+                                    s.hover(|style| style.bg(rgb(0x6366f1)))
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.start_cloudflared_download(cx);
+                                        }))
+                                })
+                                .child(primary_label),
+                        )
+                        .child(
+                            div()
+                                .id("cloudflared-cancel-btn")
+                                .flex_1()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .px_4()
+                                .py_2()
+                                .rounded_lg()
+                                .bg(rgb(0x252525))
+                                .border_1()
+                                .border_color(rgb(0x444444))
+                                .cursor_pointer()
+                                .text_color(rgb(0x888888))
+                                .text_sm()
+                                .hover(|style| style.bg(rgb(0x333333)))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.cloudflared_dialog = None;
+                                    cx.notify();
+                                }))
+                                .child("Cancel"),
+                        ),
+                ),
+        )
 }
 
 fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElement {
@@ -450,12 +644,21 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                                 .mt(px(2.)),
                         )
                         .when(!is_busy, |s| {
-                            s.on_click(cx.listener(move |_this, _, _, cx| {
+                            s.on_click(cx.listener(move |this, _, _, cx| {
                                 if let Some(controller) =
                                     cx.global::<AppStore>().remote_controller.clone()
                                 {
+                                    let enabled = controller.read(cx).is_enabled();
+                                    if !enabled
+                                        && !cloudflared::app_data_cloudflared_path().exists()
+                                    {
+                                        this.cloudflared_dialog =
+                                            Some(CloudflaredDialog::Prompt);
+                                        cx.notify();
+                                        return;
+                                    }
                                     controller
-                                        .update(cx, |c, cx| c.set_enabled(!c.is_enabled(), cx));
+                                        .update(cx, |c, cx| c.set_enabled(!enabled, cx));
                                 }
                             }))
                         }),
@@ -514,9 +717,10 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
         );
 
     if let Some(tunnel) = tunnel_url {
+        let qr = qr_image_source(&tunnel);
+        let tunnel_for_text_copy = tunnel.clone();
+        let tunnel_for_display = tunnel.clone();
         let pi_commander_url = "https://pi.raven-ai.one/".to_string();
-        let qr = qr_image_source(&pi_commander_url);
-        let tunnel_for_copy = tunnel.clone();
         let pi_commander_for_open = pi_commander_url.clone();
         section = section.child(
             div()
@@ -556,20 +760,58 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                 .child(
                     div()
                         .id("remote-qr-code")
-                        .cursor_pointer()
                         .when_some(qr, |this, source| {
                             this.child(gpui::img(source).size(px(160.)))
-                        })
+                        }),
+                )
+                .child(
+                    div()
+                        .id("remote-tunnel-url")
+                        .w_full()
+                        .px_3()
+                        .py_2()
+                        .rounded_lg()
+                        .bg(rgb(0x1f1f1f))
+                        .border_1()
+                        .border_color(rgb(0x333333))
+                        .cursor_pointer()
+                        .hover(|style| style.bg(rgb(0x2a2a2a)).border_color(rgb(0x444444)))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(
-                                tunnel_for_copy.clone(),
+                                tunnel_for_text_copy.clone(),
                             ));
                             this.toast.update(cx, |toast, cx| {
                                 toast.set_message("URL copied to clipboard");
                                 toast.show_for(Duration::from_secs(3), cx);
                             });
                             cx.notify();
-                        })),
+                        }))
+                        .child(
+                            div()
+                                .w_full()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .justify_center()
+                                .gap_2()
+                                .child(
+                                    gpui::svg()
+                                        .path("clipboard.svg")
+                                        .size(px(14.))
+                                        .text_color(rgb(0x888888)),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w(px(0.))
+                                        .overflow_x_hidden()
+                                        .whitespace_nowrap()
+                                        .text_ellipsis()
+                                        .text_xs()
+                                        .text_color(rgb(0xcccccc))
+                                        .child(tunnel_for_display),
+                                ),
+                        ),
                 ),
         );
     }
@@ -797,6 +1039,7 @@ fn render_auth_content(
                     .text_color(rgb(0x888888))
                     .child("Sign in to sync your agent settings"),
             )
+            .child(render_remote_control_section(cx))
             .child(
                 div()
                     .w_full()
@@ -1105,12 +1348,14 @@ fn render_sync_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
                 cx.notify();
                 let access_token = s.access_token.clone();
                 let user_id = s.user.id.clone();
+                let initial_meta = cx.global::<AppStore>().sync_meta.clone();
                 cx.spawn(async move |_, cx| {
                     let result =
-                        smol::unblock(move || settings_sync::sync_changes(&access_token, &user_id))
+                        smol::unblock(move || settings_sync::sync_changes(&access_token, &user_id, initial_meta))
                             .await;
                     let _ = cx.update_global(|app: &mut AppStore, _| match result {
                         Ok(meta) => {
+                            let _ = settings_sync::save_sync_meta(&app.store, &meta);
                             app.sync_meta = meta;
                             app.sync_status = settings_sync::SyncStatus::Synced;
                         }

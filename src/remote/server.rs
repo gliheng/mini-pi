@@ -108,6 +108,8 @@ fn build_router(state: Arc<AppState>) -> Router {
 
     Router::new()
         .route("/status", get(status_handler))
+        .route("/models", get(list_models))
+        .route("/workspaces", get(list_workspaces))
         .route("/threads", get(list_threads).post(create_thread))
         .route("/threads/:id/open", post(open_thread))
         .route("/threads/:id/messages", get(get_messages))
@@ -127,6 +129,16 @@ fn build_router(state: Arc<AppState>) -> Router {
 async fn status_handler(State(state): State<Arc<AppState>>) -> Response {
     let value = send_command(RemoteCommand::Status, &state.command_sender).await;
     json_response(StatusCode::OK, value)
+}
+
+async fn list_models(State(state): State<Arc<AppState>>) -> Response {
+    let value = send_command(RemoteCommand::GetModels, &state.command_sender).await;
+    json_response(http_status_for(&value, 200), value)
+}
+
+async fn list_workspaces(State(state): State<Arc<AppState>>) -> Response {
+    let value = send_command(RemoteCommand::ListWorkspaces, &state.command_sender).await;
+    json_response(http_status_for(&value, 200), value)
 }
 
 #[derive(Deserialize)]
@@ -350,8 +362,8 @@ impl From<ParseError> for Response {
     }
 }
 
-fn parse_thread_id(id: &str) -> Result<i64, ParseError> {
-    id.parse::<i64>().map_err(|_| ParseError::BadThreadId)
+fn parse_thread_id(id: &str) -> Result<String, ParseError> {
+    Ok(id.to_string())
 }
 
 fn parse_json_body<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, ParseError> {
@@ -440,6 +452,7 @@ mod tests {
                     RemoteCommand::ListThreads { page, per_page } => {
                         let all_threads: Vec<serde_json::Value> = (1..=5)
                             .map(|id| {
+                                let id = format!("thread-{}", id);
                                 json!({
                                     "id": id,
                                     "title": format!("thread {}", id),
@@ -511,6 +524,19 @@ mod tests {
                         })));
                         let _ = sender.send(AiStreamEvent::Done);
                         json!({ "status": "streaming" })
+                    }
+                    RemoteCommand::ListWorkspaces => {
+                        json!({
+                            "workspaces": [
+                                {
+                                    "id": "ws-1",
+                                    "name": "Default",
+                                    "path": "/home/user/.mini-pi/workspace",
+                                    "created_at": "2024-01-01T00:00:00Z",
+                                    "updated_at": "2024-01-01T00:00:00Z",
+                                }
+                            ]
+                        })
                     }
                     _ => json!({ "error": "unexpected command" }),
                 };
@@ -601,16 +627,35 @@ mod tests {
             .expect("request should succeed");
         assert_eq!(response.status(), 200);
         let body: serde_json::Value = response.json().expect("response should be JSON");
-        let ids: Vec<i64> = body["threads"]
+        let ids: Vec<&str> = body["threads"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|v| v["id"].as_i64().unwrap())
+            .map(|v| v["id"].as_str().unwrap())
             .collect();
-        assert_eq!(ids, vec![3, 4]);
+        assert_eq!(ids, vec!["thread-3", "thread-4"]);
         assert_eq!(body["pagination"]["page"], 2);
         assert_eq!(body["pagination"]["per_page"], 2);
         assert_eq!(body["pagination"]["total_pages"], 3);
+    }
+
+    #[test]
+    fn list_workspaces_returns_workspaces() {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        spawn_dummy_controller(rx);
+        let (_handle, port) = start(0, None, tx).expect("server should start");
+
+        let client = reqwest::blocking::Client::new();
+        let response = client
+            .get(&format!("http://127.0.0.1:{}/workspaces", port))
+            .send()
+            .expect("request should succeed");
+        assert_eq!(response.status(), 200);
+        let body: serde_json::Value = response.json().expect("response should be JSON");
+        let workspaces = body["workspaces"].as_array().expect("workspaces should be an array");
+        assert_eq!(workspaces.len(), 1);
+        assert_eq!(workspaces[0]["id"], "ws-1");
+        assert_eq!(workspaces[0]["name"], "Default");
     }
 
     #[test]

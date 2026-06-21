@@ -15,9 +15,12 @@ dirs = "6"
 rusqlite = { version = "0.33", features = ["bundled"] }
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
+nanoid = "0.4"
 pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
-reqwest = { version = "0.12", features = ["blocking", "json"] }
+reqwest = { version = "0.12", features = ["blocking", "json", "multipart"] }
 sha2 = "0.10"
+cpal = "0.15"
+hound = "3.5"
 base64 = "0.22"
 url = "2"
 percent-encoding = "2"
@@ -35,3 +38,5 @@ subtle = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
+tar = "0.4"
+flate2 = "1"

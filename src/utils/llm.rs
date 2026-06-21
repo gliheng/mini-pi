@@ -1,30 +1,10 @@
-use std::io::{Error, ErrorKind};
-
 /// Generate a title for a chat thread using an LLM.
 ///
-/// Requires the following environment variables:
-/// - `CLOUDFLARE_API_KEY` - API token for Cloudflare AI Gateway
-/// - `CLOUDFLARE_ACCOUNT_ID` - Cloudflare account ID
-/// - `CLOUDFLARE_GATEWAY_ID` - AI Gateway ID
+/// Cloudflare AI Gateway credentials are embedded below.
 pub fn generate_title(content: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let api_key = std::env::var("CLOUDFLARE_API_KEY").map_err(|_| {
-        Box::new(Error::new(
-            ErrorKind::NotFound,
-            "CLOUDFLARE_API_KEY env var not set",
-        )) as Box<dyn std::error::Error + Send + Sync>
-    })?;
-    let account_id = std::env::var("CLOUDFLARE_ACCOUNT_ID").map_err(|_| {
-        Box::new(Error::new(
-            ErrorKind::NotFound,
-            "CLOUDFLARE_ACCOUNT_ID env var not set",
-        )) as Box<dyn std::error::Error + Send + Sync>
-    })?;
-    let gateway_id = std::env::var("CLOUDFLARE_GATEWAY_ID").map_err(|_| {
-        Box::new(Error::new(
-            ErrorKind::NotFound,
-            "CLOUDFLARE_GATEWAY_ID env var not set",
-        )) as Box<dyn std::error::Error + Send + Sync>
-    })?;
+    const CLOUDFLARE_API_KEY: &str = "<REDACTED>";
+    const CLOUDFLARE_ACCOUNT_ID: &str = "c963aaaebd80b17d39cc4789854876f8";
+    const CLOUDFLARE_GATEWAY_ID: &str = "pub";
 
     let client = reqwest::blocking::Client::new();
 
@@ -40,11 +20,14 @@ pub fn generate_title(content: &str) -> Result<String, Box<dyn std::error::Error
 
     let url = format!(
         "https://gateway.ai.cloudflare.com/v1/{}/{}/compat/chat/completions",
-        account_id, gateway_id
+        CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_GATEWAY_ID
     );
     let response = client
         .post(&url)
-        .header("cf-aig-authorization", format!("Bearer {}", api_key))
+        .header(
+            "cf-aig-authorization",
+            format!("Bearer {}", CLOUDFLARE_API_KEY),
+        )
         .header("Content-Type", "application/json")
         .json(&body)
         .send()?;

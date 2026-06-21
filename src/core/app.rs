@@ -10,6 +10,7 @@ use gpui::{
 
 use crate::auth::state::{AuthState, SupabaseSession};
 use crate::config::app_config::AppConfig;
+use crate::config::model_config::ModelInfo;
 use crate::core::session_manager::SessionManager;
 use crate::data::store::Store;
 use crate::remote::RemoteController;
@@ -19,7 +20,7 @@ use crate::sync::settings_sync::{SyncMeta, SyncStatus};
 pub struct AppStore {
     pub store: Arc<Store>,
     pub config: AppConfig,
-    pub thread_windows: HashMap<i64, AnyWindowHandle>,
+    pub thread_windows: HashMap<String, AnyWindowHandle>,
     pub auth: AuthState,
     pub session: Option<SupabaseSession>,
     pub sync_meta: SyncMeta,
@@ -27,8 +28,9 @@ pub struct AppStore {
     pub user_panel_active: bool,
     pub pi_bridge: Option<Arc<PiBridge>>,
     pub session_manager: SessionManager,
-    pub streaming_thread_ids: HashSet<i64>,
+    pub streaming_thread_ids: HashSet<String>,
     pub remote_controller: Option<Entity<RemoteController>>,
+    pub models: Vec<ModelInfo>,
 }
 
 impl Global for AppStore {}

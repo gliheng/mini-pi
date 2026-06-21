@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
+use uuid::Uuid;
+
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
@@ -119,6 +121,14 @@ pub struct ImageContent {
     pub mime_type: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct BridgeModel {
+    pub provider: String,
+    pub id: String,
+    pub name: String,
+    pub thinking_level_map: Option<HashMap<String, Option<String>>>,
+}
+
 // ---------------------------------------------------------------------------
 // Macros
 // ---------------------------------------------------------------------------
@@ -137,7 +147,7 @@ pub struct PiBridge {
     write_tx: tokio::sync::mpsc::UnboundedSender<String>,
     sessions: Arc<Mutex<HashMap<String, futures::channel::mpsc::UnboundedSender<BridgeEvent>>>>,
     child: Arc<Mutex<std::process::Child>>,
-    _runtime: tokio::runtime::Runtime,
+    runtime: tokio::runtime::Runtime,
 }
 
 impl Drop for PiBridge {
@@ -271,7 +281,7 @@ impl PiBridge {
             write_tx,
             sessions,
             child,
-            _runtime: runtime,
+            runtime,
         }))
     }
 
@@ -308,6 +318,103 @@ impl PiBridge {
 
         self.send_json(&cmd)?;
         Ok(rx)
+    }
+
+    pub fn get_models(&self) -> Result<Vec<BridgeModel>, PiRpcError> {
+        let session_id = format!("__models__{}", Uuid::new_v4());
+        let request_id = Uuid::new_v4().to_string();
+        let (tx, mut rx) = futures::channel::mpsc::unbounded();
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.insert(session_id.clone(), tx);
+        }
+
+        let req = serde_json::json!({
+            "type": "get_models",
+            "sessionId": session_id,
+            "id": request_id,
+        });
+        if let Err(e) = self.send_json(&req) {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.remove(&session_id);
+            return Err(e);
+        }
+
+        let result = self.runtime.block_on(async {
+            while let Some(event) = rx.next().await {
+                if let BridgeEvent::Response {
+                    command,
+                    success,
+                    data,
+                    error,
+                    ..
+                } = event
+                {
+                    if command == "get_models" {
+                        if success {
+                            return Ok(data);
+                        }
+                        return Err(PiRpcError::Models(
+                            error.unwrap_or_else(|| "get_models failed".into()),
+                        ));
+                    }
+                }
+            }
+            Err(PiRpcError::WebSocket(
+                "bridge closed before get_models response".into(),
+            ))
+        });
+
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.remove(&session_id);
+        }
+
+        let data = result?;
+        let models_val = data
+            .and_then(|d| d.get("models").cloned())
+            .ok_or_else(|| PiRpcError::Models("get_models response missing models".into()))?;
+        let arr = models_val
+            .as_array()
+            .ok_or_else(|| PiRpcError::Models("get_models models is not an array".into()))?;
+
+        let mut models = Vec::new();
+        for m in arr {
+            let provider = m
+                .get("provider")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| PiRpcError::Models("model missing provider".into()))?;
+            let id = m
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| PiRpcError::Models("model missing id".into()))?;
+            let name = m
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| PiRpcError::Models("model missing name".into()))?;
+            let thinking_level_map =
+                m.get("thinkingLevelMap")
+                    .and_then(|v| v.as_object())
+                    .map(|obj| {
+                        obj.iter()
+                            .map(|(k, v)| {
+                                let value = if v.is_null() {
+                                    None
+                                } else {
+                                    v.as_str().map(|s| s.to_string())
+                                };
+                                (k.clone(), value)
+                            })
+                            .collect::<HashMap<String, Option<String>>>()
+                    });
+            models.push(BridgeModel {
+                provider: provider.to_string(),
+                id: id.to_string(),
+                name: name.to_string(),
+                thinking_level_map,
+            });
+        }
+        Ok(models)
     }
 
     pub fn send(&self, session_id: String, json: &serde_json::Value) -> Result<(), PiRpcError> {
@@ -500,6 +607,23 @@ impl PiRpc {
             "provider": provider,
             "modelId": model_id,
         });
+        add_request_id(&mut cmd, request_id);
+        self.send(&cmd)
+    }
+
+    pub fn send_get_model(
+        &mut self,
+        provider: Option<&str>,
+        model_id: Option<&str>,
+        request_id: Option<&str>,
+    ) -> Result<(), PiRpcError> {
+        let mut cmd = serde_json::json!({ "type": "get_model" });
+        if let Some(provider) = provider {
+            cmd["provider"] = serde_json::json!(provider);
+        }
+        if let Some(model_id) = model_id {
+            cmd["modelId"] = serde_json::json!(model_id);
+        }
         add_request_id(&mut cmd, request_id);
         self.send(&cmd)
     }
@@ -1126,6 +1250,7 @@ pub enum PiRpcError {
     Spawn(String),
     WebSocket(String),
     Runtime(String),
+    Models(String),
 }
 
 impl std::fmt::Display for PiRpcError {
@@ -1137,6 +1262,7 @@ impl std::fmt::Display for PiRpcError {
             PiRpcError::Spawn(msg) => write!(f, "spawn error: {}", msg),
             PiRpcError::WebSocket(msg) => write!(f, "websocket error: {}", msg),
             PiRpcError::Runtime(msg) => write!(f, "runtime error: {}", msg),
+            PiRpcError::Models(msg) => write!(f, "models error: {}", msg),
         }
     }
 }

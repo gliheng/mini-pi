@@ -11,6 +11,7 @@ import {
   AuthStorage,
   ModelRegistry,
   DefaultResourceLoader,
+  AgentSessionRuntime,
 } from "@earendil-works/pi-coding-agent";
 
 
@@ -18,7 +19,7 @@ const authStorage = AuthStorage.create();
 const modelRegistry = ModelRegistry.create(authStorage);
 
 interface SessionState {
-  runtime: any;
+  runtime: AgentSessionRuntime;
   sessionManager: any;
   unsubscribe: () => void;
   cwd: string;
@@ -77,7 +78,7 @@ function createRuntimeFactory(
   };
 }
 
-async function resolveModel(provider: string, modelId: string): Promise<any> {
+function resolveModel(provider: string, modelId: string): ReturnType<typeof modelRegistry.find> {
   return modelRegistry.find(provider, modelId);
 }
 
@@ -152,7 +153,7 @@ async function handleCreateSession(
     ];
     if (provider && modelId) {
       try {
-        const model = await resolveModel(provider, modelId);
+        const model = resolveModel(provider, modelId);
         if (model) {
           await runtime.session.setModel(model);
         } else {
@@ -397,6 +398,71 @@ async function handleGetCommands(
   }
 }
 
+async function handleGetModels(ws: WebSocket, msg: any): Promise<void> {
+  try {
+    const models = await modelRegistry.getAvailable();
+    sendResponse(ws, msg.sessionId || "bridge", "get_models", msg.id, true, {
+      models: models.map((m: any) => ({
+        provider: m.provider,
+        id: m.id,
+        name: m.name,
+        thinkingLevelMap: m.thinkingLevelMap ?? undefined,
+      })),
+    });
+  } catch (e: any) {
+    sendResponse(
+      ws,
+      msg.sessionId || "bridge",
+      "get_models",
+      msg.id,
+      false,
+      undefined,
+      e?.message || String(e)
+    );
+  }
+}
+
+async function handleGetModel(
+  ws: WebSocket,
+  msg: any,
+  state: SessionState | undefined
+): Promise<void> {
+  try {
+    let model: any;
+
+    if (msg.provider && msg.modelId) {
+      model = resolveModel(String(msg.provider), String(msg.modelId));
+      if (!model) {
+        throw new Error(`model not found: ${msg.provider}:${msg.modelId}`);
+      }
+    } else if (state?.runtime.session.model) {
+      model = state.runtime.session.model;
+    } else {
+      throw new Error("missing provider/modelId or active session model");
+    }
+
+    sendResponse(ws, msg.sessionId || "bridge", "get_model", msg.id, true, {
+      model: model
+        ? {
+            provider: model.provider,
+            id: model.id,
+            name: model.name,
+          }
+        : null,
+    });
+  } catch (e: any) {
+    sendResponse(
+      ws,
+      msg.sessionId || "bridge",
+      "get_model",
+      msg.id,
+      false,
+      undefined,
+      e?.message || String(e)
+    );
+  }
+}
+
 async function handleSetModel(
   ws: WebSocket,
   msg: any,
@@ -405,7 +471,7 @@ async function handleSetModel(
   try {
     const provider = String(msg.provider);
     const modelId = String(msg.modelId);
-    const model = await resolveModel(provider, modelId);
+    const model = resolveModel(provider, modelId);
     if (!model) {
       throw new Error(`model not found: ${provider}:${modelId}`);
     }
@@ -430,6 +496,17 @@ async function dispatch(ws: WebSocket, msg: any): Promise<void> {
 
   if (type === "create_session") {
     await handleCreateSession(ws, msg);
+    return;
+  }
+
+  if (type === "get_models") {
+    await handleGetModels(ws, msg);
+    return;
+  }
+
+  if (type === "get_model") {
+    const state = sessionId ? sessions.get(sessionId) : undefined;
+    await handleGetModel(ws, msg, state);
     return;
   }
 

@@ -8,7 +8,7 @@ pub struct Store {
 
 #[derive(Clone, Debug)]
 pub struct ThreadMeta {
-    pub id: i64,
+    pub id: String,
     pub title: String,
     pub preview: String,
     pub session_file: Option<String>,
@@ -33,7 +33,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "001_init",
         "
         CREATE TABLE threads (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            id            TEXT PRIMARY KEY,
             title         TEXT NOT NULL DEFAULT '',
             preview       TEXT NOT NULL DEFAULT '',
             session_file  TEXT,
@@ -48,7 +48,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "002_workspaces",
         "
         CREATE TABLE workspaces (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            id          TEXT PRIMARY KEY,
             name        TEXT NOT NULL,
             path        TEXT NOT NULL UNIQUE,
             created_at  DATETIME NOT NULL DEFAULT (datetime('now')),
@@ -164,14 +164,14 @@ impl Store {
     }
 
     pub fn create_thread(&self, title: &str, preview: &str) -> Result<ThreadMeta, StoreError> {
+        let id = nanoid::nanoid!();
         self.conn
             .execute(
-                "INSERT INTO threads (title, preview, thinking_level, metadata) VALUES (?1, ?2, ?3, ?4)",
-                params![title, preview, Option::<&str>::None, Option::<String>::None],
+                "INSERT INTO threads (id, title, preview, thinking_level, metadata) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![id, title, preview, Option::<&str>::None, Option::<String>::None],
             )
             .map_err(StoreError::Rusqlite)?;
-        let id = self.conn.last_insert_rowid();
-        self.get_thread(id).map(|opt| opt.unwrap())
+        self.get_thread(&id).map(|opt| opt.unwrap())
     }
 
     pub fn list_threads(&self) -> Result<Vec<ThreadMeta>, StoreError> {
@@ -185,7 +185,8 @@ impl Store {
         let rows = stmt
             .query_map([], |row| {
                 let metadata_str: Option<String> = row.get(7)?;
-                let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
+                let metadata = metadata_str
+                    .and_then(|s| serde_json::from_str(&s).ok());
                 Ok(ThreadMeta {
                     id: row.get(0)?,
                     title: row.get(1)?,
@@ -229,7 +230,8 @@ impl Store {
         let rows = stmt
             .query_map(params![per_page as i64, offset as i64], |row| {
                 let metadata_str: Option<String> = row.get(7)?;
-                let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
+                let metadata = metadata_str
+                    .and_then(|s| serde_json::from_str(&s).ok());
                 Ok(ThreadMeta {
                     id: row.get(0)?,
                     title: row.get(1)?,
@@ -257,21 +259,20 @@ impl Store {
     }
 
     pub fn search_threads(&self, query: &str) -> Result<Vec<ThreadMeta>, StoreError> {
-        let pattern = format!("%{}%", query);
+        let q = format!("%{}%", query.to_lowercase());
         let mut stmt = self
             .conn
             .prepare(
                 "SELECT id, title, preview, session_file, model, thinking_level, pinned, metadata, created_at, updated_at \
-                 FROM threads \
-                 WHERE LOWER(title) LIKE LOWER(?1) OR LOWER(preview) LIKE LOWER(?1) \
-                 ORDER BY pinned DESC, updated_at DESC \
-                 LIMIT 200",
+                 FROM threads WHERE lower(title) LIKE ?1 OR lower(preview) LIKE ?1 \
+                 ORDER BY pinned DESC, updated_at DESC",
             )
             .map_err(StoreError::Rusqlite)?;
         let rows = stmt
-            .query_map(params![pattern], |row| {
+            .query_map(params![q], |row| {
                 let metadata_str: Option<String> = row.get(7)?;
-                let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
+                let metadata = metadata_str
+                    .and_then(|s| serde_json::from_str(&s).ok());
                 Ok(ThreadMeta {
                     id: row.get(0)?,
                     title: row.get(1)?,
@@ -290,7 +291,7 @@ impl Store {
             .map_err(StoreError::Rusqlite)
     }
 
-    pub fn get_thread(&self, id: i64) -> Result<Option<ThreadMeta>, StoreError> {
+    pub fn get_thread(&self, id: &str) -> Result<Option<ThreadMeta>, StoreError> {
         let mut stmt = self
             .conn
             .prepare(
@@ -300,7 +301,8 @@ impl Store {
             .map_err(StoreError::Rusqlite)?;
         stmt.query_row(params![id], |row| {
             let metadata_str: Option<String> = row.get(7)?;
-            let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
+            let metadata = metadata_str
+                .and_then(|s| serde_json::from_str(&s).ok());
             Ok(ThreadMeta {
                 id: row.get(0)?,
                 title: row.get(1)?,
@@ -320,7 +322,7 @@ impl Store {
 
     pub fn update_thread(
         &self,
-        id: i64,
+        id: &str,
         title: Option<&str>,
         preview: Option<&str>,
         session_file: Option<Option<&str>>,
@@ -421,14 +423,14 @@ impl Store {
 
     pub fn create_workspace(&self, name: &str, path: &str) -> Result<WorkspaceMeta, StoreError> {
         let unique_name = self.make_unique_workspace_name(name)?;
+        let id = nanoid::nanoid!();
         self.conn
             .execute(
-                "INSERT INTO workspaces (name, path) VALUES (?1, ?2)",
-                params![unique_name, path],
+                "INSERT INTO workspaces (id, name, path) VALUES (?1, ?2, ?3)",
+                params![id, unique_name, path],
             )
             .map_err(StoreError::Rusqlite)?;
-        let id = self.conn.last_insert_rowid();
-        self.get_workspace(id).map(|opt| opt.unwrap())
+        self.get_workspace(&id).map(|opt| opt.unwrap())
     }
 
     pub fn list_workspaces(&self) -> Result<Vec<WorkspaceMeta>, StoreError> {
@@ -454,7 +456,7 @@ impl Store {
             .map_err(StoreError::Rusqlite)
     }
 
-    pub fn get_workspace(&self, id: i64) -> Result<Option<WorkspaceMeta>, StoreError> {
+    pub fn get_workspace(&self, id: &str) -> Result<Option<WorkspaceMeta>, StoreError> {
         let mut stmt = self
             .conn
             .prepare(
@@ -475,7 +477,7 @@ impl Store {
         .map_err(StoreError::Rusqlite)
     }
 
-    pub fn delete_workspace(&self, id: i64) -> Result<(), StoreError> {
+    pub fn delete_workspace(&self, id: &str) -> Result<(), StoreError> {
         self.conn
             .execute("DELETE FROM workspaces WHERE id = ?1", params![id])
             .map_err(StoreError::Rusqlite)?;
@@ -489,7 +491,7 @@ impl Store {
             .join("workspace")
     }
 
-    pub fn toggle_pin(&self, id: i64) -> Result<bool, StoreError> {
+    pub fn toggle_pin(&self, id: &str) -> Result<bool, StoreError> {
         let current: bool = self
             .conn
             .query_row(
@@ -509,7 +511,7 @@ impl Store {
         Ok(new_val)
     }
 
-    pub fn delete_thread(&self, id: i64) -> Result<(), StoreError> {
+    pub fn delete_thread(&self, id: &str) -> Result<(), StoreError> {
         let session_file: Option<String> = self
             .conn
             .query_row(
@@ -532,7 +534,7 @@ impl Store {
 
 #[derive(Clone, Debug)]
 pub struct WorkspaceMeta {
-    pub id: i64,
+    pub id: String,
     pub name: String,
     pub path: String,
     pub created_at: String,

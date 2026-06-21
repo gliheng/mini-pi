@@ -39,7 +39,7 @@ impl ThreadItem {
 
 impl Render for ThreadItem {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let thread_id = self.thread.id;
+        let thread_id = self.thread.id.clone();
         let title: SharedString = if self.thread.title.is_empty() {
             "New Thread".into()
         } else {
@@ -83,7 +83,7 @@ impl Render for ThreadItem {
             .items_center()
             .gap_2()
             .on_click(cx.listener(move |this, _, _, cx| {
-                let thread_id = this.thread.id;
+                let thread_id = this.thread.id.clone();
                 let thread_meta = (*this.thread).clone();
                 let store = this.store.clone();
                 let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
@@ -222,7 +222,7 @@ impl Render for ThreadItem {
                                 .hover(|style| style.bg(rgb(0x333333)))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     cx.stop_propagation();
-                                    let _ = this.store.toggle_pin(this.thread.id);
+                                    let _ = this.store.toggle_pin(&this.thread.id);
                                     cx.update_global(|_: &mut AppStore, _| {});
                                 })),
                         )
@@ -278,7 +278,7 @@ impl Render for ThreadItem {
                                         .hover(|style| style.bg(rgb(0x991b1b)))
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             cx.stop_propagation();
-                                            let _ = this.store.delete_thread(this.thread.id);
+                                            let _ = this.store.delete_thread(&this.thread.id);
                                             this.confirming = false;
                                             cx.update_global(|_: &mut AppStore, _| {});
                                         })),
@@ -369,14 +369,16 @@ impl ThreadList {
                                 cx.notify();
                                 let access_token = s.access_token.clone();
                                 let user_id = s.user.id.clone();
+                                let initial_meta = cx.global::<AppStore>().sync_meta.clone();
                                 cx.spawn(async move |_, cx| {
                                     let result = smol::unblock(move || {
-                                        settings_sync::sync_changes(&access_token, &user_id)
+                                        settings_sync::sync_changes(&access_token, &user_id, initial_meta)
                                     })
                                     .await;
                                     let _ =
                                         cx.update_global(|app: &mut AppStore, _| match result {
                                             Ok(meta) => {
+                                                let _ = settings_sync::save_sync_meta(&app.store, &meta);
                                                 app.sync_meta = meta;
                                                 app.sync_status = settings_sync::SyncStatus::Synced;
                                             }
@@ -600,8 +602,8 @@ impl ThreadList {
             }
         }
         // Reorder to match the database sort: pinned first, then updated_at descending
-        let order: std::collections::HashMap<i64, usize> =
-            threads.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
+        let order: std::collections::HashMap<String, usize> =
+            threads.iter().enumerate().map(|(i, t)| (t.id.clone(), i)).collect();
         self.thread_items.sort_by_key(|item| {
             order
                 .get(&item.read(cx).thread.id)

@@ -1,15 +1,56 @@
 <script setup lang="ts">
+import type { PiWorkspace } from '~/composables/usePiRemote'
+
 const input = ref('')
 const loading = ref(false)
+const workspaces = ref<PiWorkspace[]>([])
+const loadingWorkspaces = ref(false)
+const workspacesError = ref<Error | undefined>(undefined)
+const selectedWorkspaceId = ref<string | null>(null)
 
 const config = usePiRemoteConfig()
 const remote = usePiRemote()
 const { model } = useModels()
 const settings = usePiRemoteSettingsModal()
+const toast = useToast()
 
 async function openSettings() {
   await settings.open()
 }
+
+async function loadWorkspaces() {
+  if (!config.isConfigured.value) return
+  loadingWorkspaces.value = true
+  workspacesError.value = undefined
+  try {
+    const list = await remote.listWorkspaces()
+    workspaces.value = list
+    const first = list[0]
+    if (first && !selectedWorkspaceId.value) {
+      selectedWorkspaceId.value = first.id
+    }
+  } catch (err) {
+    workspacesError.value = err instanceof Error ? err : new Error(String(err))
+  } finally {
+    loadingWorkspaces.value = false
+  }
+}
+
+onMounted(async () => {
+  if (!config.isConfigured.value) {
+    await openSettings()
+  }
+  await loadWorkspaces()
+})
+
+watch(() => config.isConfigured.value, async (isConfigured) => {
+  if (isConfigured) {
+    await loadWorkspaces()
+  } else {
+    workspaces.value = []
+    selectedWorkspaceId.value = null
+  }
+})
 
 async function createChat(prompt: string) {
   if (!config.isConfigured.value) {
@@ -17,16 +58,28 @@ async function createChat(prompt: string) {
     if (!config.isConfigured.value) return
   }
 
+  if (!selectedWorkspaceId.value) {
+    toast.add({
+      description: 'Please select a workspace first',
+      icon: 'i-lucide-alert-circle',
+      color: 'error'
+    })
+    return
+  }
+
   input.value = prompt
   loading.value = true
 
   try {
-    const { thread_id } = await remote.createThread(model.value || undefined)
+    const { thread_id } = await remote.createThread(
+      model.value || undefined,
+      selectedWorkspaceId.value
+    )
     const pendingPrompt = useState<string | null>(`pending-prompt-${thread_id}`, () => null)
     pendingPrompt.value = prompt
     await navigateTo(`/chat/${thread_id}`)
   } catch (err) {
-    useToast().add({
+    toast.add({
       description: err instanceof Error ? err.message : String(err),
       icon: 'i-lucide-alert-circle',
       color: 'error'
@@ -39,13 +92,6 @@ async function createChat(prompt: string) {
 async function onSubmit() {
   await createChat(input.value)
 }
-
-const quickChats = [
-  { label: 'Explain Rust lifetimes', icon: 'i-lucide-code' },
-  { label: 'Refactor this function', icon: 'i-lucide-wrench' },
-  { label: 'Plan my week', icon: 'i-lucide-calendar' },
-  { label: 'Summarize this project', icon: 'i-lucide-folder' }
-]
 </script>
 
 <template>
@@ -69,12 +115,87 @@ const quickChats = [
           </p>
         </div>
 
+        <div class="flex flex-col gap-3">
+          <div class="flex items-center justify-between">
+            <h2 class="text-sm font-semibold text-highlighted">
+              Workspace
+            </h2>
+            <UButton
+              v-if="!config.isConfigured.value"
+              size="xs"
+              color="neutral"
+              variant="ghost"
+              label="Configure"
+              @click="openSettings"
+            />
+          </div>
+
+          <div
+            v-if="loadingWorkspaces"
+            class="grid grid-cols-1 sm:grid-cols-2 gap-3"
+          >
+            <USkeleton class="h-20" />
+            <USkeleton class="h-20" />
+          </div>
+
+          <div
+            v-else-if="workspacesError"
+            class="text-sm text-error"
+          >
+            {{ workspacesError.message }}
+          </div>
+
+          <div
+            v-else-if="!workspaces.length"
+            class="text-sm text-muted"
+          >
+            No workspaces found. Create one in mini-pi first.
+          </div>
+
+          <div
+            v-else
+            class="grid grid-cols-1 sm:grid-cols-2 gap-3"
+          >
+            <button
+              v-for="workspace in workspaces"
+              :key="workspace.id"
+              type="button"
+              class="text-left p-4 rounded-lg border transition-colors"
+              :class="selectedWorkspaceId === workspace.id
+                ? 'border-primary bg-primary/5'
+                : 'border-default bg-default hover:bg-muted/50'"
+              @click="selectedWorkspaceId = workspace.id"
+            >
+              <div class="flex items-start gap-3">
+                <UIcon
+                  name="i-lucide-folder"
+                  class="size-5 mt-0.5 text-muted"
+                />
+                <div class="min-w-0 flex-1">
+                  <div class="font-medium text-highlighted truncate">
+                    {{ workspace.name }}
+                  </div>
+                  <div class="text-xs text-muted truncate">
+                    {{ workspace.path }}
+                  </div>
+                </div>
+                <UIcon
+                  v-if="selectedWorkspaceId === workspace.id"
+                  name="i-lucide-check"
+                  class="size-5 text-primary"
+                />
+              </div>
+            </button>
+          </div>
+        </div>
+
         <UChatPrompt
           v-model="input"
           :status="loading ? 'streaming' : 'ready'"
           class="[view-transition-name:chat-prompt]"
           variant="subtle"
           :ui="{ base: 'px-1.5' }"
+          :disabled="!selectedWorkspaceId || loadingWorkspaces"
           @submit="onSubmit"
         >
           <template #footer>
@@ -82,23 +203,16 @@ const quickChats = [
               <ModelSelect />
             </div>
 
-            <UChatPromptSubmit color="neutral" size="sm" :disabled="loading" />
+            <UChatPromptSubmit color="neutral" size="sm" :disabled="loading || !selectedWorkspaceId" />
           </template>
         </UChatPrompt>
 
-        <div class="flex flex-wrap gap-2">
-          <UButton
-            v-for="quickChat in quickChats"
-            :key="quickChat.label"
-            :icon="quickChat.icon"
-            :label="quickChat.label"
-            size="sm"
-            color="neutral"
-            variant="outline"
-            class="rounded-full"
-            @click="createChat(quickChat.label)"
-          />
-        </div>
+        <p
+          v-if="!selectedWorkspaceId && !loadingWorkspaces && workspaces.length"
+          class="text-xs text-muted"
+        >
+          Select a workspace above to start chatting.
+        </p>
       </UContainer>
     </template>
   </UDashboardPanel>

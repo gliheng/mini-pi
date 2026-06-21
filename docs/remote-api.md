@@ -137,6 +137,24 @@ Returns the current remote-control status.
 
 ---
 
+### `GET /models`
+
+Lists the models currently available in the desktop app. The list comes from the SDK's `ModelRegistry.getAvailable()` and reflects the configured API keys and `models.json`.
+
+**Response `200 OK`**
+
+```json
+{
+  "models": [
+    { "provider": "deepseek", "id": "deepseek-v4-flash", "name": "DeepSeek V4 Flash" }
+  ]
+}
+```
+
+The full model identifier used in other endpoints is `{provider}:{id}` (e.g. `deepseek:deepseek-v4-flash`).
+
+---
+
 ### `GET /threads`
 
 Lists all persisted threads.
@@ -288,15 +306,7 @@ Changes the model for the thread.
 { "status": "ok" }
 ```
 
-Known model IDs are defined in `src/config/model_config.rs`. Examples:
-
-- `cloudflare-ai-gateway:gpt-4o-mini`
-- `cloudflare-ai-gateway:gpt-5.5`
-- `cloudflare-ai-gateway:claude-sonnet-4-6`
-- `cloudflare-ai-gateway:claude-opus-4-8`
-- `cloudflare-ai-gateway:@cf/moonshotai/kimi-k2.6`
-- `deepseek:deepseek-v4-flash`
-- `deepseek:deepseek-v4-pro`
+Valid model IDs are discovered at runtime from the SDK bridge via `ModelRegistry.getAvailable()` and stored in `AppStore.models`. They use the `<provider>:<model>` format. The available set depends on the configured API keys and `models.json`; examples include `deepseek:deepseek-v4-flash`.
 
 ---
 

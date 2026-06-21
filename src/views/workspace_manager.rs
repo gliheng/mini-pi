@@ -9,7 +9,7 @@ use crate::data::store::WorkspaceMeta;
 pub enum WorkspaceManagerEvent {
     AddRequested,
     CloseRequested,
-    DeleteRequested { workspace_id: i64 },
+    DeleteRequested { workspace_id: String },
 }
 
 pub struct WorkspaceManager {
@@ -187,7 +187,7 @@ impl Render for WorkspaceManager {
                                         .p_3()
                                         .overflow_y_scroll()
                                         .children(filtered.into_iter().map(|ws| {
-                                            let ws_id = ws.id;
+                                            let ws_id = ws.id.clone();
                                             div()
                                                 .id(SharedString::from(format!("ws-modal-{ws_id}")))
                                                 .flex()
@@ -236,7 +236,7 @@ impl Render for WorkspaceManager {
                                                         .hover(|style| style.text_color(rgb(0xef4444)))
                                                         .on_click(cx.listener(move |_this, _, _window, cx| {
                                                             cx.emit(WorkspaceManagerEvent::DeleteRequested {
-                                                                workspace_id: ws_id,
+                                                                workspace_id: ws_id.clone(),
                                                             });
                                                         })),
                                                 )

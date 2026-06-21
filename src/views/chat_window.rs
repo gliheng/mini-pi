@@ -15,16 +15,17 @@ use crate::core::session_handle::{SessionEvent, SessionHandle, WorkspaceInfo};
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::data::store::{Store, ThreadMeta, WorkspaceMeta};
 use crate::ui::dropdown::{Direction, Dropdown, DropdownEvent, DropdownItem};
-use crate::ui::loader::{loader, text_loader};
+use crate::ui::loader::{loader, loader_with, text_loader};
 use crate::ui::markdown::MarkdownRenderer;
 use crate::ui::text_area::TextArea;
 use crate::ui::toast::Toast;
+use crate::utils::voice::{start_recording, transcribe_sync, VoiceRecorder, VoiceState};
 use crate::views::reasoning::Reasoning;
 use crate::views::title_bar::TitleBar;
 use crate::views::workspace_manager::{WorkspaceManager, WorkspaceManagerEvent};
 
 pub struct ChatWindow {
-    pub thread_id: Option<i64>,
+    pub thread_id: Option<String>,
     pub session_file: String,
     pub title_bar: gpui::Entity<TitleBar>,
     pub messages: Vec<Message>,
@@ -46,12 +47,14 @@ pub struct ChatWindow {
     pub scroll_locked: bool,
     pub scrollbar_drag_offset_y: Option<Pixels>,
     pub workspaces: Vec<WorkspaceMeta>,
-    pub selected_workspace_id: Option<i64>,
+    pub selected_workspace_id: Option<String>,
     pub show_workspace_manager: bool,
     pub workspace_manager: gpui::Entity<WorkspaceManager>,
     pub editing_message_id: Option<String>,
     pub inline_edit_input: Option<gpui::Entity<TextArea>>,
     pub toast: gpui::Entity<Toast>,
+    pub voice_state: VoiceState,
+    pub voice_recorder: Option<VoiceRecorder>,
 }
 
 impl ChatWindow {
@@ -69,7 +72,7 @@ impl ChatWindow {
             cx.new(|cx| TextArea::new(cx, "Type a message...").with_text_color(rgb(0xe5e5e5)));
         let title_bar = cx.new(|_| TitleBar::new(title.clone(), TitleBarVariant::Chat));
 
-        let thread_id = thread.map(|t| t.id);
+        let thread_id = thread.map(|t| t.id.clone());
         let selected_model: Option<String> = thread
             .and_then(|t| t.model.clone())
             .or_else(|| cx.global::<AppStore>().config.default_model.clone());
@@ -88,19 +91,20 @@ impl ChatWindow {
         let selected_workspace_id = workspaces
             .iter()
             .find(|ws| ws.name == "Default")
-            .map(|ws| ws.id)
-            .or_else(|| workspaces.first().map(|ws| ws.id));
+            .map(|ws| ws.id.clone())
+            .or_else(|| workspaces.first().map(|ws| ws.id.clone()));
 
         // Build model dropdown items
-        let model_items: Vec<DropdownItem> = all_models()
+        let models = cx.global::<AppStore>().models.clone();
+        let model_items: Vec<DropdownItem> = all_models(&models)
             .iter()
-            .map(|m| DropdownItem::new(m.id, m.name))
+            .map(|m| DropdownItem::new(m.id.clone(), m.name.clone()))
             .collect();
 
         let model_dropdown = cx.new(|cx| {
             Dropdown::new(
                 cx,
-                model_display_name(selected_model.as_deref()),
+                model_display_name(&models, selected_model.as_deref()),
                 model_items,
             )
             .with_selected(selected_model.clone())
@@ -110,15 +114,8 @@ impl ChatWindow {
             .with_direction(Direction::Up)
         });
 
-        // Build thinking level dropdown items
-        let thinking_items = vec![
-            DropdownItem::new("off", "Off"),
-            DropdownItem::new("minimal", "Minimal"),
-            DropdownItem::new("low", "Low"),
-            DropdownItem::new("medium", "Medium"),
-            DropdownItem::new("high", "High"),
-            DropdownItem::new("xhigh", "Extra High"),
-        ];
+        // Build thinking level dropdown items based on the selected model's map
+        let thinking_items = Self::thinking_level_items_for_model(&models, selected_model.as_deref());
         let thinking_dropdown = cx.new(|cx| {
             Dropdown::new(
                 cx,
@@ -132,11 +129,14 @@ impl ChatWindow {
         });
         let workspace_manager = cx.new(|_| WorkspaceManager::new(workspaces.clone()));
         let toast = cx.new(|_| Toast::new(""));
+        let voice_state = VoiceState::Idle;
+        let voice_recorder = None;
 
         let workspace_info = selected_workspace_id
-            .and_then(|id| workspaces.iter().find(|ws| ws.id == id))
+            .as_ref()
+            .and_then(|id| workspaces.iter().find(|ws| ws.id == *id))
             .map(|ws| WorkspaceInfo {
-                id: ws.id,
+                id: ws.id.clone(),
                 path: PathBuf::from(&ws.path),
                 name: ws.name.clone(),
             });
@@ -170,6 +170,8 @@ impl ChatWindow {
             editing_message_id: None,
             inline_edit_input: None,
             toast: toast.clone(),
+            voice_state,
+            voice_recorder,
         };
 
         // Attach to an existing session for restored threads.
@@ -188,7 +190,7 @@ impl ChatWindow {
         // Set initial workspace on chat input
         if let Some(ref ws) = workspace_info {
             window.chat_input.update(cx, |ci, cx| {
-                ci.set_workspace(ws.id, ws.path.clone(), ws.name.clone(), cx);
+                ci.set_workspace(ws.id.clone(), ws.path.clone(), ws.name.clone(), cx);
             });
         }
 
@@ -243,7 +245,8 @@ impl ChatWindow {
                 TitleBarEvent::OpenWorkspace => {
                     let workspace_dir: Option<PathBuf> = this
                         .selected_workspace_id
-                        .and_then(|id| this.workspaces.iter().find(|ws| ws.id == id))
+                        .as_ref()
+                        .and_then(|id| this.workspaces.iter().find(|ws| ws.id == *id))
                         .map(|ws| PathBuf::from(&ws.path));
                     if let Some(dir) = workspace_dir {
                         cx.reveal_path(&dir);
@@ -270,6 +273,7 @@ impl ChatWindow {
                         session.set_model(Some(id.clone()), cx);
                     });
                 }
+                this.refresh_thinking_dropdown(cx);
             },
         )
         .detach();
@@ -296,13 +300,40 @@ impl ChatWindow {
                 WorkspaceManagerEvent::AddRequested => this.add_workspace(cx),
                 WorkspaceManagerEvent::CloseRequested => this.close_workspace_manager(cx),
                 WorkspaceManagerEvent::DeleteRequested { workspace_id } => {
-                    this.delete_workspace(*workspace_id, cx);
+                    this.delete_workspace(workspace_id.clone(), cx);
                 }
             },
         )
         .detach();
 
         window
+    }
+
+    const DEFAULT_THINKING_LEVELS: [(&'static str, &'static str); 6] = [
+        ("off", "Off"),
+        ("minimal", "Minimal"),
+        ("low", "Low"),
+        ("medium", "Medium"),
+        ("high", "High"),
+        ("xhigh", "Extra High"),
+    ];
+
+    fn thinking_level_items_for_model(
+        models: &[crate::config::model_config::ModelInfo],
+        model_id: Option<&str>,
+    ) -> Vec<DropdownItem> {
+        let map = model_id
+            .and_then(|id| models.iter().find(|m| m.id == id))
+            .and_then(|m| m.thinking_level_map.as_ref());
+
+        Self::DEFAULT_THINKING_LEVELS
+            .iter()
+            .filter(|(id, _)| match map {
+                Some(m) => !matches!(m.get(*id), Some(None)),
+                None => true,
+            })
+            .map(|(id, label)| DropdownItem::new(*id, *label))
+            .collect()
     }
 
     fn thinking_level_label(level: Option<&str>) -> SharedString {
@@ -317,6 +348,38 @@ impl ChatWindow {
                 _ => l.to_string().into(),
             })
             .unwrap_or_else(|| "Default".into())
+    }
+
+    fn refresh_thinking_dropdown(&mut self, cx: &mut Context<Self>) {
+        let models = cx.global::<AppStore>().models.clone();
+        let items = Self::thinking_level_items_for_model(&models, self.selected_model.as_deref());
+        let valid_ids: std::collections::HashSet<String> =
+            items.iter().map(|i| i.id.clone()).collect();
+
+        let new_level = self
+            .thinking_level
+            .as_ref()
+            .filter(|id| valid_ids.contains(*id))
+            .cloned()
+            .or_else(|| items.first().map(|i| i.id.clone()));
+
+        if new_level != self.thinking_level {
+            self.thinking_level = new_level.clone();
+            if let Some(ref session) = self.session {
+                if let Some(ref level) = new_level {
+                    session.update(cx, |session, cx| {
+                        session.set_thinking_level(Some(level.clone()), cx);
+                    });
+                }
+            }
+        }
+
+        self.thinking_dropdown.update(cx, |dropdown, _| {
+            dropdown.items = items;
+            dropdown.selected_id = self.thinking_level.clone();
+            dropdown.label = Self::thinking_level_label(self.thinking_level.as_deref());
+        });
+        cx.notify();
     }
 
     fn attach_session(&mut self, session: Entity<SessionHandle>, cx: &mut Context<Self>) {
@@ -336,7 +399,7 @@ impl ChatWindow {
                 cx.notify();
             },
         ));
-        if let Some(_tid) = self.thread_id {
+        if self.thread_id.is_some() {
             if let Some(ref session) = self.session {
                 session.update(cx, |session, cx| {
                     session.clear_new_activity(cx);
@@ -371,14 +434,12 @@ impl ChatWindow {
         self.chat_input.update(cx, |ci, cx| {
             ci.set_commands(commands, cx);
         });
+        let models = cx.global::<AppStore>().models.clone();
         self.model_dropdown.update(cx, |dropdown, _| {
             dropdown.selected_id = selected_model.clone();
-            dropdown.label = model_display_name(selected_model.as_deref());
+            dropdown.label = model_display_name(&models, selected_model.as_deref());
         });
-        self.thinking_dropdown.update(cx, |dropdown, _| {
-            dropdown.selected_id = thinking_level.clone();
-            dropdown.label = Self::thinking_level_label(thinking_level.as_deref());
-        });
+        self.refresh_thinking_dropdown(cx);
     }
 
     fn sort_workspaces(workspaces: &mut Vec<WorkspaceMeta>) {
@@ -425,7 +486,7 @@ impl ChatWindow {
                 let path_str = path.to_string_lossy().to_string();
                 match store.create_workspace(&name, &path_str) {
                     Ok(workspace) => {
-                        let ws_id = workspace.id;
+                        let ws_id = workspace.id.clone();
                         let _ = weak.update(cx, |window, cx| {
                             window.workspaces.push(workspace);
                             Self::sort_workspaces(&mut window.workspaces);
@@ -443,16 +504,16 @@ impl ChatWindow {
         .detach();
     }
 
-    fn delete_workspace(&mut self, workspace_id: i64, cx: &mut Context<Self>) {
-        if let Err(e) = self.store.delete_workspace(workspace_id) {
+    fn delete_workspace(&mut self, workspace_id: String, cx: &mut Context<Self>) {
+        if let Err(e) = self.store.delete_workspace(&workspace_id) {
             eprintln!("[mini-pi] failed to delete workspace: {}", e);
             return;
         }
 
         self.workspaces
             .retain(|workspace| workspace.id != workspace_id);
-        if self.selected_workspace_id == Some(workspace_id) {
-            self.selected_workspace_id = self.workspaces.first().map(|workspace| workspace.id);
+        if self.selected_workspace_id == Some(workspace_id.clone()) {
+            self.selected_workspace_id = self.workspaces.first().map(|workspace| workspace.id.clone());
         }
         self.sync_workspace_manager(cx);
         cx.notify();
@@ -486,7 +547,7 @@ impl ChatWindow {
             return session;
         }
 
-        let thread_id = thread.map(|t| t.id);
+        let thread_id = thread.map(|t| t.id.clone());
         let model = thread.and_then(|t| t.model.clone()).or(default_model);
         let thinking_level = thread
             .and_then(|t| t.thinking_level.clone())
@@ -520,9 +581,10 @@ impl ChatWindow {
         }
         let workspace_info = self
             .selected_workspace_id
-            .and_then(|id| self.workspaces.iter().find(|ws| ws.id == id))
+            .as_ref()
+            .and_then(|id| self.workspaces.iter().find(|ws| ws.id == *id))
             .map(|ws| WorkspaceInfo {
-                id: ws.id,
+                id: ws.id.clone(),
                 path: PathBuf::from(&ws.path),
                 name: ws.name.clone(),
             });
@@ -598,12 +660,13 @@ impl ChatWindow {
             session.send_message(content, cx);
         });
 
-        if let Some(tid) = session.read(cx).thread_id {
+        let thread_id = session.read(cx).thread_id.clone();
+        if let Some(ref tid) = thread_id {
             if self.thread_id.is_none() {
-                self.thread_id = Some(tid);
+                self.thread_id = Some(tid.clone());
             }
             cx.update_global(|app: &mut AppStore, _| {
-                app.streaming_thread_ids.insert(tid);
+                app.streaming_thread_ids.insert(tid.clone());
             });
         }
 
@@ -639,12 +702,13 @@ impl ChatWindow {
             session.send_edited_prompt(message_id, content, cx);
         });
 
-        if let Some(tid) = session.read(cx).thread_id {
+        let thread_id = session.read(cx).thread_id.clone();
+        if let Some(ref tid) = thread_id {
             if self.thread_id.is_none() {
-                self.thread_id = Some(tid);
+                self.thread_id = Some(tid.clone());
             }
             cx.update_global(|app: &mut AppStore, _| {
-                app.streaming_thread_ids.insert(tid);
+                app.streaming_thread_ids.insert(tid.clone());
             });
         }
 
@@ -725,6 +789,77 @@ impl ChatWindow {
             self.inline_edit_input = Some(inline_input);
             cx.notify();
         }
+    }
+
+    pub fn toggle_voice_input(
+        &mut self,
+        _: &gpui::ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match self.voice_state {
+            VoiceState::Idle => self.start_voice_input(cx),
+            VoiceState::Recording => self.stop_voice_input(cx),
+            VoiceState::Transcribing => {}
+        }
+    }
+
+    fn start_voice_input(&mut self, cx: &mut Context<Self>) {
+        match start_recording() {
+            Ok(recorder) => {
+                self.voice_recorder = Some(recorder);
+                self.voice_state = VoiceState::Recording;
+                cx.notify();
+            }
+            Err(err) => {
+                self.toast.update(cx, |toast, cx| {
+                    toast.set_message(&format!("Voice input error: {}", err));
+                    toast.show_for(Duration::from_secs(5), cx);
+                });
+                cx.notify();
+            }
+        }
+    }
+
+    fn stop_voice_input(&mut self, cx: &mut Context<Self>) {
+        let Some(recorder) = self.voice_recorder.take() else {
+            return;
+        };
+        let wav_bytes = recorder.stop();
+        self.voice_state = VoiceState::Transcribing;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let result = smol::unblock(move || transcribe_sync(&wav_bytes)).await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(text) if !text.is_empty() => {
+                        let current = this.chat_input.read(cx).content().to_string();
+                        let new_text = if current.is_empty() {
+                            text
+                        } else if current.ends_with(' ') {
+                            current + &text
+                        } else {
+                            current + " " + &text
+                        };
+                        this.chat_input.update(cx, |ci, cx| {
+                            ci.set_content(new_text, cx);
+                        });
+                    }
+                    Ok(_) => {}
+                    Err(err) => {
+                        this.toast.update(cx, |toast, cx| {
+                            toast.set_message(&format!("Transcription failed: {}", err));
+                            toast.show_for(Duration::from_secs(5), cx);
+                        });
+                    }
+                }
+                this.voice_state = VoiceState::Idle;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn render_at_mention_popup(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1082,7 +1217,8 @@ impl Render for ChatWindow {
         let is_disabled = is_streaming || is_loading || input_empty;
 
         // Sync dropdown labels with current state
-        let model_label = model_display_name(self.selected_model.as_deref());
+        let models = cx.global::<AppStore>().models.clone();
+        let model_label = model_display_name(&models, self.selected_model.as_deref());
         self.model_dropdown.update(cx, |dropdown, _cx| {
             dropdown.label = model_label;
             dropdown.selected_id = self.selected_model.clone();
@@ -1571,8 +1707,8 @@ impl Render for ChatWindow {
                                 }))
                         )
                         .children(self.workspaces.iter().map(|ws| {
-                            let is_selected = self.selected_workspace_id == Some(ws.id);
-                            let ws_id = ws.id;
+                            let is_selected = self.selected_workspace_id == Some(ws.id.clone());
+                            let ws_id = ws.id.clone();
                             let ws_name = ws.name.clone();
                             let name: SharedString = ws_name.clone().into();
                             div()
@@ -1597,11 +1733,11 @@ impl Render for ChatWindow {
                                 })
                                 .child(name)
                                 .on_click(cx.listener(move |this, _, _window, cx| {
-                                    this.selected_workspace_id = Some(ws_id);
+                                    this.selected_workspace_id = Some(ws_id.clone());
                                     let ws_dir = this.workspaces.iter().find(|w| w.id == ws_id).map(|w| PathBuf::from(&w.path));
                                     if let Some(dir) = ws_dir {
                                         this.chat_input.update(cx, |ci, cx| {
-                                            ci.set_workspace(ws_id, dir, ws_name.clone(), cx);
+                                            ci.set_workspace(ws_id.clone(), dir, ws_name.clone(), cx);
                                         });
                                     }
                                     cx.notify();
@@ -1645,6 +1781,39 @@ impl Render for ChatWindow {
                                     .child(self.model_dropdown.clone())
                                     .child(self.thinking_dropdown.clone())
                                     .child(div().flex_1())
+                                    .child({
+                                        let is_recording = self.voice_state == VoiceState::Recording;
+                                        let is_transcribing = self.voice_state == VoiceState::Transcribing;
+                                        let btn = div()
+                                            .id("voice-btn")
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .size(px(28.))
+                                            .rounded_md()
+                                            .text_color(rgb(0xffffff))
+                                            .bg(if is_recording {
+                                                rgb(0xef4444)
+                                            } else if is_transcribing {
+                                                rgb(0x666666)
+                                            } else {
+                                                rgb(0x4b5563)
+                                            })
+                                            .when(!is_transcribing, |this| this.cursor_pointer());
+                                        let btn = if is_transcribing {
+                                            btn.child(loader_with(5.0, 0xffffff))
+                                        } else {
+                                            btn.child(
+                                                svg()
+                                                    .path("mic.svg")
+                                                    .size(px(14.))
+                                                    .text_color(rgb(0xffffff)),
+                                            )
+                                        };
+                                        btn.when(!is_transcribing, |this| {
+                                            this.on_click(cx.listener(Self::toggle_voice_input))
+                                        })
+                                    })
                                     .child(
                                         div()
                                             .id("send-btn")

@@ -16,7 +16,7 @@ use crate::utils::llm::generate_title;
 
 #[derive(Clone, Debug)]
 pub struct WorkspaceInfo {
-    pub id: i64,
+    pub id: String,
     pub path: PathBuf,
     pub name: String,
 }
@@ -28,7 +28,7 @@ pub enum SessionEvent {
 }
 
 pub struct SessionHandle {
-    pub thread_id: Option<i64>,
+    pub thread_id: Option<String>,
     pub _session_id: String,
     pub session_file: String,
     pub title: SharedString,
@@ -51,7 +51,7 @@ impl EventEmitter<SessionEvent> for SessionHandle {}
 impl SessionHandle {
     pub fn new(
         cx: &mut Context<Self>,
-        thread_id: Option<i64>,
+        thread_id: Option<String>,
         session_file: String,
         workspace: Option<WorkspaceInfo>,
         model: Option<String>,
@@ -61,7 +61,7 @@ impl SessionHandle {
     ) -> Self {
         let session_id = session_file.clone();
         let mut handle = Self {
-            thread_id,
+            thread_id: thread_id.clone(),
             _session_id: session_id,
             session_file,
             title: SharedString::from("New Thread"),
@@ -79,7 +79,7 @@ impl SessionHandle {
             store,
         };
 
-        if let Some(tid) = thread_id
+        if let Some(ref tid) = thread_id
             && let Ok(Some(thread)) = handle.store.get_thread(tid)
         {
             handle.title = if thread.title.is_empty() {
@@ -101,14 +101,14 @@ impl SessionHandle {
         matches!(self.state, ChatState::Error(_))
     }
 
-    pub fn set_thread_id(&mut self, thread_id: i64) {
+    pub fn set_thread_id(&mut self, thread_id: String) {
         self.thread_id = Some(thread_id);
     }
 
     pub fn set_model(&mut self, model: Option<String>, cx: &mut Context<Self>) {
         self.selected_model = model.clone();
         if let Some(ref id) = model {
-            if let Some(tid) = self.thread_id {
+            if let Some(ref tid) = self.thread_id {
                 let _ = self.store.update_thread(
                     tid,
                     None,
@@ -138,7 +138,7 @@ impl SessionHandle {
     pub fn set_thinking_level(&mut self, level: Option<String>, cx: &mut Context<Self>) {
         self.thinking_level = level.clone();
         if let Some(ref id) = level {
-            if let Some(tid) = self.thread_id {
+            if let Some(ref tid) = self.thread_id {
                 let _ = self.store.update_thread(
                     tid,
                     None,
@@ -186,13 +186,14 @@ impl SessionHandle {
         if self.thread_id.is_none() {
             match self.store.create_thread("", "") {
                 Ok(thread) => {
-                    self.thread_id = Some(thread.id);
+                    let thread_id = thread.id.clone();
+                    self.thread_id = Some(thread_id);
                     self.title = content.chars().take(80).collect::<String>().into();
                     let sf = self.session_file.clone();
                     let model_opt = self.selected_model.as_deref();
                     let thinking_opt = self.thinking_level.as_deref();
                     let _ = self.store.update_thread(
-                        thread.id,
+                        &thread.id,
                         Some(&self.title),
                         None,
                         Some(Some(&sf)),
@@ -210,7 +211,7 @@ impl SessionHandle {
             }
         }
 
-        let tid = self.thread_id.unwrap();
+        let tid = self.thread_id.as_ref().unwrap();
         let user_count = self
             .messages
             .iter()
@@ -227,7 +228,7 @@ impl SessionHandle {
                     Ok(title) => {
                         let _ = weak.update(cx, |session, cx| {
                             session.title = title.clone().into();
-                            if let Some(tid) = session.thread_id {
+                            if let Some(ref tid) = session.thread_id {
                                 let _ = session.store.update_thread(
                                     tid,
                                     Some(&title),
@@ -315,12 +316,13 @@ impl SessionHandle {
         if self.thread_id.is_none() {
             match self.store.create_thread("", "") {
                 Ok(thread) => {
-                    self.thread_id = Some(thread.id);
+                    let thread_id = thread.id.clone();
+                    self.thread_id = Some(thread_id);
                     let sf = self.session_file.clone();
                     let model_opt = self.selected_model.as_deref();
                     let thinking_opt = self.thinking_level.as_deref();
                     let _ = self.store.update_thread(
-                        thread.id,
+                        &thread.id,
                         None,
                         None,
                         Some(Some(&sf)),
@@ -337,7 +339,7 @@ impl SessionHandle {
                 }
             }
         }
-        if let Some(tid) = self.thread_id {
+        if let Some(ref tid) = self.thread_id {
             let preview: String = content.chars().take(120).collect();
             let _ =
                 self.store
@@ -437,7 +439,7 @@ impl SessionHandle {
                     Ok((streaming_changed, new_activity)) => {
                         if streaming_changed || new_activity {
                             let (thread_id, is_streaming) = match weak.update(cx, |session, _cx| {
-                                (session.thread_id, session.is_streaming())
+                                (session.thread_id.clone(), session.is_streaming())
                             }) {
                                 Ok(v) => v,
                                 Err(_) => break,
@@ -470,7 +472,7 @@ impl SessionHandle {
     }
 
     fn set_has_new_activity_db(&self, value: bool) {
-        if let Some(tid) = self.thread_id {
+        if let Some(ref tid) = self.thread_id {
             let md = self
                 .store
                 .get_thread(tid)
@@ -904,7 +906,7 @@ impl SessionHandle {
                             if self.session_file != file_name {
                                 eprintln!("[mini-pi] SDK session file: {}", file_name);
                                 self.session_file = file_name.clone();
-                                if let Some(tid) = self.thread_id {
+                                if let Some(ref tid) = self.thread_id {
                                     let _ = self.store.update_thread(
                                         tid,
                                         None,

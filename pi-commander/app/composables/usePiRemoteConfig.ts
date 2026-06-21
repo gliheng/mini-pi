@@ -1,13 +1,27 @@
 import { useLocalStorage } from '@vueuse/core'
+import type { Ref } from 'vue'
 
 export interface PiRemoteConfig {
   baseUrl: string
   token: string
 }
 
+interface SharedConfig {
+  baseUrl: Ref<string>
+  token: Ref<string>
+}
+
+let shared: SharedConfig | null = null
+
 export function usePiRemoteConfig() {
-  const baseUrl = useLocalStorage('pi-remote-base-url', '')
-  const token = useLocalStorage('pi-remote-token', '')
+  if (!shared) {
+    shared = {
+      baseUrl: useLocalStorage('pi-remote-base-url', ''),
+      token: useLocalStorage('pi-remote-token', '')
+    }
+  }
+
+  const { baseUrl, token } = shared
 
   const isConfigured = computed(() => {
     return Boolean(baseUrl.value.trim())
@@ -24,8 +38,8 @@ export function usePiRemoteConfig() {
   }
 
   return {
-    baseUrl: computed(() => baseUrl.value),
-    token: computed(() => token.value),
+    baseUrl,
+    token,
     isConfigured,
     set,
     clear

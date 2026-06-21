@@ -79,7 +79,7 @@ pub struct RemoteController {
     tunnel_handle: Option<tunnel::TunnelHandle>,
     watchdog_task: Option<Task<()>>,
     restart_attempts: u32,
-    target_thread_id: Option<i64>,
+    target_thread_id: Option<String>,
     target_session: Option<WeakEntity<SessionHandle>>,
     session_subscription: Option<Subscription>,
     active_streams: Vec<AiSubmitStream>,
@@ -89,7 +89,7 @@ impl EventEmitter<RemoteControllerEvent> for RemoteController {}
 
 #[derive(Debug)]
 struct AiSubmitStream {
-    thread_id: i64,
+    thread_id: String,
     sender: UnboundedSender<AiStreamEvent>,
     initial_message_ids: HashSet<String>,
     assistant_message_id: Option<String>,
@@ -120,7 +120,7 @@ enum AiPartState {
 
 impl AiSubmitStream {
     fn new(
-        thread_id: i64,
+        thread_id: String,
         sender: UnboundedSender<AiStreamEvent>,
         initial_message_ids: HashSet<String>,
     ) -> Self {
@@ -853,6 +853,8 @@ impl RemoteController {
     fn handle_command(&mut self, command: RemoteCommand, cx: &mut Context<Self>) -> RemoteResponse {
         match command {
             RemoteCommand::Status => self.status_response(),
+            RemoteCommand::GetModels => self.get_models_response(cx),
+            RemoteCommand::ListWorkspaces => self.list_workspaces_response(cx),
             RemoteCommand::ListThreads { page, per_page } => {
                 self.list_threads_response(page, per_page, cx)
             }
@@ -892,6 +894,44 @@ impl RemoteController {
         })
     }
 
+    fn get_models_response(&self, cx: &mut Context<Self>) -> RemoteResponse {
+        let models = &cx.global::<AppStore>().models;
+        let models_json: Vec<serde_json::Value> = models
+            .iter()
+            .filter_map(|m| {
+                let (provider, id) = model_config::parse_model_id(&m.id)?;
+                Some(json!({
+                    "provider": provider,
+                    "id": id,
+                    "name": m.name,
+                }))
+            })
+            .collect();
+        json!({ "models": models_json })
+    }
+
+    fn list_workspaces_response(&self, cx: &mut Context<Self>) -> RemoteResponse {
+        let store = cx.global::<AppStore>().store.clone();
+        match store.list_workspaces() {
+            Ok(workspaces) => {
+                let workspaces_json: Vec<serde_json::Value> = workspaces
+                    .into_iter()
+                    .map(|ws| {
+                        json!({
+                            "id": ws.id,
+                            "name": ws.name,
+                            "path": ws.path,
+                            "created_at": ws.created_at,
+                            "updated_at": ws.updated_at,
+                        })
+                    })
+                    .collect();
+                json!({ "workspaces": workspaces_json })
+            }
+            Err(e) => json!({ "error": e.to_string() }),
+        }
+    }
+
     fn list_threads_response(
         &self,
         page: usize,
@@ -922,12 +962,13 @@ impl RemoteController {
 
     fn create_thread(
         &mut self,
-        workspace_id: Option<i64>,
+        workspace_id: Option<String>,
         model_id: Option<String>,
         cx: &mut Context<Self>,
     ) -> RemoteResponse {
+        let models = &cx.global::<AppStore>().models;
         if let Some(ref id) = model_id {
-            if model_config::get_model_name(id).is_none() {
+            if model_config::get_model_name(models, id).is_none() {
                 return json!({ "error": format!("unknown model_id: {}", id) });
             }
         }
@@ -938,7 +979,7 @@ impl RemoteController {
             Err(e) => return json!({ "error": e.to_string() }),
         };
 
-        let workspace = match self.resolve_workspace(workspace_id, cx) {
+        let workspace = match self.resolve_workspace(workspace_id.as_deref(), cx) {
             Ok(ws) => ws,
             Err(e) => return json!({ "error": e }),
         };
@@ -950,7 +991,7 @@ impl RemoteController {
 
         let session_file = self.generate_session_file();
         if let Err(e) = store.update_thread(
-            thread.id,
+            &thread.id,
             None,
             None,
             Some(Some(&session_file)),
@@ -962,10 +1003,11 @@ impl RemoteController {
             return json!({ "error": e.to_string() });
         }
 
+        let thread_id = thread.id.clone();
         let session = cx.new(|cx| {
             SessionHandle::new(
                 cx,
-                Some(thread.id),
+                Some(thread_id.clone()),
                 session_file,
                 workspace,
                 model_id,
@@ -979,14 +1021,14 @@ impl RemoteController {
             app.session_manager.register(session_file, session.clone());
         });
 
-        self.set_target_internal(thread.id, Some(session.downgrade()), cx);
+        self.set_target_internal(thread_id.clone(), Some(session.downgrade()), cx);
 
-        json!({ "thread_id": thread.id })
+        json!({ "thread_id": thread_id })
     }
 
-    fn open_thread(&mut self, thread_id: i64, cx: &mut Context<Self>) -> RemoteResponse {
+    fn open_thread(&mut self, thread_id: String, cx: &mut Context<Self>) -> RemoteResponse {
         let store = cx.global::<AppStore>().store.clone();
-        let thread = match store.get_thread(thread_id) {
+        let thread = match store.get_thread(&thread_id) {
             Ok(Some(t)) => t,
             Ok(None) => return json!({ "error": "thread not found" }),
             Err(e) => return json!({ "error": e.to_string() }),
@@ -997,7 +1039,7 @@ impl RemoteController {
             None => {
                 let sf = self.generate_session_file();
                 if let Err(e) = store.update_thread(
-                    thread_id,
+                    &thread_id,
                     None,
                     None,
                     Some(Some(&sf)),
@@ -1021,7 +1063,7 @@ impl RemoteController {
                 let workspace = match thread
                     .metadata
                     .as_ref()
-                    .and_then(|md| md.get("workspace_id").and_then(|v| v.as_i64()))
+                    .and_then(|md| md.get("workspace_id").and_then(|v| v.as_str()))
                     .map(|id| self.resolve_workspace(Some(id), cx))
                     .unwrap_or_else(|| self.resolve_workspace(None, cx))
                 {
@@ -1031,7 +1073,7 @@ impl RemoteController {
                 let session = cx.new(|cx| {
                     SessionHandle::new(
                         cx,
-                        Some(thread_id),
+                        Some(thread_id.clone()),
                         session_file,
                         workspace,
                         thread.model.clone(),
@@ -1048,18 +1090,18 @@ impl RemoteController {
             }
         };
 
-        self.set_target_internal(thread_id, Some(session.downgrade()), cx);
+        self.set_target_internal(thread_id.clone(), Some(session.downgrade()), cx);
         json!({ "thread_id": thread_id })
     }
 
     fn send_message_stream(
         &mut self,
-        thread_id: i64,
+        thread_id: String,
         message: String,
         sender: UnboundedSender<AiStreamEvent>,
         cx: &mut Context<Self>,
     ) -> RemoteResponse {
-        let session = match self.ensure_target_session(thread_id, cx) {
+        let session = match self.ensure_target_session(thread_id.clone(), cx) {
             Ok(Some(s)) => s,
             Ok(None) => return json!({ "error": "could not open thread" }),
             Err(e) => return json!({ "error": e }),
@@ -1093,12 +1135,12 @@ impl RemoteController {
 
     fn get_messages(
         &self,
-        thread_id: i64,
+        thread_id: String,
         since_id: Option<String>,
         cx: &mut Context<Self>,
     ) -> RemoteResponse {
         let messages = self
-            .resolve_session(thread_id, cx)
+            .resolve_session(&thread_id, cx)
             .map(|e| e.read(cx).messages.clone());
 
         match messages {
@@ -1119,8 +1161,8 @@ impl RemoteController {
         }
     }
 
-    fn abort(&self, thread_id: i64, cx: &mut Context<Self>) -> RemoteResponse {
-        if let Some(session) = self.find_session(thread_id, cx) {
+    fn abort(&self, thread_id: String, cx: &mut Context<Self>) -> RemoteResponse {
+        if let Some(session) = self.find_session(&thread_id, cx) {
             if let Some(session) = session.upgrade() {
                 session.update(cx, |session, _cx| session.abort(_cx));
             }
@@ -1130,14 +1172,15 @@ impl RemoteController {
 
     fn set_model(
         &self,
-        thread_id: i64,
+        thread_id: String,
         model_id: String,
         cx: &mut Context<Self>,
     ) -> RemoteResponse {
-        if model_config::get_model_name(&model_id).is_none() {
+        let models = &cx.global::<AppStore>().models;
+        if model_config::get_model_name(models, &model_id).is_none() {
             return json!({ "error": format!("unknown model_id: {}", model_id) });
         }
-        if let Some(session) = self.find_session(thread_id, cx) {
+        if let Some(session) = self.find_session(&thread_id, cx) {
             if let Some(session) = session.upgrade() {
                 session.update(cx, |session, cx| session.set_model(Some(model_id), cx));
                 return json!({ "status": "ok" });
@@ -1148,20 +1191,20 @@ impl RemoteController {
 
     fn set_workspace(
         &self,
-        thread_id: i64,
-        workspace_id: i64,
+        thread_id: String,
+        workspace_id: String,
         cx: &mut Context<Self>,
     ) -> RemoteResponse {
-        let workspace = match self.resolve_workspace(Some(workspace_id), cx) {
+        let workspace = match self.resolve_workspace(Some(&workspace_id), cx) {
             Ok(Some(ws)) => ws,
             Ok(None) => return json!({ "error": "workspace not found" }),
             Err(e) => return json!({ "error": e }),
         };
-        if let Some(session) = self.find_session(thread_id, cx) {
+        if let Some(session) = self.find_session(&thread_id, cx) {
             if let Some(session) = session.upgrade() {
                 let ws = workspace.clone();
                 session.update(cx, |session, _cx| session.set_workspace(ws));
-                if let Err(e) = self.persist_workspace_id(thread_id, workspace_id, cx) {
+                if let Err(e) = self.persist_workspace_id(&thread_id, &workspace_id, cx) {
                     return json!({ "error": e.to_string() });
                 }
                 return json!({ "status": "ok" });
@@ -1172,8 +1215,8 @@ impl RemoteController {
 
     fn persist_workspace_id(
         &self,
-        thread_id: i64,
-        workspace_id: i64,
+        thread_id: &str,
+        workspace_id: &str,
         cx: &mut Context<Self>,
     ) -> Result<(), StoreError> {
         let store = cx.global::<AppStore>().store.clone();
@@ -1197,10 +1240,10 @@ impl RemoteController {
 
     fn ensure_target_session(
         &mut self,
-        thread_id: i64,
+        thread_id: String,
         cx: &mut Context<Self>,
     ) -> Result<Option<Entity<SessionHandle>>, String> {
-        if self.target_thread_id == Some(thread_id) {
+        if self.target_thread_id.as_ref() == Some(&thread_id) {
             if let Some(ref weak) = self.target_session {
                 if let Some(session) = weak.upgrade() {
                     return Ok(Some(session));
@@ -1219,10 +1262,10 @@ impl RemoteController {
 
     fn resolve_session(
         &self,
-        thread_id: i64,
+        thread_id: &str,
         cx: &mut Context<Self>,
     ) -> Option<Entity<SessionHandle>> {
-        if self.target_thread_id == Some(thread_id) {
+        if self.target_thread_id.as_ref().map(|s| s.as_str()) == Some(thread_id) {
             if let Some(ref weak) = self.target_session {
                 if let Some(session) = weak.upgrade() {
                     return Some(session);
@@ -1240,7 +1283,7 @@ impl RemoteController {
 
     fn find_session(
         &self,
-        thread_id: i64,
+        thread_id: &str,
         cx: &mut Context<Self>,
     ) -> Option<WeakEntity<SessionHandle>> {
         self.resolve_session(thread_id, cx).map(|e| e.downgrade())
@@ -1248,7 +1291,7 @@ impl RemoteController {
 
     fn set_target_internal(
         &mut self,
-        thread_id: i64,
+        thread_id: String,
         session: Option<WeakEntity<SessionHandle>>,
         cx: &mut Context<Self>,
     ) {
@@ -1268,7 +1311,7 @@ impl RemoteController {
     }
 
     fn on_session_changed(&mut self, cx: &mut Context<Self>) {
-        let Some(thread_id) = self.target_thread_id else {
+        let Some(ref thread_id) = self.target_thread_id else {
             return;
         };
         let Some(ref weak) = self.target_session else {
@@ -1286,7 +1329,7 @@ impl RemoteController {
         let state = session.state.clone();
 
         self.active_streams
-            .retain_mut(|stream| stream.thread_id != thread_id || stream.update(&messages, &state));
+            .retain_mut(|stream| stream.thread_id != *thread_id || stream.update(&messages, &state));
     }
 
     fn finish_active_streams_with_error(&mut self, message: &str) {
@@ -1298,7 +1341,7 @@ impl RemoteController {
 
     fn resolve_workspace(
         &self,
-        workspace_id: Option<i64>,
+        workspace_id: Option<&str>,
         cx: &mut Context<Self>,
     ) -> Result<Option<WorkspaceInfo>, String> {
         let store = cx.global::<AppStore>().store.clone();
@@ -1309,7 +1352,7 @@ impl RemoteController {
                 .find(|w| w.id == id)
                 .map(|ws| {
                     Some(WorkspaceInfo {
-                        id: ws.id,
+                        id: ws.id.clone(),
                         path: PathBuf::from(&ws.path),
                         name: ws.name,
                     })
@@ -1321,7 +1364,7 @@ impl RemoteController {
                 // workspace happened to be created first.
                 if let Some(ws) = workspaces.iter().find(|w| w.name == "Default") {
                     return Ok(Some(WorkspaceInfo {
-                        id: ws.id,
+                        id: ws.id.clone(),
                         path: PathBuf::from(&ws.path),
                         name: ws.name.clone(),
                     }));
@@ -1447,7 +1490,7 @@ mod tests {
     #[test]
     fn ai_submit_stream_closes_after_done() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let mut stream = AiSubmitStream::new(1, tx, HashSet::new());
+        let mut stream = AiSubmitStream::new("1".to_string(), tx, HashSet::new());
         let message = assistant_with_text("assistant-1", "hello", Some(PartState::Done));
 
         assert!(!stream.update(&[message], &ChatState::Idle));
@@ -1474,7 +1517,7 @@ mod tests {
     #[test]
     fn ai_submit_stream_ignores_rewritten_non_suffix_text() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let mut stream = AiSubmitStream::new(1, tx, HashSet::new());
+        let mut stream = AiSubmitStream::new("1".to_string(), tx, HashSet::new());
         let first = assistant_with_text("assistant-1", "abcd", Some(PartState::Streaming));
         let rewritten = assistant_with_text("assistant-1", "éfg", Some(PartState::Streaming));
 
@@ -1496,7 +1539,7 @@ mod tests {
     #[test]
     fn ai_submit_stream_emits_final_parts_after_empty_placeholder() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let mut stream = AiSubmitStream::new(1, tx, HashSet::new());
+        let mut stream = AiSubmitStream::new("1".to_string(), tx, HashSet::new());
         let empty = assistant_empty("assistant-1");
         let final_message = assistant_with_text("assistant-1", "done", Some(PartState::Done));
 
@@ -1522,7 +1565,7 @@ mod tests {
         // Reproduces the reported SSE output where the assistant message is
         // created but never receives any text parts before the turn ends.
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let mut stream = AiSubmitStream::new(1, tx, HashSet::new());
+        let mut stream = AiSubmitStream::new("1".to_string(), tx, HashSet::new());
         let empty = assistant_empty("assistant-1");
 
         assert!(stream.update(&[empty.clone()], &ChatState::Streaming));
@@ -1547,7 +1590,7 @@ mod tests {
         // Verifies that real chunks are forwarded when the assistant message
         // starts empty and is populated during streaming.
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let mut stream = AiSubmitStream::new(1, tx, HashSet::new());
+        let mut stream = AiSubmitStream::new("1".to_string(), tx, HashSet::new());
         let empty = assistant_empty("assistant-1");
         let streaming = assistant_with_text("assistant-1", "hello", Some(PartState::Streaming));
         let done = assistant_with_text("assistant-1", "hello", Some(PartState::Done));
@@ -1581,7 +1624,7 @@ mod tests {
         // carry a Streaming text part. The stream must latch onto the most recent
         // assistant message, not the stale one.
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let mut stream = AiSubmitStream::new(1, tx, HashSet::new());
+        let mut stream = AiSubmitStream::new("1".to_string(), tx, HashSet::new());
 
         let stale = Message {
             id: "stale".to_string(),
@@ -1618,7 +1661,7 @@ mod tests {
         // while the same user request is still streaming. The stream must switch
         // to the new assistant message and emit its text chunks.
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let mut stream = AiSubmitStream::new(1, tx, HashSet::new());
+        let mut stream = AiSubmitStream::new("1".to_string(), tx, HashSet::new());
 
         let first = Message {
             id: "first".to_string(),

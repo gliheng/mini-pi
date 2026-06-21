@@ -19,7 +19,7 @@ export interface PiMessage {
 }
 
 export interface PiThread {
-  id: number
+  id: string
   title: string | null
   preview: string | null
   session_file: string | null
@@ -46,7 +46,21 @@ export interface PiStatus {
   status: 'disabled' | 'starting' | 'running' | 'error'
   status_detail: string | { error: string }
   tunnel_url: string | null
-  target_thread_id: number | null
+  target_thread_id: string | null
+}
+
+export interface PiModel {
+  provider: string
+  id: string
+  name: string
+}
+
+export interface PiWorkspace {
+  id: string
+  name: string
+  path: string
+  created_at: string
+  updated_at: string
 }
 
 function toPiError(value: unknown): Error {
@@ -104,7 +118,7 @@ export function usePiRemote() {
     return data as PiThreadListResponse
   }
 
-  async function createThread(modelId?: string, workspaceId?: number): Promise<{ thread_id: number }> {
+  async function createThread(modelId?: string, workspaceId?: string): Promise<{ thread_id: string }> {
     const body: Record<string, unknown> = {}
     if (modelId) body.model_id = modelId
     if (workspaceId !== undefined) body.workspace_id = workspaceId
@@ -116,20 +130,20 @@ export function usePiRemote() {
     })
     const data = await res.json()
     if (!res.ok) throw toPiError(data)
-    return data as { thread_id: number }
+    return data as { thread_id: string }
   }
 
-  async function openThread(id: number): Promise<{ thread_id: number }> {
+  async function openThread(id: string): Promise<{ thread_id: string }> {
     const res = await fetch(url(`/threads/${id}/open`), {
       method: 'POST',
       headers: headers()
     })
     const data = await res.json()
     if (!res.ok) throw toPiError(data)
-    return data as { thread_id: number }
+    return data as { thread_id: string }
   }
 
-  async function getMessages(id: number, sinceId?: string): Promise<PiMessage[]> {
+  async function getMessages(id: string, sinceId?: string): Promise<PiMessage[]> {
     let path = `/threads/${id}/messages`
     if (sinceId) path += `?since_id=${encodeURIComponent(sinceId)}`
     const res = await fetch(url(path), { headers: headers() })
@@ -138,7 +152,7 @@ export function usePiRemote() {
     return data as PiMessage[]
   }
 
-  async function sendMessageStream(id: number, message: string, signal?: AbortSignal): Promise<ReadableStream<UIMessageChunk>> {
+  async function sendMessageStream(id: string, message: string, signal?: AbortSignal): Promise<ReadableStream<UIMessageChunk>> {
     const res = await fetch(url(`/threads/${id}/message`), {
       method: 'POST',
       headers: headers(),
@@ -165,7 +179,7 @@ export function usePiRemote() {
     }))
   }
 
-  async function abortThread(id: number): Promise<{ status: string }> {
+  async function abortThread(id: string): Promise<{ status: string }> {
     const res = await fetch(url(`/threads/${id}/abort`), {
       method: 'POST',
       headers: headers()
@@ -175,7 +189,7 @@ export function usePiRemote() {
     return data as { status: string }
   }
 
-  async function setModel(id: number, modelId: string): Promise<{ status: string }> {
+  async function setModel(id: string, modelId: string): Promise<{ status: string }> {
     const res = await fetch(url(`/threads/${id}/model`), {
       method: 'POST',
       headers: headers(),
@@ -186,6 +200,20 @@ export function usePiRemote() {
     return data as { status: string }
   }
 
+  async function listModels(): Promise<PiModel[]> {
+    const res = await fetch(url('/models'), { headers: headers() })
+    const data = await res.json()
+    if (!res.ok) throw toPiError(data)
+    return (data.models ?? []) as PiModel[]
+  }
+
+  async function listWorkspaces(): Promise<PiWorkspace[]> {
+    const res = await fetch(url('/workspaces'), { headers: headers() })
+    const data = await res.json()
+    if (!res.ok) throw toPiError(data)
+    return (data.workspaces ?? []) as PiWorkspace[]
+  }
+
   return {
     status,
     listThreads,
@@ -194,6 +222,8 @@ export function usePiRemote() {
     getMessages,
     sendMessageStream,
     abortThread,
-    setModel
+    setModel,
+    listModels,
+    listWorkspaces
   }
 }
