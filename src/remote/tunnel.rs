@@ -28,8 +28,8 @@ pub struct TunnelHandle {
 impl Drop for TunnelHandle {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::SeqCst);
-        // The monitor thread never holds this lock across wait(), so this cannot
-        // deadlock with the monitor thread.
+        // The monitor thread only holds the lock briefly while polling
+        // try_wait(), so this cannot deadlock.
         if let Ok(mut child) = self.child.lock() {
             let _ = child.kill();
         }
@@ -113,19 +113,42 @@ pub fn start(
     let error_sent_for_monitor = error_sent.clone();
     let url_tx_for_monitor = url_tx.clone();
     thread::spawn(move || {
-        // Do NOT hold the child lock while waiting. Acquire it only to call wait(),
-        // then release immediately.
-        let status = {
-            let mut child = child_for_monitor.lock().unwrap();
-            child.wait()
-        };
-        if !shutdown_for_monitor.load(Ordering::SeqCst)
-            && !error_sent_for_monitor.swap(true, Ordering::SeqCst)
-        {
-            let _ = url_tx_for_monitor.send(TunnelOutcome::Error(format!(
-                "cloudflared exited unexpectedly: {:?}",
-                status
-            )));
+        // Poll with try_wait() instead of blocking on wait() so we never hold
+        // the child lock across a blocking syscall. This lets TunnelHandle::drop
+        // acquire the lock and kill the process without deadlocking.
+        loop {
+            let done = {
+                let mut child = child_for_monitor.lock().unwrap();
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        if !shutdown_for_monitor.load(Ordering::SeqCst)
+                            && !error_sent_for_monitor.swap(true, Ordering::SeqCst)
+                        {
+                            let _ = url_tx_for_monitor.send(TunnelOutcome::Error(format!(
+                                "cloudflared exited unexpectedly: {:?}",
+                                status
+                            )));
+                        }
+                        true
+                    }
+                    Ok(None) => false,
+                    Err(e) => {
+                        if !shutdown_for_monitor.load(Ordering::SeqCst)
+                            && !error_sent_for_monitor.swap(true, Ordering::SeqCst)
+                        {
+                            let _ = url_tx_for_monitor.send(TunnelOutcome::Error(format!(
+                                "failed to wait for cloudflared: {}",
+                                e
+                            )));
+                        }
+                        true
+                    }
+                }
+            };
+            if done {
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
         }
     });
 

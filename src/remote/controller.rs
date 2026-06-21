@@ -17,11 +17,17 @@ use crate::remote::server;
 use crate::remote::tunnel;
 use crate::remote::types::{AiStreamEvent, CommandEnvelope, RemoteCommand, RemoteResponse};
 
+const RESTART_BASE_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
+const RESTART_MAX_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
+const RESTART_ATTEMPT_CAP: u32 = 10;
+const STARTUP_WATCHDOG_SECONDS: u64 = 20;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum RemoteStatus {
     Disabled,
     Starting,
     Running,
+    Reconnecting,
     Error(String),
 }
 
@@ -32,6 +38,7 @@ impl RemoteStatus {
             RemoteStatus::Disabled => "disabled",
             RemoteStatus::Starting => "starting",
             RemoteStatus::Running => "running",
+            RemoteStatus::Reconnecting => "reconnecting",
             RemoteStatus::Error(_) => "error",
         }
     }
@@ -42,6 +49,7 @@ impl RemoteStatus {
             RemoteStatus::Disabled => json!("disabled"),
             RemoteStatus::Starting => json!("starting"),
             RemoteStatus::Running => json!("running"),
+            RemoteStatus::Reconnecting => json!("reconnecting"),
             RemoteStatus::Error(msg) => json!({ "error": msg }),
         }
     }
@@ -61,6 +69,8 @@ pub struct RemoteController {
     command_task: Option<Task<()>>,
     server_handle: Option<server::RemoteServerHandle>,
     tunnel_handle: Option<tunnel::TunnelHandle>,
+    watchdog_task: Option<Task<()>>,
+    restart_attempts: u32,
     target_thread_id: Option<i64>,
     target_session: Option<WeakEntity<SessionHandle>>,
     session_subscription: Option<Subscription>,
@@ -484,6 +494,8 @@ impl RemoteController {
             command_task: None,
             server_handle: None,
             tunnel_handle: None,
+            watchdog_task: None,
+            restart_attempts: 0,
             target_thread_id: None,
             target_session: None,
             session_subscription: None,
@@ -497,6 +509,10 @@ impl RemoteController {
 
     pub fn is_starting(&self) -> bool {
         matches!(self.status, RemoteStatus::Starting)
+    }
+
+    pub fn is_reconnecting(&self) -> bool {
+        matches!(self.status, RemoteStatus::Reconnecting)
     }
 
     pub fn set_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
@@ -526,7 +542,11 @@ impl RemoteController {
         if matches!(self.status, RemoteStatus::Starting | RemoteStatus::Running) {
             return;
         }
+        self.restart_attempts = 0;
+        self.begin_start(cx);
+    }
 
+    fn begin_start(&mut self, cx: &mut Context<Self>) {
         self.status = RemoteStatus::Starting;
         self.error_message = None;
         self.tunnel_url = None;
@@ -554,21 +574,23 @@ impl RemoteController {
         let command_path = self.config.cloudflared.command.clone();
         let token = self.config.cloudflared.tunnel_token.clone();
         let hostname = self.config.cloudflared.hostname.clone();
+        let watchdog_attempts = self.restart_attempts;
 
         let watchdog_this = this.clone();
-        cx.spawn(async move |_, cx| {
-            smol::Timer::after(std::time::Duration::from_secs(20)).await;
+        self.watchdog_task = Some(cx.spawn(async move |_, cx| {
+            smol::Timer::after(std::time::Duration::from_secs(STARTUP_WATCHDOG_SECONDS)).await;
             let _ = watchdog_this.update(cx, |this, cx| {
-                if matches!(this.status, RemoteStatus::Starting) {
-                    this.set_error(
+                if matches!(this.status, RemoteStatus::Starting)
+                    && this.restart_attempts == watchdog_attempts
+                {
+                    this.restart(
                         "remote control startup timed out; check that cloudflared is installed and reachable"
                             .to_string(),
                         cx,
                     );
                 }
             });
-        })
-        .detach();
+        }));
 
         cx.spawn(async move |_, cx| {
             let start_result = smol::unblock(move || {
@@ -643,6 +665,7 @@ impl RemoteController {
                                     this.tunnel_url = Some(url);
                                     this.status = RemoteStatus::Running;
                                     this.error_message = None;
+                                    this.restart_attempts = 0;
                                     cx.emit(RemoteControllerEvent::StatusChanged);
                                     cx.notify();
                                 });
@@ -653,7 +676,7 @@ impl RemoteController {
                                         this.status,
                                         RemoteStatus::Starting | RemoteStatus::Running
                                     ) {
-                                        this.set_error(e, cx);
+                                        this.restart(e, cx);
                                     }
                                 });
                                 break;
@@ -674,8 +697,39 @@ impl RemoteController {
         .detach();
     }
 
+    fn restart(&mut self, message: String, cx: &mut Context<Self>) {
+        eprintln!("[remote] tunnel lost, will restart: {}", message);
+        self.shutdown_services();
+        self.status = RemoteStatus::Reconnecting;
+        self.error_message = Some(message);
+        self.tunnel_url = None;
+        self.target_thread_id = None;
+        self.target_session = None;
+        self.session_subscription = None;
+        cx.emit(RemoteControllerEvent::StatusChanged);
+        cx.notify();
+
+        let delay = std::cmp::min(
+            RESTART_BASE_DELAY * 2u32.pow(self.restart_attempts.min(RESTART_ATTEMPT_CAP)),
+            RESTART_MAX_DELAY,
+        );
+        self.restart_attempts += 1;
+
+        let this = cx.entity().downgrade();
+        cx.spawn(async move |_, cx| {
+            smol::Timer::after(delay).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.config.enabled && matches!(this.status, RemoteStatus::Reconnecting) {
+                    this.begin_start(cx);
+                }
+            });
+        })
+        .detach();
+    }
+
     pub fn stop(&mut self, cx: &mut Context<Self>) {
         self.shutdown_services();
+        self.restart_attempts = 0;
         self.tunnel_url = None;
         self.error_message = None;
         self.status = RemoteStatus::Disabled;
@@ -689,6 +743,7 @@ impl RemoteController {
     fn shutdown_services(&mut self) {
         self.tunnel_handle = None;
         self.server_handle = None;
+        self.watchdog_task = None;
         self.command_sender = None;
         self.command_task = None;
         self.finish_active_streams_with_error("remote control stopped");

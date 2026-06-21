@@ -321,16 +321,20 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
     let tunnel_url = c.tunnel_url.clone();
     let error_message = c.error_message.clone();
     let is_starting = c.is_starting();
+    let is_reconnecting = c.is_reconnecting();
+    let is_busy = is_starting || is_reconnecting;
 
     let status_text: SharedString = match &status {
         RemoteStatus::Disabled => "Off".into(),
         RemoteStatus::Starting => "Starting...".into(),
         RemoteStatus::Running => "Connected".into(),
+        RemoteStatus::Reconnecting => "Reconnecting...".into(),
         RemoteStatus::Error(e) => format!("Error: {}", e).into(),
     };
     let status_color = match &status {
         RemoteStatus::Running => rgb(0x22c55e),
         RemoteStatus::Error(_) => rgb(0xef4444),
+        RemoteStatus::Reconnecting => rgb(0xf59e0b),
         _ => rgb(0x888888),
     };
 
@@ -374,8 +378,8 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                         .h(px(24.))
                         .rounded_full()
                         .bg(if enabled { rgb(0x6366f1) } else { rgb(0x444444) })
-                        .when(!is_starting, |s| s.cursor_pointer())
-                        .when(is_starting, |s| s.opacity(0.6))
+                        .when(!is_busy, |s| s.cursor_pointer())
+                        .when(is_busy, |s| s.opacity(0.6))
                         .child(
                             div()
                                 .id("remote-toggle-knob")
@@ -386,7 +390,7 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                                 .when(!enabled, |s| s.ml(px(2.)))
                                 .mt(px(2.)),
                         )
-                        .when(!is_starting, |s| {
+                        .when(!is_busy, |s| {
                             s.on_click(cx.listener(move |_this, _, _, cx| {
                                 if let Some(controller) =
                                     cx.global::<AppStore>().remote_controller.clone()
