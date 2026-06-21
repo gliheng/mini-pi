@@ -456,6 +456,10 @@ impl ThreadList {
         !self.search_query(cx).is_empty()
     }
 
+    fn all_threads_loaded(&self, cx: &Context<Self>) -> bool {
+        !self.is_searching(cx) && self.total_pages > 0 && self.page >= self.total_pages
+    }
+
     fn load_threads(&mut self, cx: &mut Context<Self>) {
         self.page = 1;
         self.loading_more = false;
@@ -563,6 +567,9 @@ impl ThreadList {
     }
 
     fn check_scroll_for_more(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.all_threads_loaded(cx) {
+            return;
+        }
         let max_y = self.scroll_handle.max_offset().height;
         if max_y <= px(0.) {
             return;
@@ -705,6 +712,22 @@ impl Render for ThreadList {
                                 .items_center()
                                 .justify_center()
                                 .child(loader()),
+                        )
+                    })
+                    .when(self.all_threads_loaded(cx) && !self.thread_items.is_empty(), |el| {
+                        el.child(
+                            div()
+                                .id("thread-list-end")
+                                .py_4()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(0x666666))
+                                        .child("No more threads"),
+                                ),
                         )
                     }),
             )
