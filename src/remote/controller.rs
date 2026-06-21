@@ -60,11 +60,19 @@ pub enum RemoteControllerEvent {
     StatusChanged,
 }
 
+/// A single cloudflared log line surfaced in the UI.
+#[derive(Clone, Debug)]
+pub struct TunnelLog {
+    pub level: String,
+    pub message: String,
+}
+
 pub struct RemoteController {
     pub config: RemoteControlConfig,
     pub status: RemoteStatus,
     pub tunnel_url: Option<String>,
     pub error_message: Option<String>,
+    pub tunnel_log: Option<TunnelLog>,
     command_sender: Option<UnboundedSender<CommandEnvelope>>,
     command_task: Option<Task<()>>,
     server_handle: Option<server::RemoteServerHandle>,
@@ -490,6 +498,7 @@ impl RemoteController {
             status: RemoteStatus::Disabled,
             tunnel_url: None,
             error_message: None,
+            tunnel_log: None,
             command_sender: None,
             command_task: None,
             server_handle: None,
@@ -549,6 +558,7 @@ impl RemoteController {
     fn begin_start(&mut self, cx: &mut Context<Self>) {
         self.status = RemoteStatus::Starting;
         self.error_message = None;
+        self.tunnel_log = None;
         self.tunnel_url = None;
         cx.emit(RemoteControllerEvent::StatusChanged);
         cx.notify();
@@ -656,32 +666,79 @@ impl RemoteController {
                     let mut url_seen = false;
                     while let Some(outcome) = fwd_rx.recv().await {
                         match outcome {
-                            tunnel::TunnelOutcome::Url(url) if !url_seen => {
-                                url_seen = true;
+                            tunnel::TunnelOutcome::Url(url) => {
+                                let mut applied = false;
                                 let _ = this.update(cx, |this, cx| {
-                                    if !matches!(this.status, RemoteStatus::Starting) {
+                                    let should_apply = (!url_seen
+                                        && matches!(this.status, RemoteStatus::Starting))
+                                        || matches!(this.status, RemoteStatus::Reconnecting);
+                                    if !should_apply {
                                         return;
                                     }
+                                    applied = true;
                                     this.tunnel_url = Some(url);
                                     this.status = RemoteStatus::Running;
                                     this.error_message = None;
+                                    this.tunnel_log = None;
                                     this.restart_attempts = 0;
                                     cx.emit(RemoteControllerEvent::StatusChanged);
                                     cx.notify();
                                 });
+                                if applied {
+                                    url_seen = true;
+                                }
                             }
                             tunnel::TunnelOutcome::Error(e) => {
                                 let _ = this.update(cx, |this, cx| {
                                     if matches!(
                                         this.status,
-                                        RemoteStatus::Starting | RemoteStatus::Running
+                                        RemoteStatus::Starting
+                                            | RemoteStatus::Running
+                                            | RemoteStatus::Reconnecting
                                     ) {
                                         this.restart(e, cx);
                                     }
                                 });
                                 break;
                             }
-                            _ => {}
+                            tunnel::TunnelOutcome::Log { level, message } => {
+                                let _ = this.update(cx, |this, cx| {
+                                    if !matches!(
+                                        this.status,
+                                        RemoteStatus::Starting
+                                            | RemoteStatus::Running
+                                            | RemoteStatus::Reconnecting
+                                    ) {
+                                        return;
+                                    }
+                                    if level == "ERR"
+                                        && matches!(
+                                            this.status,
+                                            RemoteStatus::Starting | RemoteStatus::Running
+                                        )
+                                    {
+                                        this.status = RemoteStatus::Reconnecting;
+                                        cx.emit(RemoteControllerEvent::StatusChanged);
+                                        cx.notify();
+                                    }
+                                    this.set_tunnel_log(level, message, cx);
+                                });
+                            }
+                            tunnel::TunnelOutcome::Connected => {
+                                let _ = this.update(cx, |this, cx| {
+                                    if matches!(
+                                        this.status,
+                                        RemoteStatus::Starting | RemoteStatus::Reconnecting
+                                    ) {
+                                        this.status = RemoteStatus::Running;
+                                        this.error_message = None;
+                                        this.tunnel_log = None;
+                                        this.restart_attempts = 0;
+                                        cx.emit(RemoteControllerEvent::StatusChanged);
+                                        cx.notify();
+                                    }
+                                });
+                            }
                         }
                     }
                 }
@@ -702,6 +759,7 @@ impl RemoteController {
         self.shutdown_services();
         self.status = RemoteStatus::Reconnecting;
         self.error_message = Some(message);
+        self.tunnel_log = None;
         self.tunnel_url = None;
         self.target_thread_id = None;
         self.target_session = None;
@@ -732,6 +790,7 @@ impl RemoteController {
         self.restart_attempts = 0;
         self.tunnel_url = None;
         self.error_message = None;
+        self.tunnel_log = None;
         self.status = RemoteStatus::Disabled;
         self.target_thread_id = None;
         self.target_session = None;
@@ -754,12 +813,24 @@ impl RemoteController {
         self.shutdown_services();
         self.status = RemoteStatus::Error(message.clone());
         self.error_message = Some(message);
+        self.tunnel_log = None;
         self.tunnel_url = None;
         self.config.enabled = false;
         self.target_thread_id = None;
         self.target_session = None;
         self.session_subscription = None;
         self.save_config(cx);
+        cx.emit(RemoteControllerEvent::StatusChanged);
+        cx.notify();
+    }
+
+    fn set_tunnel_log(
+        &mut self,
+        level: String,
+        message: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.tunnel_log = Some(TunnelLog { level, message });
         cx.emit(RemoteControllerEvent::StatusChanged);
         cx.notify();
     }

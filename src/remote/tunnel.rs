@@ -18,6 +18,10 @@ pub enum TunnelOutcome {
     Url(String),
     /// The process exited or produced an error before a URL was known.
     Error(String),
+    /// A log line was emitted by the tunnel process.
+    Log { level: String, message: String },
+    /// The tunnel successfully registered a connection with the edge.
+    Connected,
 }
 
 pub struct TunnelHandle {
@@ -162,6 +166,17 @@ pub fn start(
                 if let Some(url) = extract_quick_url(&text) {
                     url_found_for_stdout.store(true, Ordering::SeqCst);
                     let _ = url_tx_for_stdout.send(TunnelOutcome::Url(url));
+                } else if let Some((level, message)) = parse_cloudflared_log_line(&text) {
+                    let is_connected = is_connected_log(&level, &message);
+                    if is_surface_log(&level, &message) {
+                        let _ = url_tx_for_stdout.send(TunnelOutcome::Log {
+                            level: level.clone(),
+                            message: message.clone(),
+                        });
+                    }
+                    if is_connected {
+                        let _ = url_tx_for_stdout.send(TunnelOutcome::Connected);
+                    }
                 }
             }
         }
@@ -177,6 +192,17 @@ pub fn start(
                 if let Some(url) = extract_quick_url(&text) {
                     url_found_for_stderr.store(true, Ordering::SeqCst);
                     let _ = url_tx_for_stderr.send(TunnelOutcome::Url(url));
+                } else if let Some((level, message)) = parse_cloudflared_log_line(&text) {
+                    let is_connected = is_connected_log(&level, &message);
+                    if is_surface_log(&level, &message) {
+                        let _ = url_tx_for_stderr.send(TunnelOutcome::Log {
+                            level: level.clone(),
+                            message: message.clone(),
+                        });
+                    }
+                    if is_connected {
+                        let _ = url_tx_for_stderr.send(TunnelOutcome::Connected);
+                    }
                 }
             }
         }
@@ -213,6 +239,36 @@ fn extract_quick_url(text: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Parse a cloudflared log line into `(level, message)`.
+///
+/// Expected format: `2026-06-21T06:12:03Z ERR some message key=value ...`
+fn parse_cloudflared_log_line(text: &str) -> Option<(String, String)> {
+    let cleaned = strip_ansi_codes(text);
+    let mut parts = cleaned.split_whitespace();
+    let _timestamp = parts.next()?;
+    let level = parts.next()?;
+    if !matches!(level, "ERR" | "WRN" | "INF" | "DBG") {
+        return None;
+    }
+    let message = parts.collect::<Vec<_>>().join(" ");
+    if message.is_empty() {
+        return None;
+    }
+    Some((level.to_string(), message))
+}
+
+/// Returns true if a log line should be surfaced in the UI.
+fn is_surface_log(level: &str, message: &str) -> bool {
+    matches!(level, "ERR" | "WRN")
+        || (level == "INF" && message.to_lowercase().contains("retry"))
+        || is_connected_log(level, message)
+}
+
+/// Returns true if the log line signals a successful tunnel registration.
+fn is_connected_log(level: &str, message: &str) -> bool {
+    level == "INF" && message.starts_with("Registered tunnel connection")
 }
 
 /// Remove ANSI CSI escape sequences (e.g. color/bold codes) from a string.
@@ -281,5 +337,48 @@ mod tests {
             extract_quick_url(line),
             Some("https://misc-mounting-hopkins-value.trycloudflare.com".to_string())
         );
+    }
+
+    #[test]
+    fn parse_log_line_extracts_err_and_message() {
+        let line = "2026-06-21T06:12:03Z ERR Failed to dial a quic connection error=\"timeout\" connIndex=0";
+        assert_eq!(
+            parse_cloudflared_log_line(line),
+            Some(("ERR".to_string(), "Failed to dial a quic connection error=\"timeout\" connIndex=0".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_log_line_ignores_unexpected_levels() {
+        let line = "2026-06-21T06:12:03Z FOO some message";
+        assert_eq!(parse_cloudflared_log_line(line), None);
+    }
+
+    #[test]
+    fn parse_log_line_handles_ansi_codes() {
+        let line = "\x1b[36m\x1b[1m2026-06-21T06:12:03Z ERR Failed to dial\x1b[0m";
+        assert_eq!(
+            parse_cloudflared_log_line(line),
+            Some(("ERR".to_string(), "Failed to dial".to_string()))
+        );
+    }
+
+    #[test]
+    fn is_surface_log_accepts_err_and_retry_info() {
+        assert!(is_surface_log("ERR", "Failed to dial"));
+        assert!(is_surface_log("WRN", "Something warning"));
+        assert!(is_surface_log("INF", "Retrying connection in up to 4s"));
+        assert!(!is_surface_log("INF", "Tunnel connection curve preferences"));
+        assert!(!is_surface_log("DBG", "Debug info"));
+    }
+
+    #[test]
+    fn is_connected_log_recognizes_registration() {
+        assert!(is_connected_log(
+            "INF",
+            "Registered tunnel connection connIndex=0 connection=..."
+        ));
+        assert!(!is_connected_log("INF", "Retrying connection in up to 4s"));
+        assert!(!is_connected_log("ERR", "Registered tunnel connection"));
     }
 }

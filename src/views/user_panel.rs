@@ -1,16 +1,20 @@
+use std::time::Duration;
+
 use gpui::{
-    AppContext, BorrowAppContext, Context, EventEmitter, InteractiveElement, IntoElement,
-    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window, div,
-    prelude::FluentBuilder, px, rgb,
+    AppContext, BorrowAppContext, ClipboardItem, Context, EventEmitter, InteractiveElement,
+    IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
+    div, prelude::FluentBuilder, px, rgb,
 };
 
 use crate::auth::state::{self, AuthState};
 use crate::auth::supabase;
 use crate::core::app::AppStore;
+use crate::remote::controller::TunnelLog;
 use crate::remote::qr::qr_image_source;
 use crate::remote::RemoteStatus;
 use crate::sync::settings_sync;
 use crate::ui::input::TextInput;
+use crate::ui::toast::Toast;
 
 #[derive(Clone)]
 pub enum UserPanelEvent {
@@ -24,16 +28,39 @@ pub enum AuthDialog {
     Signup,
 }
 
+struct StatusLogTooltip {
+    text: SharedString,
+}
+
+impl Render for StatusLogTooltip {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .max_w(px(320.))
+            .px_3()
+            .py_2()
+            .rounded_md()
+            .bg(rgb(0x2a2a2a))
+            .border_1()
+            .border_color(rgb(0x444444))
+            .text_xs()
+            .text_color(rgb(0xe5e5e5))
+            .whitespace_normal()
+            .child(self.text.clone())
+    }
+}
+
 pub struct UserPanel {
     pub email_input: gpui::Entity<TextInput>,
     pub password_input: gpui::Entity<TextInput>,
     pub confirm_password_input: gpui::Entity<TextInput>,
     pub auth_error: Option<String>,
     pub auth_dialog: Option<AuthDialog>,
+    pub toast: gpui::Entity<Toast>,
     pub _email_sub: gpui::Subscription,
     pub _password_sub: gpui::Subscription,
     pub _confirm_password_sub: gpui::Subscription,
     pub _remote_sub: Option<gpui::Subscription>,
+    pub _toast_sub: gpui::Subscription,
 }
 
 impl UserPanel {
@@ -60,16 +87,23 @@ impl UserPanel {
             })
         });
 
+        let toast = cx.new(|_| Toast::new(""));
+        let _toast_sub = cx.observe(&toast, |_this, _toast, cx| {
+            cx.notify();
+        });
+
         Self {
             email_input,
             password_input,
             confirm_password_input,
             auth_error: None,
             auth_dialog: None,
+            toast,
             _email_sub,
             _password_sub,
             _confirm_password_sub,
             _remote_sub: remote_sub,
+            _toast_sub,
         }
     }
 }
@@ -299,15 +333,35 @@ impl Render for UserPanel {
                                 }),
                         ),
                 )
+                .when(self.toast.read(cx).visible, |this| {
+                    this.child(render_toast_overlay(self, cx))
+                })
         } else {
             div()
                 .id("user-panel")
                 .flex()
                 .flex_col()
                 .size_full()
+                .relative()
                 .child(content)
+                .when(self.toast.read(cx).visible, |this| {
+                    this.child(render_toast_overlay(self, cx))
+                })
         }
     }
+}
+
+fn render_toast_overlay(panel: &UserPanel, _cx: &mut Context<UserPanel>) -> impl IntoElement {
+    div()
+        .absolute()
+        .top(px(48.))
+        .left(px(0.))
+        .right(px(0.))
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_center()
+        .child(panel.toast.clone())
 }
 
 fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElement {
@@ -319,6 +373,7 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
     let enabled = c.is_enabled();
     let status = c.status.clone();
     let tunnel_url = c.tunnel_url.clone();
+    let tunnel_log = c.tunnel_log.clone();
     let error_message = c.error_message.clone();
     let is_starting = c.is_starting();
     let is_reconnecting = c.is_reconnecting();
@@ -415,11 +470,49 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                 .bg(rgb(0x252525))
                 .child(div().text_xs().text_color(rgb(0x888888)).child("Status"))
                 .child(div().flex_1())
-                .child(div().text_xs().text_color(status_color).child(status_text)),
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .child(div().text_xs().text_color(status_color).child(status_text))
+                        .when_some(tunnel_log.clone(), |this, log: TunnelLog| {
+                            let icon_color = match log.level.as_str() {
+                                "ERR" => rgb(0xfca5a5),
+                                "WRN" => rgb(0xfbbf24),
+                                _ => rgb(0x888888),
+                            };
+                            let tooltip_text = format!("[{}] {}", log.level, log.message);
+                            this.child(
+                                div()
+                                    .id("remote-status-log-icon")
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .size(px(16.))
+                                    .child(
+                                        gpui::svg()
+                                            .path("exclamation.svg")
+                                            .size(px(14.))
+                                            .text_color(icon_color),
+                                    )
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| StatusLogTooltip {
+                                            text: tooltip_text.clone().into(),
+                                        })
+                                        .into()
+                                    }),
+                            )
+                        }),
+                ),
         );
 
-    if let Some(url) = tunnel_url {
-        let qr = qr_image_source(&url);
+    if let Some(tunnel) = tunnel_url {
+        let pi_commander_url = "https://pi.raven-ai.one/".to_string();
+        let qr = qr_image_source(&pi_commander_url);
+        let tunnel_for_copy = tunnel.clone();
+        let pi_commander_for_open = pi_commander_url.clone();
         section = section.child(
             div()
                 .id("remote-qr-card")
@@ -434,20 +527,42 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                 .bg(rgb(0x252525))
                 .child(
                     div()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_center()
+                        .gap_1()
                         .text_xs()
                         .text_color(rgb(0x888888))
-                        .child("Scan with your phone"),
-                )
-                .child(
-                    div().when_some(qr, |this, source| {
-                        this.child(gpui::img(source).size(px(160.)))
-                    }),
+                        .child("Scan with ")
+                        .child(
+                            div()
+                                .id("pi-commander-link")
+                                .text_color(rgb(0x6366f1))
+                                .cursor_pointer()
+                                .hover(|style| style.text_color(rgb(0x818cf8)))
+                                .on_click(cx.listener(move |_this, _, _, cx| {
+                                    cx.open_url(&pi_commander_for_open);
+                                }))
+                                .child("pi-commander"),
+                        ),
                 )
                 .child(
                     div()
-                        .text_xs()
-                        .text_color(rgb(0x6366f1))
-                        .child(SharedString::from(url)),
+                        .id("remote-qr-code")
+                        .cursor_pointer()
+                        .when_some(qr, |this, source| {
+                            this.child(gpui::img(source).size(px(160.)))
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(tunnel_for_copy.clone()));
+                            this.toast.update(cx, |toast, cx| {
+                                toast.set_message("URL copied to clipboard");
+                                toast.show_for(Duration::from_secs(3), cx);
+                            });
+                            cx.notify();
+                        })),
                 ),
         );
     }
