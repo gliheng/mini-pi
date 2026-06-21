@@ -1,7 +1,7 @@
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc::Receiver, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc::Receiver};
 use std::thread;
 use std::time::Duration;
 
@@ -65,6 +65,16 @@ pub fn start(
 
     let (url_tx, url_rx) = std::sync::mpsc::channel();
 
+    // On macOS wrap cloudflared with caffeinate so the tunnel keeps the system
+    // awake while remote control is enabled. -i prevents idle sleep, -s prevents
+    // system sleep.
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut cmd = Command::new("caffeinate");
+        cmd.arg("-is").arg(command);
+        cmd
+    };
+    #[cfg(not(target_os = "macos"))]
     let mut cmd = Command::new(command);
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -307,18 +317,12 @@ mod tests {
 
     #[test]
     fn extract_quick_url_ignores_other_hosts() {
-        assert_eq!(
-            extract_quick_url("https://example.com"),
-            None
-        );
+        assert_eq!(extract_quick_url("https://example.com"), None);
     }
 
     #[test]
     fn extract_quick_url_ignores_no_https() {
-        assert_eq!(
-            extract_quick_url("foo-bar.trycloudflare.com"),
-            None
-        );
+        assert_eq!(extract_quick_url("foo-bar.trycloudflare.com"), None);
     }
 
     #[test]
@@ -344,7 +348,10 @@ mod tests {
         let line = "2026-06-21T06:12:03Z ERR Failed to dial a quic connection error=\"timeout\" connIndex=0";
         assert_eq!(
             parse_cloudflared_log_line(line),
-            Some(("ERR".to_string(), "Failed to dial a quic connection error=\"timeout\" connIndex=0".to_string()))
+            Some((
+                "ERR".to_string(),
+                "Failed to dial a quic connection error=\"timeout\" connIndex=0".to_string()
+            ))
         );
     }
 
@@ -368,7 +375,10 @@ mod tests {
         assert!(is_surface_log("ERR", "Failed to dial"));
         assert!(is_surface_log("WRN", "Something warning"));
         assert!(is_surface_log("INF", "Retrying connection in up to 4s"));
-        assert!(!is_surface_log("INF", "Tunnel connection curve preferences"));
+        assert!(!is_surface_log(
+            "INF",
+            "Tunnel connection curve preferences"
+        ));
         assert!(!is_surface_log("DBG", "Debug info"));
     }
 

@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default)]
     pub default_model: Option<String>,
@@ -60,7 +59,6 @@ impl Default for CloudflaredConfig {
 fn default_cloudflared_command() -> String {
     "cloudflared".to_string()
 }
-
 
 impl AppConfig {
     pub fn config_path() -> PathBuf {

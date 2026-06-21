@@ -1209,7 +1209,9 @@ mod tests {
         });
         let event = parse_pi_line_value(&val);
         match event {
-            Some(BridgeEvent::AgentEnd { messages: Some(messages) }) => {
+            Some(BridgeEvent::AgentEnd {
+                messages: Some(messages),
+            }) => {
                 assert_eq!(messages.len(), 1);
                 assert_eq!(messages[0].role, "assistant");
                 assert!(

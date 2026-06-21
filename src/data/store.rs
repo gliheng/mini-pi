@@ -185,8 +185,7 @@ impl Store {
         let rows = stmt
             .query_map([], |row| {
                 let metadata_str: Option<String> = row.get(7)?;
-                let metadata = metadata_str
-                    .and_then(|s| serde_json::from_str(&s).ok());
+                let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
                 Ok(ThreadMeta {
                     id: row.get(0)?,
                     title: row.get(1)?,
@@ -230,8 +229,7 @@ impl Store {
         let rows = stmt
             .query_map(params![per_page as i64, offset as i64], |row| {
                 let metadata_str: Option<String> = row.get(7)?;
-                let metadata = metadata_str
-                    .and_then(|s| serde_json::from_str(&s).ok());
+                let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
                 Ok(ThreadMeta {
                     id: row.get(0)?,
                     title: row.get(1)?,
@@ -258,6 +256,40 @@ impl Store {
         })
     }
 
+    pub fn search_threads(&self, query: &str) -> Result<Vec<ThreadMeta>, StoreError> {
+        let pattern = format!("%{}%", query);
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, title, preview, session_file, model, thinking_level, pinned, metadata, created_at, updated_at \
+                 FROM threads \
+                 WHERE LOWER(title) LIKE LOWER(?1) OR LOWER(preview) LIKE LOWER(?1) \
+                 ORDER BY pinned DESC, updated_at DESC \
+                 LIMIT 200",
+            )
+            .map_err(StoreError::Rusqlite)?;
+        let rows = stmt
+            .query_map(params![pattern], |row| {
+                let metadata_str: Option<String> = row.get(7)?;
+                let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
+                Ok(ThreadMeta {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    preview: row.get(2)?,
+                    session_file: row.get(3)?,
+                    model: row.get(4)?,
+                    thinking_level: row.get(5)?,
+                    pinned: row.get::<_, i32>(6)? != 0,
+                    metadata,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                })
+            })
+            .map_err(StoreError::Rusqlite)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::Rusqlite)
+    }
+
     pub fn get_thread(&self, id: i64) -> Result<Option<ThreadMeta>, StoreError> {
         let mut stmt = self
             .conn
@@ -268,8 +300,7 @@ impl Store {
             .map_err(StoreError::Rusqlite)?;
         stmt.query_row(params![id], |row| {
             let metadata_str: Option<String> = row.get(7)?;
-            let metadata = metadata_str
-                .and_then(|s| serde_json::from_str(&s).ok());
+            let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
             Ok(ThreadMeta {
                 id: row.get(0)?,
                 title: row.get(1)?,

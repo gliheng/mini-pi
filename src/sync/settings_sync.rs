@@ -260,22 +260,23 @@ pub fn sync_changes(access_token: &str, user_id: &str) -> Result<SyncMeta, Strin
 
         for local_only in &local_set {
             if !remote_set.contains(local_only)
-                && let Some(full_path) = local_map.get(local_only) {
-                    let data = std::fs::read(full_path).map_err(|e| e.to_string())?;
-                    let content_type = content_type_for(local_only);
-                    supabase::upload_file(access_token, user_id, local_only, content_type, &data)
-                        .map_err(|e| e.to_string())?;
-                    let hash = file_hash(&data);
-                    let now = chrono::Utc::now().to_rfc3339();
-                    meta.files.insert(
-                        local_only.clone(),
-                        FileSyncInfo {
-                            hash,
-                            last_synced: now,
-                        },
-                    );
-                    changed = true;
-                }
+                && let Some(full_path) = local_map.get(local_only)
+            {
+                let data = std::fs::read(full_path).map_err(|e| e.to_string())?;
+                let content_type = content_type_for(local_only);
+                supabase::upload_file(access_token, user_id, local_only, content_type, &data)
+                    .map_err(|e| e.to_string())?;
+                let hash = file_hash(&data);
+                let now = chrono::Utc::now().to_rfc3339();
+                meta.files.insert(
+                    local_only.clone(),
+                    FileSyncInfo {
+                        hash,
+                        last_synced: now,
+                    },
+                );
+                changed = true;
+            }
         }
 
         if changed {

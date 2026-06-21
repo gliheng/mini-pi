@@ -9,7 +9,11 @@ mod ui;
 mod utils;
 mod views;
 
-use std::{collections::{HashMap, HashSet}, path::PathBuf, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use gpui::{App, AppContext, Application, Bounds, KeyBinding, px, size};
 
@@ -82,9 +86,8 @@ fn main() {
     Application::new()
         .with_assets(Assets { base: assets_dir })
         .run(move |cx: &mut App| {
-            let remote_controller = cx.new(|cx| {
-                RemoteController::new(cx, config.remote_control.clone())
-            });
+            let remote_controller =
+                cx.new(|cx| RemoteController::new(cx, config.remote_control.clone()));
 
             cx.set_global(AppStore {
                 store: store.clone(),

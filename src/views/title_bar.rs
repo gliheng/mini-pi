@@ -470,18 +470,19 @@ fn set_window_level(window: &Window, pinned: bool) {
     const NSNORMAL_WINDOW_LEVEL: isize = 0;
 
     if let Ok(handle) = HasWindowHandle::window_handle(window)
-        && let RawWindowHandle::AppKit(appkit) = handle.as_raw() {
-            let ns_view = appkit.ns_view.as_ptr() as *mut Object;
-            unsafe {
-                let ns_window: *mut Object = msg_send![ns_view, window];
-                let level = if pinned {
-                    NSFLOATING_WINDOW_LEVEL
-                } else {
-                    NSNORMAL_WINDOW_LEVEL
-                };
-                let () = msg_send![ns_window, setLevel: level];
-            }
+        && let RawWindowHandle::AppKit(appkit) = handle.as_raw()
+    {
+        let ns_view = appkit.ns_view.as_ptr() as *mut Object;
+        unsafe {
+            let ns_window: *mut Object = msg_send![ns_view, window];
+            let level = if pinned {
+                NSFLOATING_WINDOW_LEVEL
+            } else {
+                NSNORMAL_WINDOW_LEVEL
+            };
+            let () = msg_send![ns_window, setLevel: level];
         }
+    }
 }
 
 #[cfg(target_os = "windows")]

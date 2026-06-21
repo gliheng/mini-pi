@@ -36,11 +36,7 @@ impl Toast {
         self.message = message.into();
     }
 
-    pub fn set_action(
-        &mut self,
-        label: impl Into<SharedString>,
-        path: impl Into<PathBuf>,
-    ) {
+    pub fn set_action(&mut self, label: impl Into<SharedString>, path: impl Into<PathBuf>) {
         self.action_label = Some(label.into());
         self.action_path = Some(path.into());
     }
@@ -75,17 +71,12 @@ impl Toast {
 impl Render for Toast {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_action = self.action_label.is_some() && self.action_path.is_some();
-        let mut row = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_3()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(0xe5e5e5))
-                    .child(self.message.clone()),
-            );
+        let mut row = div().flex().flex_row().items_center().gap_3().child(
+            div()
+                .text_sm()
+                .text_color(rgb(0xe5e5e5))
+                .child(self.message.clone()),
+        );
 
         if has_action {
             let path = self.action_path.clone().unwrap();

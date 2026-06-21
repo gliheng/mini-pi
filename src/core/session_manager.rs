@@ -9,7 +9,6 @@ pub struct SessionManager {
     sessions: HashMap<String, Entity<SessionHandle>>,
 }
 
-
 impl SessionManager {
     pub fn new() -> Self {
         Self::default()
@@ -19,11 +18,7 @@ impl SessionManager {
         self.sessions.get(session_file).cloned()
     }
 
-    pub fn register(
-        &mut self,
-        session_file: String,
-        handle: Entity<SessionHandle>,
-    ) {
+    pub fn register(&mut self, session_file: String, handle: Entity<SessionHandle>) {
         self.sessions.insert(session_file, handle);
     }
 }

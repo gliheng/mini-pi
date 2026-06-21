@@ -348,7 +348,13 @@ mod tests {
     fn html_text_extraction_is_lightweight_chat_fallback() {
         assert_eq!(strip_html_tags("a<!-- hidden -->b"), "ab");
         assert_eq!(strip_html_tags("<span>a <b>b</b></span>"), "a b");
-        assert_eq!(strip_html_tags("keep &madeup; entity"), "keep &madeup; entity");
-        assert_eq!(strip_html_tags("Use <code>cargo test</code>"), "Use cargo test");
+        assert_eq!(
+            strip_html_tags("keep &madeup; entity"),
+            "keep &madeup; entity"
+        );
+        assert_eq!(
+            strip_html_tags("Use <code>cargo test</code>"),
+            "Use cargo test"
+        );
     }
 }

@@ -593,7 +593,10 @@ mod tests {
 
         let client = reqwest::blocking::Client::new();
         let response = client
-            .get(&format!("http://127.0.0.1:{}/threads?page=2&per_page=2", port))
+            .get(&format!(
+                "http://127.0.0.1:{}/threads?page=2&per_page=2",
+                port
+            ))
             .send()
             .expect("request should succeed");
         assert_eq!(response.status(), 200);

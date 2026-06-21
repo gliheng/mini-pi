@@ -64,11 +64,9 @@ fn animated_dot(
                         // Offset progress so dots pulse in sequence
                         let phased = (progress + phase_offset) % 1.0;
                         // Smooth sine wave: 0.3 -> 1.0 -> 0.3
-                        let opacity =
-                            0.3 + 0.7 * (phased * std::f32::consts::PI * 2.0).sin().abs();
+                        let opacity = 0.3 + 0.7 * (phased * std::f32::consts::PI * 2.0).sin().abs();
                         // Dot size bounces between 60% and 100% for a stronger pulse
-                        let scale =
-                            0.6 + 0.4 * (phased * std::f32::consts::PI * 2.0).sin().abs();
+                        let scale = 0.6 + 0.4 * (phased * std::f32::consts::PI * 2.0).sin().abs();
                         let current_size = size * scale;
                         this.opacity(opacity).w(current_size).h(current_size)
                     },

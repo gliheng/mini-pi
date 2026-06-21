@@ -7,9 +7,7 @@ use gpui::{
 };
 use pulldown_cmark::{Alignment, HeadingLevel};
 
-use super::{
-    MarkdownTheme, heading_style, highlight_code, image_source_from_url, strip_html_tags,
-};
+use super::{MarkdownTheme, heading_style, highlight_code, image_source_from_url, strip_html_tags};
 use crate::ui::markdown::parser::{
     CodeBlockKind, MarkdownEvent, MarkdownTag, MarkdownTagEnd, ParsedMarkdown,
 };
@@ -422,8 +420,11 @@ impl<'a> MarkdownElementBuilder<'a> {
                 self.flush_pending_line();
                 if let Some(Container::TableRow { cells, is_header }) = self.container_stack.pop() {
                     let row = self.render_table_row(cells, is_header);
-                    if let Some(Container::Table { header_rows, body_rows, .. }) =
-                        self.container_stack.last_mut()
+                    if let Some(Container::Table {
+                        header_rows,
+                        body_rows,
+                        ..
+                    }) = self.container_stack.last_mut()
                     {
                         if is_header {
                             header_rows.push(row);
@@ -465,9 +466,7 @@ impl<'a> MarkdownElementBuilder<'a> {
                     self.push_child(self.finalize_container(container));
                 }
             }
-            MarkdownTagEnd::Emphasis
-            | MarkdownTagEnd::Strong
-            | MarkdownTagEnd::Strikethrough => {
+            MarkdownTagEnd::Emphasis | MarkdownTagEnd::Strong | MarkdownTagEnd::Strikethrough => {
                 self.pop_text_style();
             }
             MarkdownTagEnd::Link => {
@@ -531,7 +530,10 @@ impl<'a> MarkdownElementBuilder<'a> {
     }
 
     fn push_inline_code(&mut self, text: &str, source_range: Range<usize>) {
-        if matches!(self.container_stack.last(), Some(Container::CodeBlock { .. })) {
+        if matches!(
+            self.container_stack.last(),
+            Some(Container::CodeBlock { .. })
+        ) {
             self.push_text(text, source_range);
             return;
         }
@@ -561,9 +563,11 @@ impl<'a> MarkdownElementBuilder<'a> {
                 .id(SharedString::from(format!("link-{url}")))
                 .cursor_pointer()
                 .child(element)
-                .on_click(move |_event: &gpui::ClickEvent, _window, cx: &mut gpui::App| {
-                    cx.open_url(url.as_ref());
-                })
+                .on_click(
+                    move |_event: &gpui::ClickEvent, _window, cx: &mut gpui::App| {
+                        cx.open_url(url.as_ref());
+                    },
+                )
                 .into_any_element()
         } else {
             element
@@ -607,11 +611,7 @@ impl<'a> MarkdownElementBuilder<'a> {
         self.push_child(styled);
     }
 
-    fn pending_runs_to_text_runs(
-        &self,
-        text: &str,
-        runs: &[PendingRun],
-    ) -> Vec<TextRun> {
+    fn pending_runs_to_text_runs(&self, text: &str, runs: &[PendingRun]) -> Vec<TextRun> {
         let mut result = Vec::new();
         let mut last_end = 0;
         for run in runs {
@@ -697,7 +697,14 @@ impl<'a> MarkdownElementBuilder<'a> {
                                 .min_w(px(16.))
                                 .child(marker),
                         )
-                        .child(div().flex_1().flex().flex_col().gap_1().children(item_children))
+                        .child(
+                            div()
+                                .flex_1()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .children(item_children),
+                        )
                         .into_any_element()
                 }))
                 .into_any_element(),
@@ -733,11 +740,7 @@ impl<'a> MarkdownElementBuilder<'a> {
         }
     }
 
-    fn render_code_block(
-        &self,
-        language: Option<SharedString>,
-        code: String,
-    ) -> AnyElement {
+    fn render_code_block(&self, language: Option<SharedString>, code: String) -> AnyElement {
         let code_for_copy = code.clone();
         let lang_label = language
             .clone()
@@ -825,9 +828,7 @@ impl<'a> MarkdownElementBuilder<'a> {
                             .cursor_pointer()
                             .child("Copy")
                             .on_click(
-                                move |_event: &gpui::ClickEvent,
-                                      _window,
-                                      cx: &mut gpui::App| {
+                                move |_event: &gpui::ClickEvent, _window, cx: &mut gpui::App| {
                                     cx.write_to_clipboard(ClipboardItem::new_string(
                                         code_for_copy.to_string(),
                                     ));
@@ -1014,9 +1015,7 @@ mod tests {
 
     #[test]
     fn builder_handles_list_and_blockquote() {
-        let parsed = parse_markdown(
-            "> A quote\n\n- first\n- second\n\n5. ordered start\n6. next",
-        );
+        let parsed = parse_markdown("> A quote\n\n- first\n- second\n\n5. ordered start\n6. next");
         let theme = default_theme();
         let _element = MarkdownElementBuilder::build(&parsed, &theme);
     }

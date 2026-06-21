@@ -530,7 +530,12 @@ impl EntityInputHandler for TextInput {
         let line_point = self.last_bounds?.localize(&point)?;
         let last_layout = self.last_layout.as_ref()?;
 
-        assert_eq!(last_layout.text, self.content);
+        // When the input is empty the shaped line renders the placeholder text,
+        // so hit-testing against it would return an index into the placeholder.
+        // Return the start of the (empty) content instead.
+        if self.content.is_empty() {
+            return Some(0);
+        }
         let utf8_index = last_layout.index_for_x(point.x - line_point.x)?;
         Some(self.offset_to_utf16(utf8_index))
     }
@@ -596,7 +601,10 @@ impl Element for TextElement {
         let base_color = input.text_color.unwrap_or(hsla(0., 0., 1., 1.));
 
         let (display_text, text_color) = if content.is_empty() {
-            (input.placeholder.clone(), hsla(base_color.h, base_color.s, base_color.l, 0.3))
+            (
+                input.placeholder.clone(),
+                hsla(base_color.h, base_color.s, base_color.l, 0.3),
+            )
         } else if input.password_mode {
             let bullets: SharedString = std::iter::repeat_n('*', content.chars().count())
                 .collect::<String>()

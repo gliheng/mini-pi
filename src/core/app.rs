@@ -1,8 +1,11 @@
-use std::{collections::{HashMap, HashSet}, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use gpui::{
-    AnyWindowHandle, Bounds, Entity, Global, TitlebarOptions, WindowBackgroundAppearance, WindowBounds,
-    WindowDecorations, WindowOptions, point, px,
+    AnyWindowHandle, Bounds, Entity, Global, TitlebarOptions, WindowBackgroundAppearance,
+    WindowBounds, WindowDecorations, WindowOptions, point, px,
 };
 
 use crate::auth::state::{AuthState, SupabaseSession};

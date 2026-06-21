@@ -11,6 +11,7 @@ use crate::core::actions::CloseWindow;
 use crate::core::app::{AppStore, custom_window_options};
 use crate::data::store::{PaginatedThreads, Store, ThreadMeta};
 use crate::sync::settings_sync;
+use crate::ui::input::TextInput;
 use crate::ui::loader::loader;
 use crate::utils::format::format_relative_time;
 use crate::views::chat_window::ChatWindow;
@@ -152,22 +153,17 @@ impl Render for ThreadItem {
                             ),
                     )
                     .child(
-                        div()
-                            .min_w_0()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .text_xs()
-                                    .text_color(rgb(0x666666))
-                                    .overflow_x_hidden()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .child(preview),
-                            ),
+                        div().min_w_0().flex().flex_row().items_center().child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_xs()
+                                .text_color(rgb(0x666666))
+                                .overflow_x_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .child(preview),
+                        ),
                     ),
             )
             .child(
@@ -185,12 +181,7 @@ impl Render for ThreadItem {
                                     .flex_row()
                                     .items_center()
                                     .gap_1()
-                                    .child(
-                                        div()
-                                            .size(px(6.))
-                                            .rounded_full()
-                                            .bg(rgb(0x22c55e)),
-                                    )
+                                    .child(div().size(px(6.)).rounded_full().bg(rgb(0x22c55e)))
                                     .child(
                                         div()
                                             .text_xs()
@@ -206,18 +197,8 @@ impl Render for ThreadItem {
                                     .flex_row()
                                     .items_center()
                                     .gap_1()
-                                    .child(
-                                        div()
-                                            .size(px(6.))
-                                            .rounded_full()
-                                            .bg(rgb(0x6366f1)),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(rgb(0x6366f1))
-                                            .child("New"),
-                                    ),
+                                    .child(div().size(px(6.)).rounded_full().bg(rgb(0x6366f1)))
+                                    .child(div().text_xs().text_color(rgb(0x6366f1)).child("New")),
                             )
                         })
                         .child(div().text_xs().text_color(rgb(0x666666)).child(time_label))
@@ -346,10 +327,12 @@ pub struct ThreadList {
     pub total_pages: usize,
     pub total: usize,
     pub loading_more: bool,
+    pub search_input: gpui::Entity<TextInput>,
     pub _subscription: gpui::Subscription,
     pub _titlebar_subscription: gpui::Subscription,
     pub _user_panel_subscription: gpui::Subscription,
     pub _import_prompt_subscription: gpui::Subscription,
+    pub _search_input_subscription: gpui::Subscription,
 }
 
 impl ThreadList {
@@ -427,6 +410,10 @@ impl ThreadList {
             },
         );
 
+        let search_input = cx.new(|cx| TextInput::new(cx, "Search threads..."));
+        let _search_input_subscription =
+            cx.observe(&search_input, |this, _, cx| this.load_threads(cx));
+
         let is_first = state::is_first_run();
         let has_pi_settings = import_prompt.read(cx).has_files();
         let show_import_prompt = is_first && has_pi_settings;
@@ -445,18 +432,52 @@ impl ThreadList {
             total_pages: 0,
             total: 0,
             loading_more: false,
+            search_input,
             _subscription: subscription,
             _titlebar_subscription: titlebar_subscription,
             _user_panel_subscription: user_panel_subscription,
             _import_prompt_subscription: import_prompt_subscription,
+            _search_input_subscription,
         };
         thread_list.load_threads(cx);
         thread_list
     }
 
+    fn search_query(&self, cx: &Context<Self>) -> String {
+        self.search_input
+            .read(cx)
+            .content()
+            .to_string()
+            .trim()
+            .to_lowercase()
+    }
+
+    fn is_searching(&self, cx: &Context<Self>) -> bool {
+        !self.search_query(cx).is_empty()
+    }
+
     fn load_threads(&mut self, cx: &mut Context<Self>) {
         self.page = 1;
         self.loading_more = false;
+
+        let query = self.search_query(cx);
+        if !query.is_empty() {
+            match self.store.search_threads(&query) {
+                Ok(threads) => {
+                    self.total = threads.len();
+                    self.total_pages = 0;
+                    self.sync_thread_items(&threads, cx);
+                }
+                Err(_) => {
+                    self.thread_items.clear();
+                    self.total = 0;
+                    self.total_pages = 0;
+                }
+            }
+            cx.notify();
+            return;
+        }
+
         let per_page = self.per_page.max(1);
         match self.store.list_threads_paginated(1, per_page) {
             Ok(PaginatedThreads {
@@ -485,7 +506,11 @@ impl ThreadList {
     }
 
     fn load_more_threads(&mut self, cx: &mut Context<Self>) {
-        if self.loading_more || self.total_pages == 0 || self.page >= self.total_pages {
+        if self.is_searching(cx)
+            || self.loading_more
+            || self.total_pages == 0
+            || self.page >= self.total_pages
+        {
             return;
         }
         self.loading_more = true;
@@ -597,7 +622,8 @@ impl Render for ThreadList {
 
         let (pinned, unpinned): (Vec<_>, Vec<_>) = self
             .thread_items
-            .iter().cloned()
+            .iter()
+            .cloned()
             .partition(|item| item.read(cx).thread.pinned);
 
         div()
@@ -610,6 +636,26 @@ impl Render for ThreadList {
             .size_full()
             .bg(rgb(0x1a1a1a))
             .child(self.title_bar.clone())
+            .child(
+                div()
+                    .id("thread-search-bar")
+                    .px_3()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(rgb(0x333333))
+                    .bg(rgb(0x1f1f1f))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        svg()
+                            .path("search.svg")
+                            .size(px(16.))
+                            .text_color(rgb(0x666666)),
+                    )
+                    .child(self.search_input.clone()),
+            )
             .child(
                 div()
                     .id("thread-list")

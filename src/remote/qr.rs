@@ -13,10 +13,8 @@ pub fn qr_image_source(url: &str) -> Option<ImageSource> {
             return None;
         }
     };
-    let image: ImageBuffer<Luma<u8>, Vec<u8>> = code
-        .render::<Luma<u8>>()
-        .module_dimensions(4, 4)
-        .build();
+    let image: ImageBuffer<Luma<u8>, Vec<u8>> =
+        code.render::<Luma<u8>>().module_dimensions(4, 4).build();
 
     let mut bytes = Vec::new();
     {
@@ -37,4 +35,3 @@ pub fn qr_image_source(url: &str) -> Option<ImageSource> {
         bytes,
     ))))
 }
-

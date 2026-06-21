@@ -1,15 +1,11 @@
-use std::{
-    path::PathBuf,
-    sync::Arc,
-    time::Duration,
-};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use crate::views::title_bar::{TitleBarEvent, TitleBarVariant};
 use gpui::{
-    Bounds, ClipboardItem, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    KeyDownEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, PathPromptOptions,
-    Pixels, Render, ScrollHandle, SharedString, Styled, Window, canvas, div, fill, point,
-    prelude::*, px, rgb, svg,
+    Bounds, ClipboardItem, Context, Entity, FocusHandle, Focusable, InteractiveElement,
+    IntoElement, KeyDownEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+    PathPromptOptions, Pixels, Render, ScrollHandle, SharedString, Styled, Window, canvas, div,
+    fill, point, prelude::*, px, rgb, svg,
 };
 
 use crate::config::model_config::{all_models, model_display_name};
@@ -69,9 +65,8 @@ impl ChatWindow {
                 }
             })
             .unwrap_or_else(|| "New Thread".into());
-        let chat_input = cx.new(|cx| {
-            TextArea::new(cx, "Type a message...").with_text_color(rgb(0xe5e5e5))
-        });
+        let chat_input =
+            cx.new(|cx| TextArea::new(cx, "Type a message...").with_text_color(rgb(0xe5e5e5)));
         let title_bar = cx.new(|_| TitleBar::new(title.clone(), TitleBarVariant::Chat));
 
         let thread_id = thread.map(|t| t.id);
@@ -228,19 +223,20 @@ impl ChatWindow {
                         .unwrap_or_default();
                     cx.spawn(async move |_, cx| {
                         if let Ok(Ok(Some(paths))) = rx.await
-                            && let Some(dir) = paths.first() {
-                                let file_name = session_file
-                                    .rsplit_once('.')
-                                    .map(|(name, _)| format!("{}.html", name))
-                                    .unwrap_or_else(|| "session.html".to_string());
-                                let output_path = dir.join(&file_name);
-                                let path_str = output_path.to_string_lossy().to_string();
-                                if let Some(ref s) = session {
-                                    let _ = s.update(cx, |session, _cx| {
-                                        session.export_html(&path_str);
-                                    });
-                                }
+                            && let Some(dir) = paths.first()
+                        {
+                            let file_name = session_file
+                                .rsplit_once('.')
+                                .map(|(name, _)| format!("{}.html", name))
+                                .unwrap_or_else(|| "session.html".to_string());
+                            let output_path = dir.join(&file_name);
+                            let path_str = output_path.to_string_lossy().to_string();
+                            if let Some(ref s) = session {
+                                let _ = s.update(cx, |session, _cx| {
+                                    session.export_html(&path_str);
+                                });
                             }
+                        }
                     })
                     .detach();
                 }
@@ -351,7 +347,9 @@ impl ChatWindow {
     }
 
     fn sync_from_session(&mut self, cx: &mut Context<Self>) {
-        let Some(ref session) = self.session else { return };
+        let Some(ref session) = self.session else {
+            return;
+        };
         let s = session.read(cx);
         let messages = s.messages.clone();
         let state = s.state.clone();
@@ -417,29 +415,30 @@ impl ChatWindow {
         });
         cx.spawn(async move |weak, cx| {
             if let Ok(Ok(Some(paths))) = rx.await
-                && let Some(path) = paths.first() {
-                    let name = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("Workspace")
-                        .to_string();
-                    let path_str = path.to_string_lossy().to_string();
-                    match store.create_workspace(&name, &path_str) {
-                        Ok(workspace) => {
-                            let ws_id = workspace.id;
-                            let _ = weak.update(cx, |window, cx| {
-                                window.workspaces.push(workspace);
-                                Self::sort_workspaces(&mut window.workspaces);
-                                window.selected_workspace_id = Some(ws_id);
-                                window.sync_workspace_manager(cx);
-                                cx.notify();
-                            });
-                        }
-                        Err(e) => {
-                            eprintln!("[mini-pi] failed to create workspace: {}", e);
-                        }
+                && let Some(path) = paths.first()
+            {
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("Workspace")
+                    .to_string();
+                let path_str = path.to_string_lossy().to_string();
+                match store.create_workspace(&name, &path_str) {
+                    Ok(workspace) => {
+                        let ws_id = workspace.id;
+                        let _ = weak.update(cx, |window, cx| {
+                            window.workspaces.push(workspace);
+                            Self::sort_workspaces(&mut window.workspaces);
+                            window.selected_workspace_id = Some(ws_id);
+                            window.sync_workspace_manager(cx);
+                            cx.notify();
+                        });
+                    }
+                    Err(e) => {
+                        eprintln!("[mini-pi] failed to create workspace: {}", e);
                     }
                 }
+            }
         })
         .detach();
     }
@@ -509,8 +508,7 @@ impl ChatWindow {
         });
 
         cx.update_global(|app: &mut AppStore, _| {
-            app.session_manager
-                .register(session_file, handle.clone());
+            app.session_manager.register(session_file, handle.clone());
         });
 
         handle
@@ -530,13 +528,7 @@ impl ChatWindow {
             });
         let model = self.selected_model.clone();
         let thinking_level = self.thinking_level.clone();
-        let session = Self::get_or_create_session(
-            None,
-            workspace_info,
-            model,
-            thinking_level,
-            cx,
-        );
+        let session = Self::get_or_create_session(None, workspace_info, model, thinking_level, cx);
         self.attach_session(session, cx);
         self.session.is_some()
     }
@@ -717,21 +709,22 @@ impl ChatWindow {
 
     fn start_edit_message(&mut self, msg_id: String, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(msg) = self.messages.iter().find(|m| m.id == msg_id)
-            && let Some(MessagePart::Text { text, .. }) = msg.parts.first() {
-                self.editing_message_id = Some(msg_id);
-                let text = text.clone();
-                let inline_input = cx.new(|cx| {
-                    TextArea::new(cx, "Edit message...")
-                        .with_at_mention(false)
-                        .with_slash_commands(false)
-                });
-                inline_input.update(cx, |ci, cx| {
-                    ci.set_content(text, cx);
-                });
-                inline_input.focus_handle(cx).focus(window);
-                self.inline_edit_input = Some(inline_input);
-                cx.notify();
-            }
+            && let Some(MessagePart::Text { text, .. }) = msg.parts.first()
+        {
+            self.editing_message_id = Some(msg_id);
+            let text = text.clone();
+            let inline_input = cx.new(|cx| {
+                TextArea::new(cx, "Edit message...")
+                    .with_at_mention(false)
+                    .with_slash_commands(false)
+            });
+            inline_input.update(cx, |ci, cx| {
+                ci.set_content(text, cx);
+            });
+            inline_input.focus_handle(cx).focus(window);
+            self.inline_edit_input = Some(inline_input);
+            cx.notify();
+        }
     }
 
     fn render_at_mention_popup(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1124,7 +1117,8 @@ impl Render for ChatWindow {
             for (part_idx, part) in msg.parts.iter().enumerate() {
                 if let MessagePart::Reasoning { text, .. } = part {
                     if msg_idx >= self.reasoning_displays.len() {
-                        self.reasoning_displays.resize_with(msg_idx + 1, std::vec::Vec::new);
+                        self.reasoning_displays
+                            .resize_with(msg_idx + 1, std::vec::Vec::new);
                     }
                     let row = &mut self.reasoning_displays[msg_idx];
                     if part_idx >= row.len() {
@@ -1171,7 +1165,8 @@ impl Render for ChatWindow {
                 if is_assistant && matches!(part, MessagePart::Text { .. }) {
                     if let MessagePart::Text { text, .. } = part {
                         if msg_idx >= self.markdown_displays.len() {
-                            self.markdown_displays.resize_with(msg_idx + 1, std::vec::Vec::new);
+                            self.markdown_displays
+                                .resize_with(msg_idx + 1, std::vec::Vec::new);
                         }
                         let row = &mut self.markdown_displays[msg_idx];
                         if part_idx >= row.len() {

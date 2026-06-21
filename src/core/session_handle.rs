@@ -80,13 +80,14 @@ impl SessionHandle {
         };
 
         if let Some(tid) = thread_id
-            && let Ok(Some(thread)) = handle.store.get_thread(tid) {
-                handle.title = if thread.title.is_empty() {
-                    "New Thread".into()
-                } else {
-                    thread.title.into()
-                };
-            }
+            && let Ok(Some(thread)) = handle.store.get_thread(tid)
+        {
+            handle.title = if thread.title.is_empty() {
+                "New Thread".into()
+            } else {
+                thread.title.into()
+            };
+        }
 
         handle.spawn_pi(restore_history, cx);
         handle
@@ -120,12 +121,16 @@ impl SessionHandle {
                 );
             }
             if let Some(ref mut rpc) = self.rpc
-                && let Some((provider, model_id)) = parse_model_id(id) {
-                    eprintln!("[mini-pi] setting model: provider={} model={}", provider, model_id);
-                    if let Err(e) = rpc.send_set_model(provider, model_id, None) {
-                        eprintln!("[mini-pi] send_set_model failed: {}", e);
-                    }
+                && let Some((provider, model_id)) = parse_model_id(id)
+            {
+                eprintln!(
+                    "[mini-pi] setting model: provider={} model={}",
+                    provider, model_id
+                );
+                if let Err(e) = rpc.send_set_model(provider, model_id, None) {
+                    eprintln!("[mini-pi] send_set_model failed: {}", e);
                 }
+            }
         }
         cx.emit(SessionEvent::Changed);
     }
@@ -146,9 +151,10 @@ impl SessionHandle {
                 );
             }
             if let Some(ref mut rpc) = self.rpc
-                && let Err(e) = rpc.send_set_thinking_level(id, None) {
-                    eprintln!("[mini-pi] send_set_thinking_level failed: {}", e);
-                }
+                && let Err(e) = rpc.send_set_thinking_level(id, None)
+            {
+                eprintln!("[mini-pi] send_set_thinking_level failed: {}", e);
+            }
         }
         cx.emit(SessionEvent::Changed);
     }
@@ -157,20 +163,15 @@ impl SessionHandle {
         self.workspace = Some(workspace);
     }
 
-    pub fn send_message(
-        &mut self,
-        content: SharedString,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn send_message(&mut self, content: SharedString, cx: &mut Context<Self>) {
         eprintln!("[mini-pi] send_message: {} chars", content.len());
         if content.is_empty() {
             return;
         }
 
-        if self.rpc.is_none()
-            && !self.spawn_pi(false, cx) {
-                return;
-            }
+        if self.rpc.is_none() && !self.spawn_pi(false, cx) {
+            return;
+        }
 
         self.messages.push(Message {
             id: Uuid::new_v4().to_string(),
@@ -259,9 +260,16 @@ impl SessionHandle {
                 .unwrap_or_default()
         };
         let preview: String = content.chars().take(120).collect();
-        let _ = self
-            .store
-            .update_thread(tid, Some(&title), Some(&preview), None, None, None, None, None);
+        let _ = self.store.update_thread(
+            tid,
+            Some(&title),
+            Some(&preview),
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
 
         self.state = ChatState::Streaming;
 
@@ -278,10 +286,9 @@ impl SessionHandle {
         content: SharedString,
         cx: &mut Context<Self>,
     ) {
-        if self.rpc.is_none()
-            && !self.spawn_pi(false, cx) {
-                return;
-            }
+        if self.rpc.is_none() && !self.spawn_pi(false, cx) {
+            return;
+        }
 
         let Some(edit_idx) = self.messages.iter().position(|m| m.id == message_id) else {
             eprintln!("[mini-pi] edited message {} not found", message_id);
@@ -332,9 +339,9 @@ impl SessionHandle {
         }
         if let Some(tid) = self.thread_id {
             let preview: String = content.chars().take(120).collect();
-            let _ = self
-                .store
-                .update_thread(tid, None, Some(&preview), None, None, None, None, None);
+            let _ =
+                self.store
+                    .update_thread(tid, None, Some(&preview), None, None, None, None, None);
         }
         self.state = ChatState::Streaming;
         if let Some(ref mut rpc) = self.rpc {
@@ -365,9 +372,10 @@ impl SessionHandle {
 
     pub fn export_html(&mut self, output_path: &str) {
         if let Some(ref mut rpc) = self.rpc
-            && let Err(e) = rpc.send_export_html(Some(output_path), None) {
-                eprintln!("[mini-pi] send_export_html failed: {}", e);
-            }
+            && let Err(e) = rpc.send_export_html(Some(output_path), None)
+        {
+            eprintln!("[mini-pi] send_export_html failed: {}", e);
+        }
     }
 
     fn spawn_pi(&mut self, restoring: bool, cx: &mut Context<Self>) -> bool {
@@ -380,10 +388,7 @@ impl SessionHandle {
         };
 
         let session_path = self.store.sessions_dir().join(&self.session_file);
-        let workspace_dir: Option<PathBuf> = self
-            .workspace
-            .as_ref()
-            .map(|ws| ws.path.clone());
+        let workspace_dir: Option<PathBuf> = self.workspace.as_ref().map(|ws| ws.path.clone());
 
         let session_id = self.session_file.clone();
         let rx = match bridge.create_session(
@@ -418,23 +423,22 @@ impl SessionHandle {
         }
 
         if let Some(ref level) = self.thinking_level
-            && let Err(e) = rpc.send_set_thinking_level(level, None) {
-                eprintln!("[mini-pi] send_set_thinking_level failed: {}", e);
-            }
+            && let Err(e) = rpc.send_set_thinking_level(level, None)
+        {
+            eprintln!("[mini-pi] send_set_thinking_level failed: {}", e);
+        }
 
         let weak = cx.entity().downgrade();
         let task = cx.spawn(async move |_, cx: &mut gpui::AsyncApp| {
             let mut rx = rx;
             while let Some(event) = rx.next().await {
-                let result = weak.update(cx, |session, cx| {
-                    session.handle_bridge_event(event, cx)
-                });
+                let result = weak.update(cx, |session, cx| session.handle_bridge_event(event, cx));
                 match result {
                     Ok((streaming_changed, new_activity)) => {
                         if streaming_changed || new_activity {
-                            let (thread_id, is_streaming) = match weak
-                                .update(cx, |session, _cx| (session.thread_id, session.is_streaming()))
-                            {
+                            let (thread_id, is_streaming) = match weak.update(cx, |session, _cx| {
+                                (session.thread_id, session.is_streaming())
+                            }) {
                                 Ok(v) => v,
                                 Err(_) => break,
                             };
@@ -476,16 +480,9 @@ impl SessionHandle {
                 .unwrap_or_else(|| serde_json::json!({}));
             let mut md = md;
             md["has_new_activity"] = serde_json::Value::Bool(value);
-            let _ = self.store.update_thread(
-                tid,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(Some(&md)),
-            );
+            let _ =
+                self.store
+                    .update_thread(tid, None, None, None, None, None, None, Some(Some(&md)));
         }
     }
 
@@ -1036,11 +1033,7 @@ impl SessionHandle {
         (streaming_changed, new_activity)
     }
 
-    fn load_messages(
-        &mut self,
-        messages: Vec<LoadedMessage>,
-        cx: &mut Context<Self>,
-    ) {
+    fn load_messages(&mut self, messages: Vec<LoadedMessage>, cx: &mut Context<Self>) {
         eprintln!("[mini-pi] loaded {} messages from history", messages.len());
         self.messages.clear();
         for msg in messages {
@@ -1116,14 +1109,15 @@ impl SessionHandle {
                     for part in msg.parts {
                         if let LoadedPart::ToolResult { name, output } = part
                             && let Some(last_msg) = self.messages.last_mut()
-                                && matches!(last_msg.role, Role::Assistant) {
-                                    last_msg.parts.push(MessagePart::ToolResult {
-                                        tool_call_id: SharedString::from(""),
-                                        name: name.into(),
-                                        output: output.into(),
-                                        state: Some(PartState::Done),
-                                    });
-                                }
+                            && matches!(last_msg.role, Role::Assistant)
+                        {
+                            last_msg.parts.push(MessagePart::ToolResult {
+                                tool_call_id: SharedString::from(""),
+                                name: name.into(),
+                                output: output.into(),
+                                state: Some(PartState::Done),
+                            });
+                        }
                     }
                 }
                 _ => {}
@@ -1205,9 +1199,11 @@ impl SessionHandle {
                             text: existing_text,
                             state,
                             ..
-                        }) = target.parts.iter_mut().find(|p| {
-                            matches!(p, MessagePart::Text { .. })
-                        }) {
+                        }) = target
+                            .parts
+                            .iter_mut()
+                            .find(|p| matches!(p, MessagePart::Text { .. }))
+                        {
                             *existing_text = text;
                             *state = Some(PartState::Done);
                         } else {
@@ -1217,14 +1213,20 @@ impl SessionHandle {
                             });
                         }
                     }
-                    MessagePart::Reasoning { text, provider_metadata, .. } => {
+                    MessagePart::Reasoning {
+                        text,
+                        provider_metadata,
+                        ..
+                    } => {
                         if let Some(MessagePart::Reasoning {
                             text: existing_text,
                             state,
                             ..
-                        }) = target.parts.iter_mut().find(|p| {
-                            matches!(p, MessagePart::Reasoning { .. })
-                        }) {
+                        }) = target
+                            .parts
+                            .iter_mut()
+                            .find(|p| matches!(p, MessagePart::Reasoning { .. }))
+                        {
                             *existing_text = text;
                             *state = Some(PartState::Done);
                         } else {

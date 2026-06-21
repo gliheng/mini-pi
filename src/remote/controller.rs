@@ -824,12 +824,7 @@ impl RemoteController {
         cx.notify();
     }
 
-    fn set_tunnel_log(
-        &mut self,
-        level: String,
-        message: String,
-        cx: &mut Context<Self>,
-    ) {
+    fn set_tunnel_log(&mut self, level: String, message: String, cx: &mut Context<Self>) {
         self.tunnel_log = Some(TunnelLog { level, message });
         cx.emit(RemoteControllerEvent::StatusChanged);
         cx.notify();
@@ -1538,12 +1533,11 @@ mod tests {
             types.push(kind);
         }
 
-        assert_eq!(
-            types,
-            vec!["start", "finish-step", "finish", "[DONE]"]
-        );
+        assert_eq!(types, vec!["start", "finish-step", "finish", "[DONE]"]);
         assert!(
-            types.iter().all(|t| t != "text-start" && t != "text-delta" && t != "text-end"),
+            types
+                .iter()
+                .all(|t| t != "text-start" && t != "text-delta" && t != "text-end"),
             "empty assistant message should not emit text chunks"
         );
     }
@@ -1555,8 +1549,7 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let mut stream = AiSubmitStream::new(1, tx, HashSet::new());
         let empty = assistant_empty("assistant-1");
-        let streaming =
-            assistant_with_text("assistant-1", "hello", Some(PartState::Streaming));
+        let streaming = assistant_with_text("assistant-1", "hello", Some(PartState::Streaming));
         let done = assistant_with_text("assistant-1", "hello", Some(PartState::Done));
 
         assert!(stream.update(&[empty], &ChatState::Streaming));
@@ -1647,7 +1640,8 @@ mod tests {
             ],
         };
         let second_empty = assistant_empty("second");
-        let second_with_text = assistant_with_text("second", "腾讯股价...", Some(PartState::Streaming));
+        let second_with_text =
+            assistant_with_text("second", "腾讯股价...", Some(PartState::Streaming));
         let second_done = assistant_with_text("second", "腾讯股价...", Some(PartState::Done));
 
         assert!(stream.update(&[first.clone()], &ChatState::Streaming));

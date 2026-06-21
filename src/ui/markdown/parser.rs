@@ -267,9 +267,7 @@ pub fn parse_markdown_with_options(source: &str, options: ParseOptions) -> Parse
                             extract_code_block_content_range(&source[range.clone()]);
                         let content_range =
                             range.start + content_range.start..range.start + content_range.end;
-                        let line_count = source[content_range.clone()]
-                            .lines()
-                            .count();
+                        let line_count = source[content_range.clone()].lines().count();
                         let is_fenced_closed = is_fenced_code_block_closed(&source[range.clone()]);
 
                         MarkdownTag::CodeBlock {
@@ -979,9 +977,7 @@ mod tests {
         let parsed = parse_markdown(source);
 
         let metadata = parsed.events.iter().find_map(|(_, event)| match event {
-            MarkdownEvent::Start(MarkdownTag::CodeBlock { metadata, .. }) => {
-                Some(metadata.clone())
-            }
+            MarkdownEvent::Start(MarkdownTag::CodeBlock { metadata, .. }) => Some(metadata.clone()),
             _ => None,
         });
 
@@ -1020,9 +1016,7 @@ mod tests {
         let parsed = parse_markdown(source);
 
         let metadata = parsed.events.iter().find_map(|(_, event)| match event {
-            MarkdownEvent::Start(MarkdownTag::CodeBlock { metadata, .. }) => {
-                Some(metadata.clone())
-            }
+            MarkdownEvent::Start(MarkdownTag::CodeBlock { metadata, .. }) => Some(metadata.clone()),
             _ => None,
         });
 

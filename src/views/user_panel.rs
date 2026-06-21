@@ -9,9 +9,9 @@ use gpui::{
 use crate::auth::state::{self, AuthState};
 use crate::auth::supabase;
 use crate::core::app::AppStore;
+use crate::remote::RemoteStatus;
 use crate::remote::controller::TunnelLog;
 use crate::remote::qr::qr_image_source;
-use crate::remote::RemoteStatus;
 use crate::sync::settings_sync;
 use crate::ui::input::TextInput;
 use crate::ui::toast::Toast;
@@ -432,7 +432,11 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                         .w(px(44.))
                         .h(px(24.))
                         .rounded_full()
-                        .bg(if enabled { rgb(0x6366f1) } else { rgb(0x444444) })
+                        .bg(if enabled {
+                            rgb(0x6366f1)
+                        } else {
+                            rgb(0x444444)
+                        })
                         .when(!is_busy, |s| s.cursor_pointer())
                         .when(is_busy, |s| s.opacity(0.6))
                         .child(
@@ -450,7 +454,8 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                                 if let Some(controller) =
                                     cx.global::<AppStore>().remote_controller.clone()
                                 {
-                                    controller.update(cx, |c, cx| c.set_enabled(!c.is_enabled(), cx));
+                                    controller
+                                        .update(cx, |c, cx| c.set_enabled(!c.is_enabled(), cx));
                                 }
                             }))
                         }),
@@ -556,7 +561,9 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                             this.child(gpui::img(source).size(px(160.)))
                         })
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(tunnel_for_copy.clone()));
+                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                tunnel_for_copy.clone(),
+                            ));
                             this.toast.update(cx, |toast, cx| {
                                 toast.set_message("URL copied to clipboard");
                                 toast.show_for(Duration::from_secs(3), cx);
@@ -588,12 +595,7 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .child("Remote control failed"),
                 )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(0xfca5a5))
-                        .child(err),
-                ),
+                .child(div().text_xs().text_color(rgb(0xfca5a5)).child(err)),
         );
     }
 
