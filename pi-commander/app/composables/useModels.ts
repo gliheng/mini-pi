@@ -5,7 +5,6 @@ import { toModelItems, type ModelItem } from '#shared/utils/models'
 export function useModels() {
   const remote = usePiRemote()
   const model = useCookie<string>('model', { default: () => '' })
-
   const { data: apiModels, status, error } = useAsyncData<PiModel[]>(
     'pi-models',
     () => remote.listModels(),
@@ -29,6 +28,7 @@ export function useModels() {
 
   return {
     models,
+    rawModels: apiModels,
     model,
     status,
     error

@@ -41,6 +41,10 @@ pub enum RemoteCommand {
         thread_id: String,
         model_id: String,
     },
+    SetThinkingLevel {
+        thread_id: String,
+        thinking_level: String,
+    },
     SetWorkspace {
         thread_id: String,
         workspace_id: String,
@@ -95,6 +99,11 @@ pub struct SendMessageBody {
 #[derive(Debug, Deserialize)]
 pub struct SetModelBody {
     pub model_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetThinkingLevelBody {
+    pub thinking_level: String,
 }
 
 #[derive(Debug, Deserialize)]

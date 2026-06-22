@@ -16,7 +16,7 @@ const settings = usePiRemoteSettingsModal()
 const toast = useToast()
 
 const canUseVoice = computed(() =>
-  voice.supported.value
+  voice.supported
   && !loading.value
 )
 

@@ -21,7 +21,7 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::remote::auth::require_bearer_token;
 use crate::remote::types::{
     CommandEnvelope, CreateThreadBody, RemoteCommand, RemoteResponse, SendMessageBody,
-    SetModelBody, SetWorkspaceBody,
+    SetModelBody, SetThinkingLevelBody, SetWorkspaceBody,
 };
 
 const BODY_LIMIT_BYTES: usize = 1024 * 1024; // 1 MiB
@@ -116,6 +116,7 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/threads/:id/message", post(send_message))
         .route("/threads/:id/abort", post(abort))
         .route("/threads/:id/model", post(set_model))
+        .route("/threads/:id/thinking-level", post(set_thinking_level))
         .route("/threads/:id/workspace", post(set_workspace))
         .layer(DefaultBodyLimit::max(BODY_LIMIT_BYTES))
         .layer(cors)
@@ -292,6 +293,30 @@ async fn set_model(
         RemoteCommand::SetModel {
             thread_id,
             model_id: payload.model_id,
+        },
+        &state.command_sender,
+    )
+    .await;
+    json_response(http_status_for(&value, 200), value)
+}
+
+async fn set_thinking_level(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Response {
+    let thread_id = match parse_thread_id(&id) {
+        Ok(id) => id,
+        Err(response) => return response.into(),
+    };
+    let payload: SetThinkingLevelBody = match parse_json_body(&body) {
+        Ok(p) => p,
+        Err(response) => return response.into(),
+    };
+    let value = send_command(
+        RemoteCommand::SetThinkingLevel {
+            thread_id,
+            thinking_level: payload.thinking_level,
         },
         &state.command_sender,
     )

@@ -44,9 +44,9 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  const CLOUDFLARE_API_KEY = import.meta.env.CLOUDFLARE_API_KEY
-  const CLOUDFLARE_ACCOUNT_ID = import.meta.env.CLOUDFLARE_ACCOUNT_ID
-  const CLOUDFLARE_GATEWAY_ID = import.meta.env.CLOUDFLARE_GATEWAY_ID
+  const CLOUDFLARE_API_KEY = process.env.CLOUDFLARE_API_KEY
+  const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID
+  const CLOUDFLARE_GATEWAY_ID = process.env.CLOUDFLARE_GATEWAY_ID
 
   if (!CLOUDFLARE_API_KEY || !CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_GATEWAY_ID) {
     throw createError({
@@ -55,7 +55,7 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  const { base64, format } = parseDataUrl(dataUrl)
+  // const { base64, format } = parseDataUrl(dataUrl)
 
   const openai = new OpenAI({
     apiKey: CLOUDFLARE_API_KEY,
@@ -72,8 +72,7 @@ export default defineEventHandler(async (event) => {
             {
               type: 'input_audio',
               input_audio: {
-                data: base64,
-                format
+                data: dataUrl
               }
             }
           ]

@@ -1,14 +1,24 @@
 {
-  "name": "pi-commander",
-  "main": "./.output/server/index.mjs",
-  "compatibility_date": "2025-06-18",
-  "compatibility_flags": ["nodejs_compat"],
-  "assets": {
-    "directory": "./.output/public",
-    "binding": "ASSETS"
-  },
-  "vars": {
-    "CLOUDFLARE_ACCOUNT_ID": "c963aaaebd80b17d39cc4789854876f8",
-    "CLOUDFLARE_GATEWAY_ID": "pub"
-  }
+	"name": "pi-commander",
+	"main": "./.output/server/index.mjs",
+	"compatibility_date": "2025-06-18",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"assets": {
+		"directory": "./.output/public",
+		"binding": "ASSETS"
+	},
+	"vars": {},
+	"routes": [
+		{
+			"pattern": "pi.raven-ai.one",
+			"zone_name": "raven-ai.one",
+			"custom_domain": true,
+			"enabled": true,
+			"previews_enabled": false
+		}
+	],
+	"workers_dev": true,
+	"preview_urls": true,
 }

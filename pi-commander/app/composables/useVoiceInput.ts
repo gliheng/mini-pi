@@ -5,7 +5,7 @@ export interface VoiceInputState {
   isTranscribing: Ref<boolean>
   isSpeaking: Ref<boolean>
   error: Ref<string | null>
-  supported: ComputedRef<boolean>
+  supported: boolean
   startRecording: () => Promise<void>
   stopRecording: () => Promise<Blob>
   transcribe: (blob: Blob) => Promise<string>
@@ -19,17 +19,13 @@ export function useVoiceInput(): VoiceInputState {
 
   const vad = useVad()
 
-  const supported = computed(() => {
-    return typeof navigator !== 'undefined'
-      && !!navigator.mediaDevices?.getUserMedia
-      && typeof AudioContext !== 'undefined'
-      && typeof AudioContext.prototype.audioWorklet !== 'undefined'
-  })
+  // Change later
+  const supported = true
 
   let voiceSegments: Float32Array[] = []
 
   async function startRecording(): Promise<void> {
-    if (!supported.value) {
+    if (!supported) {
       throw new Error('Voice input is not supported in this browser.')
     }
 

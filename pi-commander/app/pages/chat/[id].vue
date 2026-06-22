@@ -17,11 +17,12 @@ const chatError = ref<Error | undefined>(undefined)
 const input = ref('')
 const title = ref<string | null>(null)
 const loadingThread = ref(true)
+const { level: thinkingLevel, setLevel: setThinkingLevel } = useThinkingLevel()
 
 let activeAbortController: AbortController | null = null
 
 const canUseVoice = computed(() =>
-  voice.supported.value
+  voice.supported
   && status.value !== 'streaming'
   && status.value !== 'submitted'
 )
@@ -77,6 +78,17 @@ onMounted(async () => {
     return
   }
   await loadThread()
+  if (thinkingLevel.value) {
+    try {
+      await setThinkingLevel(threadId.value, thinkingLevel.value)
+    } catch (err) {
+      toast.add({
+        description: err instanceof Error ? err.message : String(err),
+        icon: 'i-lucide-alert-circle',
+        color: 'error'
+      })
+    }
+  }
   const pendingPrompt = useState<string | null>(`pending-prompt-${threadId.value}`, () => null)
   if (pendingPrompt.value) {
     const text = pendingPrompt.value
@@ -169,6 +181,19 @@ watch(model, async (newModel) => {
     })
   }
 })
+
+watch(thinkingLevel, async (newLevel) => {
+  if (!threadId.value || !newLevel || loadingThread.value) return
+  try {
+    await setThinkingLevel(threadId.value, newLevel)
+  } catch (err) {
+    toast.add({
+      description: err instanceof Error ? err.message : String(err),
+      icon: 'i-lucide-alert-circle',
+      color: 'error'
+    })
+  }
+})
 </script>
 
 <template>
@@ -230,6 +255,7 @@ watch(model, async (newModel) => {
             <template #footer>
               <div class="flex items-center gap-1">
                 <ModelSelect />
+                <ThinkingLevelSelect />
               </div>
 
               <div class="flex items-center gap-1">

@@ -53,6 +53,7 @@ export interface PiModel {
   provider: string
   id: string
   name: string
+  thinking_level_map?: Record<string, string | null> | null
 }
 
 export interface PiWorkspace {

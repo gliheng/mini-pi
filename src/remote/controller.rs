@@ -877,6 +877,10 @@ impl RemoteController {
                 thread_id,
                 model_id,
             } => self.set_model(thread_id, model_id, cx),
+            RemoteCommand::SetThinkingLevel {
+                thread_id,
+                thinking_level,
+            } => self.set_thinking_level(thread_id, thinking_level, cx),
             RemoteCommand::SetWorkspace {
                 thread_id,
                 workspace_id,
@@ -904,6 +908,7 @@ impl RemoteController {
                     "provider": provider,
                     "id": id,
                     "name": m.name,
+                    "thinking_level_map": m.thinking_level_map,
                 }))
             })
             .collect();
@@ -1183,6 +1188,23 @@ impl RemoteController {
         if let Some(session) = self.find_session(&thread_id, cx) {
             if let Some(session) = session.upgrade() {
                 session.update(cx, |session, cx| session.set_model(Some(model_id), cx));
+                return json!({ "status": "ok" });
+            }
+        }
+        json!({ "error": "thread not found" })
+    }
+
+    fn set_thinking_level(
+        &self,
+        thread_id: String,
+        thinking_level: String,
+        cx: &mut Context<Self>,
+    ) -> RemoteResponse {
+        if let Some(session) = self.find_session(&thread_id, cx) {
+            if let Some(session) = session.upgrade() {
+                session.update(cx, |session, cx| {
+                    session.set_thinking_level(Some(thinking_level), cx);
+                });
                 return json!({ "status": "ok" });
             }
         }
