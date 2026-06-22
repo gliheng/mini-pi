@@ -6,5 +6,9 @@
   "assets": {
     "directory": "./.output/public",
     "binding": "ASSETS"
+  },
+  "vars": {
+    "CLOUDFLARE_ACCOUNT_ID": "c963aaaebd80b17d39cc4789854876f8",
+    "CLOUDFLARE_GATEWAY_ID": "pub"
   }
 }
