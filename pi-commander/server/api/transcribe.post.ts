@@ -1,8 +1,5 @@
 import OpenAI from 'openai'
 
-const CLOUDFLARE_API_KEY = process.env.CLOUDFLARE_API_KEY
-const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID
-const CLOUDFLARE_GATEWAY_ID = process.env.CLOUDFLARE_GATEWAY_ID
 const MODEL = 'custom-xiaomi/mimo-v2.5-asr'
 
 function parseDataUrl(dataUrl: string): { mimeType: string, base64: string, format: string } {
@@ -44,6 +41,17 @@ export default defineEventHandler(async (event) => {
     throw createError({
       statusCode: 400,
       statusMessage: 'Invalid or missing dataUrl.'
+    })
+  }
+
+  const CLOUDFLARE_API_KEY = import.meta.env.CLOUDFLARE_API_KEY
+  const CLOUDFLARE_ACCOUNT_ID = import.meta.env.CLOUDFLARE_ACCOUNT_ID
+  const CLOUDFLARE_GATEWAY_ID = import.meta.env.CLOUDFLARE_GATEWAY_ID
+
+  if (!CLOUDFLARE_API_KEY || !CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_GATEWAY_ID) {
+    throw createError({
+      statusCode: 500,
+      statusMessage: 'Missing Cloudflare gateway configuration.'
     })
   }
 
