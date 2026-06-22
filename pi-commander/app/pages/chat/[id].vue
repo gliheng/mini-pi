@@ -230,7 +230,9 @@ watch(model, async (newModel) => {
             <template #footer>
               <div class="flex items-center gap-1">
                 <ModelSelect />
+              </div>
 
+              <div class="flex items-center gap-1">
                 <UButton
                   :icon="voice.isRecording.value ? 'i-lucide-square' : 'i-lucide-mic'"
                   :color="voice.isRecording.value ? 'error' : 'neutral'"
@@ -241,14 +243,14 @@ watch(model, async (newModel) => {
                   :aria-label="voice.isRecording.value ? 'Stop recording' : 'Start voice input'"
                   @click="toggleVoiceInput"
                 />
-              </div>
 
-              <UChatPromptSubmit
-                :status="status"
-                color="neutral"
-                size="sm"
-                @stop="handleAbort"
-              />
+                <UChatPromptSubmit
+                  :status="status"
+                  color="neutral"
+                  size="sm"
+                  @stop="handleAbort"
+                />
+              </div>
             </template>
           </UChatPrompt>
         </template>

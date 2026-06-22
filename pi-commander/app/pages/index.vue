@@ -10,9 +10,43 @@ const selectedWorkspaceId = ref<string | null>(null)
 
 const config = usePiRemoteConfig()
 const remote = usePiRemote()
+const voice = useVoiceInput()
 const { model } = useModels()
 const settings = usePiRemoteSettingsModal()
 const toast = useToast()
+
+const canUseVoice = computed(() =>
+  voice.supported.value
+  && !loading.value
+)
+
+async function toggleVoiceInput() {
+  if (voice.isRecording.value) {
+    try {
+      const blob = await voice.stopRecording()
+      const text = await voice.transcribe(blob)
+      input.value = input.value.trimEnd()
+      input.value = input.value ? `${input.value} ${text}` : text
+    } catch (err) {
+      toast.add({
+        description: err instanceof Error ? err.message : String(err),
+        icon: 'i-lucide-alert-circle',
+        color: 'error'
+      })
+    }
+    return
+  }
+
+  try {
+    await voice.startRecording()
+  } catch (err) {
+    toast.add({
+      description: err instanceof Error ? err.message : String(err),
+      icon: 'i-lucide-alert-circle',
+      color: 'error'
+    })
+  }
+}
 
 async function openSettings() {
   await settings.open()
@@ -203,7 +237,20 @@ async function onSubmit() {
               <ModelSelect />
             </div>
 
-            <UChatPromptSubmit color="neutral" size="sm" :disabled="loading || !selectedWorkspaceId" />
+            <div class="flex items-center gap-1">
+              <UButton
+                :icon="voice.isRecording.value ? 'i-lucide-square' : 'i-lucide-mic'"
+                :color="voice.isRecording.value ? 'error' : 'neutral'"
+                :loading="voice.isTranscribing.value"
+                :disabled="!voice.isRecording.value && !canUseVoice"
+                variant="ghost"
+                size="sm"
+                :aria-label="voice.isRecording.value ? 'Stop recording' : 'Start voice input'"
+                @click="toggleVoiceInput"
+              />
+
+              <UChatPromptSubmit color="neutral" size="sm" :disabled="loading || !selectedWorkspaceId" />
+            </div>
           </template>
         </UChatPrompt>
 
