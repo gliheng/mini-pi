@@ -6,7 +6,6 @@ const route = useRoute()
 const toast = useToast()
 const config = usePiRemoteConfig()
 const remote = usePiRemote()
-const voice = useVoiceInput()
 const { model } = useModels()
 
 const threadId = computed(() => String(route.params.id))
@@ -20,40 +19,6 @@ const loadingThread = ref(true)
 const { level: thinkingLevel, setLevel: setThinkingLevel } = useThinkingLevel()
 
 let activeAbortController: AbortController | null = null
-
-const canUseVoice = computed(() =>
-  voice.supported
-  && status.value !== 'streaming'
-  && status.value !== 'submitted'
-)
-
-async function toggleVoiceInput() {
-  if (voice.isRecording.value) {
-    try {
-      const blob = await voice.stopRecording()
-      const text = await voice.transcribe(blob)
-      input.value = input.value.trimEnd()
-      input.value = input.value ? `${input.value} ${text}` : text
-    } catch (err) {
-      toast.add({
-        description: err instanceof Error ? err.message : String(err),
-        icon: 'i-lucide-alert-circle',
-        color: 'error'
-      })
-    }
-    return
-  }
-
-  try {
-    await voice.startRecording()
-  } catch (err) {
-    toast.add({
-      description: err instanceof Error ? err.message : String(err),
-      icon: 'i-lucide-alert-circle',
-      color: 'error'
-    })
-  }
-}
 
 async function loadThread() {
   loadingThread.value = true
@@ -242,43 +207,15 @@ watch(thinkingLevel, async (newLevel) => {
               <ChatMessageContent :message="message" :editing="false" />
             </template>
           </UChatMessages>
-          <UChatPrompt
+          <ChatBox
             v-if="config.isConfigured.value"
             v-model="input"
+            :status="status"
             :error="chatError"
-            :disabled="status === 'submitted'"
-            variant="subtle"
             class="sticky bottom-0 [view-transition-name:chat-prompt] rounded-b-none z-10"
-            :ui="{ base: 'px-1.5' }"
             @submit="handleSubmit"
-          >
-            <template #footer>
-              <div class="flex items-center gap-1">
-                <ModelSelect />
-                <ThinkingLevelSelect />
-              </div>
-
-              <div class="flex items-center gap-1">
-                <UButton
-                  :icon="voice.isRecording.value ? 'i-lucide-square' : 'i-lucide-mic'"
-                  :color="voice.isRecording.value ? 'error' : 'neutral'"
-                  :loading="voice.isTranscribing.value"
-                  :disabled="!voice.isRecording.value && !canUseVoice"
-                  variant="ghost"
-                  size="sm"
-                  :aria-label="voice.isRecording.value ? 'Stop recording' : 'Start voice input'"
-                  @click="toggleVoiceInput"
-                />
-
-                <UChatPromptSubmit
-                  :status="status"
-                  color="neutral"
-                  size="sm"
-                  @stop="handleAbort"
-                />
-              </div>
-            </template>
-          </UChatPrompt>
+            @stop="handleAbort"
+          />
         </template>
       </UContainer>
     </template>

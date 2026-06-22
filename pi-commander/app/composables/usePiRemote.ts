@@ -201,6 +201,17 @@ export function usePiRemote() {
     return data as { status: string }
   }
 
+  async function setThinkingLevel(id: string, thinkingLevel: string): Promise<{ status: string }> {
+    const res = await fetch(url(`/threads/${id}/thinking-level`), {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({ thinking_level: thinkingLevel })
+    })
+    const data = await res.json()
+    if (!res.ok) throw toPiError(data)
+    return data as { status: string }
+  }
+
   async function listModels(): Promise<PiModel[]> {
     const res = await fetch(url('/models'), { headers: headers() })
     const data = await res.json()
@@ -224,6 +235,7 @@ export function usePiRemote() {
     sendMessageStream,
     abortThread,
     setModel,
+    setThinkingLevel,
     listModels,
     listWorkspaces
   }

@@ -3,7 +3,7 @@ const { level, items } = useThinkingLevel()
 </script>
 
 <template>
-  <USelectMenu
+  <USelect
     v-model="level"
     :items="items"
     size="sm"
@@ -11,8 +11,5 @@ const { level, items } = useThinkingLevel()
     value-key="value"
     label-key="label"
     class="data-[state=open]:bg-elevated"
-    :ui="{
-      trailingIcon: 'group-data-[state=open]:rotate-180 transition-transform duration-200'
-    }"
   />
 </template>

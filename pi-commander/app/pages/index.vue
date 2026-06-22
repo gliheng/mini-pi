@@ -10,43 +10,10 @@ const selectedWorkspaceId = ref<string | null>(null)
 
 const config = usePiRemoteConfig()
 const remote = usePiRemote()
-const voice = useVoiceInput()
 const { model } = useModels()
+const { level: thinkingLevel } = useThinkingLevel()
 const settings = usePiRemoteSettingsModal()
 const toast = useToast()
-
-const canUseVoice = computed(() =>
-  voice.supported
-  && !loading.value
-)
-
-async function toggleVoiceInput() {
-  if (voice.isRecording.value) {
-    try {
-      const blob = await voice.stopRecording()
-      const text = await voice.transcribe(blob)
-      input.value = input.value.trimEnd()
-      input.value = input.value ? `${input.value} ${text}` : text
-    } catch (err) {
-      toast.add({
-        description: err instanceof Error ? err.message : String(err),
-        icon: 'i-lucide-alert-circle',
-        color: 'error'
-      })
-    }
-    return
-  }
-
-  try {
-    await voice.startRecording()
-  } catch (err) {
-    toast.add({
-      description: err instanceof Error ? err.message : String(err),
-      icon: 'i-lucide-alert-circle',
-      color: 'error'
-    })
-  }
-}
 
 async function openSettings() {
   await settings.open()
@@ -109,6 +76,9 @@ async function createChat(prompt: string) {
       model.value || undefined,
       selectedWorkspaceId.value
     )
+    if (thinkingLevel.value) {
+      await remote.setThinkingLevel(thread_id, thinkingLevel.value)
+    }
     const pendingPrompt = useState<string | null>(`pending-prompt-${thread_id}`, () => null)
     pendingPrompt.value = prompt
     await navigateTo(`/chat/${thread_id}`)
@@ -223,36 +193,14 @@ async function onSubmit() {
           </div>
         </div>
 
-        <UChatPrompt
+        <ChatBox
           v-model="input"
           :status="loading ? 'streaming' : 'ready'"
-          class="[view-transition-name:chat-prompt]"
-          variant="subtle"
-          :ui="{ base: 'px-1.5' }"
           :disabled="!selectedWorkspaceId || loadingWorkspaces"
+          :submit-disabled="loading || !selectedWorkspaceId"
+          class="[view-transition-name:chat-prompt]"
           @submit="onSubmit"
-        >
-          <template #footer>
-            <div class="flex items-center gap-1">
-              <ModelSelect />
-            </div>
-
-            <div class="flex items-center gap-1">
-              <UButton
-                :icon="voice.isRecording.value ? 'i-lucide-square' : 'i-lucide-mic'"
-                :color="voice.isRecording.value ? 'error' : 'neutral'"
-                :loading="voice.isTranscribing.value"
-                :disabled="!voice.isRecording.value && !canUseVoice"
-                variant="ghost"
-                size="sm"
-                :aria-label="voice.isRecording.value ? 'Stop recording' : 'Start voice input'"
-                @click="toggleVoiceInput"
-              />
-
-              <UChatPromptSubmit color="neutral" size="sm" :disabled="loading || !selectedWorkspaceId" />
-            </div>
-          </template>
-        </UChatPrompt>
+        />
 
         <p
           v-if="!selectedWorkspaceId && !loadingWorkspaces && workspaces.length"
