@@ -15,11 +15,11 @@ use crate::core::session_handle::{SessionEvent, SessionHandle, WorkspaceInfo};
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::data::store::{Store, ThreadMeta, WorkspaceMeta};
 use crate::ui::dropdown::{Direction, Dropdown, DropdownEvent, DropdownItem};
-use crate::ui::loader::{loader, loader_with, text_loader};
+use crate::ui::loader::{loader, spinner_with, text_loader};
 use crate::ui::markdown::MarkdownRenderer;
 use crate::ui::text_area::TextArea;
 use crate::ui::toast::Toast;
-use crate::utils::voice::{start_recording, transcribe_sync, VoiceRecorder, VoiceState};
+use crate::utils::voice::{start_recording, transcribe, VoiceRecorder, VoiceState};
 use crate::views::reasoning::Reasoning;
 use crate::views::title_bar::TitleBar;
 use crate::views::workspace_manager::{WorkspaceManager, WorkspaceManagerEvent};
@@ -830,7 +830,7 @@ impl ChatWindow {
         cx.notify();
 
         cx.spawn(async move |this, cx| {
-            let result = smol::unblock(move || transcribe_sync(&wav_bytes)).await;
+            let result = transcribe(&wav_bytes).await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(text) if !text.is_empty() => {
@@ -1801,7 +1801,7 @@ impl Render for ChatWindow {
                                             })
                                             .when(!is_transcribing, |this| this.cursor_pointer());
                                         let btn = if is_transcribing {
-                                            btn.child(loader_with(5.0, 0xffffff))
+                                            btn.child(spinner_with(14.0, 0xffffff))
                                         } else {
                                             btn.child(
                                                 svg()

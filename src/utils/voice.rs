@@ -147,44 +147,51 @@ impl VoiceRecorder {
     }
 }
 
-/// Send the WAV audio to Cloudflare AI Gateway's Whisper model and return the transcript.
-pub fn transcribe_sync(wav_bytes: &[u8]) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    // Reuse the same Cloudflare AI Gateway credentials used by the title generator.
-    const CLOUDFLARE_API_KEY: &str = "<REDACTED>";
-    const CLOUDFLARE_ACCOUNT_ID: &str = "c963aaaebd80b17d39cc4789854876f8";
-    const CLOUDFLARE_GATEWAY_ID: &str = "pub";
+/// Worker host for voice transcription.
+const TRANSCRIBE_WORKER_URL: &str = "https://pi.raven-ai.one";
 
+/// Send the WAV audio to the pi-commander worker `/api/transcribe` endpoint and return the transcript.
+///
+/// The public API is async so callers can `.await` it, but the actual HTTP request runs on
+/// `smol`'s blocking thread pool because `reqwest`'s async client requires a Tokio runtime,
+/// while this app runs on `smol`.
+pub async fn transcribe(wav_bytes: &[u8]) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let wav_bytes = wav_bytes.to_vec();
+    smol::unblock(move || transcribe_sync(&wav_bytes)).await
+}
+
+fn transcribe_sync(wav_bytes: &[u8]) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let client = reqwest::blocking::Client::new();
-    let url = format!(
-        "https://gateway.ai.cloudflare.com/v1/{}/{}/workers-ai/@cf/openai/whisper",
-        CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_GATEWAY_ID
+    let url = format!("{}/api/transcribe", TRANSCRIBE_WORKER_URL.trim_end_matches('/'));
+
+    let audio_data_uri = format!(
+        "data:audio/wav;base64,{}",
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, wav_bytes)
     );
 
-    let part = reqwest::blocking::multipart::Part::bytes(wav_bytes.to_vec())
-        .file_name("audio.wav")
-        .mime_str("audio/wav")?;
-    let form = reqwest::blocking::multipart::Form::new().part("audio", part);
+    let body = serde_json::json!({
+        "dataUrl": audio_data_uri
+    });
 
     let response = client
         .post(&url)
-        .header("cf-aig-authorization", format!("Bearer {}", CLOUDFLARE_API_KEY))
-        .multipart(form)
+        .header("Content-Type", "application/json")
+        .json(&body)
         .send()?;
 
     let status = response.status();
     if !status.is_success() {
         let body = response.text().unwrap_or_default();
-        return Err(format!("Whisper API returned {}: {}", status, body).into());
+        return Err(format!("transcribe worker returned {}: {}", status, body).into());
     }
 
     let json: serde_json::Value = response.json()?;
     let text = json
-        .get("result")
-        .and_then(|r| r.get("text"))
-        .and_then(|t| t.as_str())
+        .get("text")
+        .and_then(|c| c.as_str())
         .ok_or_else(|| {
             format!(
-                "unexpected Whisper response format: {}",
+                "unexpected transcribe response format: {}",
                 serde_json::to_string(&json).unwrap_or_default()
             )
         })?;

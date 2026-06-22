@@ -1,6 +1,6 @@
 use gpui::{
-    Animation, AnimationExt, IntoElement, ParentElement, SharedString, Styled, div, prelude::*, px,
-    rgb,
+    Animation, AnimationExt, IntoElement, ParentElement, SharedString, Styled, Transformation, div,
+    percentage, prelude::*, px, rgb, svg,
 };
 use std::time::Duration;
 
@@ -35,6 +35,34 @@ pub fn loader_with(size: f32, color: u32) -> impl IntoElement {
         .child(animated_dot(dot_size, color, "loader-dot-1", 0.0))
         .child(animated_dot(dot_size, color, "loader-dot-2", 0.33))
         .child(animated_dot(dot_size, color, "loader-dot-3", 0.66))
+}
+
+/// Create a reusable animated spinner.
+///
+/// Shows a small rotating circular arc. Use it anywhere you need
+/// to indicate that something is happening in the background.
+///
+/// # Example
+/// ```rust
+/// # use mini_pi::ui::loader::spinner;
+/// # use gpui::{div, ParentElement};
+/// div().child(spinner());
+/// ```
+pub fn spinner() -> impl IntoElement {
+    spinner_with(14.0, 0x888888)
+}
+
+/// Create a spinner with a custom size (in pixels) and colour (24-bit hex).
+pub fn spinner_with(size: f32, color: u32) -> impl IntoElement {
+    svg()
+        .path("spinner.svg")
+        .size(px(size))
+        .text_color(rgb(color))
+        .with_animation(
+            "spinner-rotate",
+            Animation::new(Duration::from_millis(800)).repeat(),
+            |this, delta| this.with_transformation(Transformation::rotate(percentage(delta))),
+        )
 }
 
 fn animated_dot(
