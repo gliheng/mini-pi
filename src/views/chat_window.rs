@@ -19,7 +19,7 @@ use crate::ui::loader::{loader, spinner_with, text_loader};
 use crate::ui::markdown::MarkdownRenderer;
 use crate::ui::text_area::TextArea;
 use crate::ui::toast::Toast;
-use crate::utils::voice::{start_recording, transcribe, VoiceRecorder, VoiceState};
+use crate::utils::voice::{VoiceRecorder, VoiceState, start_recording, transcribe};
 use crate::views::reasoning::Reasoning;
 use crate::views::title_bar::TitleBar;
 use crate::views::workspace_manager::{WorkspaceManager, WorkspaceManagerEvent};
@@ -115,7 +115,8 @@ impl ChatWindow {
         });
 
         // Build thinking level dropdown items based on the selected model's map
-        let thinking_items = Self::thinking_level_items_for_model(&models, selected_model.as_deref());
+        let thinking_items =
+            Self::thinking_level_items_for_model(&models, selected_model.as_deref());
         let thinking_dropdown = cx.new(|cx| {
             Dropdown::new(
                 cx,
@@ -513,7 +514,10 @@ impl ChatWindow {
         self.workspaces
             .retain(|workspace| workspace.id != workspace_id);
         if self.selected_workspace_id == Some(workspace_id.clone()) {
-            self.selected_workspace_id = self.workspaces.first().map(|workspace| workspace.id.clone());
+            self.selected_workspace_id = self
+                .workspaces
+                .first()
+                .map(|workspace| workspace.id.clone());
         }
         self.sync_workspace_manager(cx);
         cx.notify();

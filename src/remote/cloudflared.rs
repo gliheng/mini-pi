@@ -74,8 +74,8 @@ pub fn download_and_install() -> Result<PathBuf, String> {
     #[cfg(not(target_os = "macos"))]
     {
         // Linux/Windows releases are raw executables; stream directly to disk.
-        let mut file = std::fs::File::create(&target)
-            .map_err(|e| format!("failed to create file: {}", e))?;
+        let mut file =
+            std::fs::File::create(&target).map_err(|e| format!("failed to create file: {}", e))?;
         response
             .copy_to(&mut file)
             .map_err(|e| format!("download failed: {}", e))?;
@@ -97,15 +97,19 @@ pub fn download_and_install() -> Result<PathBuf, String> {
 
 #[cfg(target_os = "macos")]
 fn extract_cloudflared_tgz(tgz_path: &std::path::Path) -> Result<Vec<u8>, String> {
-    let file = std::fs::File::open(tgz_path)
-        .map_err(|e| format!("failed to open archive: {}", e))?;
+    let file =
+        std::fs::File::open(tgz_path).map_err(|e| format!("failed to open archive: {}", e))?;
     let tar = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(tar);
-    let mut entries = archive.entries().map_err(|e| format!("failed to read archive: {}", e))?;
+    let mut entries = archive
+        .entries()
+        .map_err(|e| format!("failed to read archive: {}", e))?;
 
     while let Some(entry) = entries.next() {
         let mut entry = entry.map_err(|e| format!("failed to read archive entry: {}", e))?;
-        let path = entry.path().map_err(|e| format!("failed to read entry path: {}", e))?;
+        let path = entry
+            .path()
+            .map_err(|e| format!("failed to read entry path: {}", e))?;
         if path.file_name().and_then(|n| n.to_str()) == Some("cloudflared") {
             let mut buf = Vec::new();
             std::io::copy(&mut entry, &mut buf)

@@ -185,8 +185,7 @@ impl Store {
         let rows = stmt
             .query_map([], |row| {
                 let metadata_str: Option<String> = row.get(7)?;
-                let metadata = metadata_str
-                    .and_then(|s| serde_json::from_str(&s).ok());
+                let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
                 Ok(ThreadMeta {
                     id: row.get(0)?,
                     title: row.get(1)?,
@@ -230,8 +229,7 @@ impl Store {
         let rows = stmt
             .query_map(params![per_page as i64, offset as i64], |row| {
                 let metadata_str: Option<String> = row.get(7)?;
-                let metadata = metadata_str
-                    .and_then(|s| serde_json::from_str(&s).ok());
+                let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
                 Ok(ThreadMeta {
                     id: row.get(0)?,
                     title: row.get(1)?,
@@ -271,8 +269,7 @@ impl Store {
         let rows = stmt
             .query_map(params![q], |row| {
                 let metadata_str: Option<String> = row.get(7)?;
-                let metadata = metadata_str
-                    .and_then(|s| serde_json::from_str(&s).ok());
+                let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
                 Ok(ThreadMeta {
                     id: row.get(0)?,
                     title: row.get(1)?,
@@ -301,8 +298,7 @@ impl Store {
             .map_err(StoreError::Rusqlite)?;
         stmt.query_row(params![id], |row| {
             let metadata_str: Option<String> = row.get(7)?;
-            let metadata = metadata_str
-                .and_then(|s| serde_json::from_str(&s).ok());
+            let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
             Ok(ThreadMeta {
                 id: row.get(0)?,
                 title: row.get(1)?,

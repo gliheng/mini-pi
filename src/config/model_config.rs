@@ -33,7 +33,10 @@ pub fn get_model_name<'a>(models: &'a [ModelInfo], id: &str) -> Option<&'a str> 
 }
 
 pub fn get_model_id<'a>(models: &'a [ModelInfo], name: &str) -> Option<&'a str> {
-    models.iter().find(|m| m.name == name).map(|m| m.id.as_str())
+    models
+        .iter()
+        .find(|m| m.name == name)
+        .map(|m| m.id.as_str())
 }
 
 pub fn all_models(models: &[ModelInfo]) -> &[ModelInfo] {

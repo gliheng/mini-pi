@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyWindowHandle, BorrowAppContext, Bounds, BoxShadow, Context, FocusHandle, Focusable, Hsla,
-    IntoElement, ParentElement, Render, ScrollHandle, ScrollWheelEvent, SharedString, Styled,
-    Window, div, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size, svg,
+    AnyWindowHandle, BorrowAppContext, Bounds, Context, FocusHandle, Focusable, IntoElement,
+    ParentElement, Render, ScrollHandle, ScrollWheelEvent, SharedString, Styled, Window, div,
+    prelude::*, px, rgb, size, svg,
 };
 
 use crate::auth::state::{self, AuthState};
@@ -15,6 +15,7 @@ use crate::ui::input::TextInput;
 use crate::ui::loader::loader;
 use crate::utils::format::format_relative_time;
 use crate::views::chat_window::ChatWindow;
+use crate::views::create_thread_button::{CreateThreadButton, CreateThreadButtonEvent};
 use crate::views::pi_agent_import::{PiAgentImport, PiAgentImportEvent};
 use crate::views::title_bar::{TitleBar, TitleBarEvent, TitleBarVariant};
 use crate::views::user_panel::{UserPanel, UserPanelEvent};
@@ -317,6 +318,7 @@ pub struct ThreadList {
     pub title_bar: gpui::Entity<TitleBar>,
     pub user_panel: gpui::Entity<UserPanel>,
     pub import_prompt: gpui::Entity<PiAgentImport>,
+    pub create_thread_button: gpui::Entity<CreateThreadButton>,
     pub focus_handle: FocusHandle,
     pub thread_items: Vec<gpui::Entity<ThreadItem>>,
     pub store: Arc<Store>,
@@ -332,6 +334,7 @@ pub struct ThreadList {
     pub _titlebar_subscription: gpui::Subscription,
     pub _user_panel_subscription: gpui::Subscription,
     pub _import_prompt_subscription: gpui::Subscription,
+    pub _create_thread_subscription: gpui::Subscription,
     pub _search_input_subscription: gpui::Subscription,
 }
 
@@ -344,6 +347,7 @@ impl ThreadList {
 
         let user_panel = cx.new(UserPanel::new);
         let import_prompt = cx.new(|_| PiAgentImport::new());
+        let create_thread_button = cx.new(|_| CreateThreadButton::new());
 
         let titlebar_subscription =
             cx.subscribe(&title_bar, move |_this, _, _event: &TitleBarEvent, cx| {
@@ -412,6 +416,15 @@ impl ThreadList {
             },
         );
 
+        let create_thread_subscription = cx.subscribe(
+            &create_thread_button,
+            move |this, _, event: &CreateThreadButtonEvent, cx| match event {
+                CreateThreadButtonEvent::Clicked => {
+                    this.open_new_thread_window(cx);
+                }
+            },
+        );
+
         let search_input = cx.new(|cx| TextInput::new(cx, "Search threads..."));
         let _search_input_subscription =
             cx.observe(&search_input, |this, _, cx| this.load_threads(cx));
@@ -424,6 +437,7 @@ impl ThreadList {
             title_bar,
             user_panel,
             import_prompt,
+            create_thread_button,
             focus_handle: cx.focus_handle(),
             thread_items: Vec::new(),
             store,
@@ -439,6 +453,7 @@ impl ThreadList {
             _titlebar_subscription: titlebar_subscription,
             _user_panel_subscription: user_panel_subscription,
             _import_prompt_subscription: import_prompt_subscription,
+            _create_thread_subscription: create_thread_subscription,
             _search_input_subscription,
         };
         thread_list.load_threads(cx);
@@ -460,6 +475,24 @@ impl ThreadList {
 
     fn all_threads_loaded(&self, cx: &Context<Self>) -> bool {
         !self.is_searching(cx) && self.total_pages > 0 && self.page >= self.total_pages
+    }
+
+    fn open_new_thread_window(&mut self, cx: &mut Context<Self>) {
+        let store = cx.global::<AppStore>().store.clone();
+        let _sessions_dir = store.sessions_dir().clone();
+        let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
+        cx.open_window(
+            custom_window_options(Some(bounds)),
+            |window, cx| {
+                cx.new(|cx| {
+                    let chat = ChatWindow::new(cx, None, store.clone());
+                    let input_handle = chat.chat_input.read(cx).focus_handle(cx);
+                    window.focus(&input_handle);
+                    chat
+                })
+            },
+        )
+        .unwrap();
     }
 
     fn load_threads(&mut self, cx: &mut Context<Self>) {
@@ -739,60 +772,7 @@ impl Render for ThreadList {
                     .py_3()
                     .border_t_1()
                     .border_color(rgb(0x333333))
-                    .child(
-                        div()
-                            .id("create-thread-btn")
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px_8()
-                            .py_3()
-                            .bg(linear_gradient(
-                                180.0,
-                                linear_color_stop(rgb(0x818cf8), 0.),
-                                linear_color_stop(rgb(0x6366f1), 1.),
-                            ))
-                            .rounded_full()
-                            .text_color(rgb(0xffffff))
-                            .cursor_pointer()
-                            .text_base()
-                            .shadow(vec![BoxShadow {
-                                color: Into::<Hsla>::into(rgb(0x6366f1)).alpha(0.4),
-                                offset: point(px(0.), px(4.)),
-                                blur_radius: px(12.),
-                                spread_radius: px(0.),
-                            }])
-                            .gap(px(8.))
-                            .child(
-                                svg()
-                                    .path("logo.svg")
-                                    .text_color(rgb(0xffffff))
-                                    .size(px(20.)),
-                            )
-                            .child("Create Thread")
-                            .hover(|style| style.bg(rgb(0x4f46e5)))
-                            .on_click(|_, _, cx| {
-                                let store = cx.global::<AppStore>().store.clone();
-                                let _sessions_dir = store.sessions_dir().clone();
-                                cx.open_window(
-                                    custom_window_options(Some(Bounds::centered(
-                                        None,
-                                        size(px(800.0), px(600.0)),
-                                        cx,
-                                    ))),
-                                    |window, cx| {
-                                        cx.new(|cx| {
-                                            let chat = ChatWindow::new(cx, None, store.clone());
-                                            let input_handle =
-                                                chat.chat_input.read(cx).focus_handle(cx);
-                                            window.focus(&input_handle);
-                                            chat
-                                        })
-                                    },
-                                )
-                                .unwrap();
-                            }),
-                    ),
+                    .child(self.create_thread_button.clone()),
             )
             .when(self.show_import_prompt, |el| {
                 el.child(self.import_prompt.clone())

@@ -127,9 +127,8 @@ impl UserPanel {
             let _ = weak.update(cx, |this, cx| {
                 match result {
                     Ok(path) => {
-                        let controller = cx.update_global(|app: &mut AppStore, _| {
-                            app.remote_controller.clone()
-                        });
+                        let controller =
+                            cx.update_global(|app: &mut AppStore, _| app.remote_controller.clone());
                         if let Some(controller) = controller {
                             let command = path.to_string_lossy().to_string();
                             controller.update(cx, |c, cx| {
@@ -487,12 +486,7 @@ fn render_cloudflared_dialog(
                 )
                 .child(div().text_sm().text_color(rgb(0x888888)).child(body))
                 .when_some(error_msg, |this, err| {
-                    this.child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(0xfca5a5))
-                            .child(err),
-                    )
+                    this.child(div().text_xs().text_color(rgb(0xfca5a5)).child(err))
                 })
                 .child(
                     div()
@@ -652,13 +646,11 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                                     if !enabled
                                         && !cloudflared::app_data_cloudflared_path().exists()
                                     {
-                                        this.cloudflared_dialog =
-                                            Some(CloudflaredDialog::Prompt);
+                                        this.cloudflared_dialog = Some(CloudflaredDialog::Prompt);
                                         cx.notify();
                                         return;
                                     }
-                                    controller
-                                        .update(cx, |c, cx| c.set_enabled(!enabled, cx));
+                                    controller.update(cx, |c, cx| c.set_enabled(!enabled, cx));
                                 }
                             }))
                         }),
@@ -757,13 +749,9 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                                 .child("pi-commander"),
                         ),
                 )
-                .child(
-                    div()
-                        .id("remote-qr-code")
-                        .when_some(qr, |this, source| {
-                            this.child(gpui::img(source).size(px(160.)))
-                        }),
-                )
+                .child(div().id("remote-qr-code").when_some(qr, |this, source| {
+                    this.child(gpui::img(source).size(px(160.)))
+                }))
                 .child(
                     div()
                         .id("remote-tunnel-url")
@@ -1350,9 +1338,10 @@ fn render_sync_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
                 let user_id = s.user.id.clone();
                 let initial_meta = cx.global::<AppStore>().sync_meta.clone();
                 cx.spawn(async move |_, cx| {
-                    let result =
-                        smol::unblock(move || settings_sync::sync_changes(&access_token, &user_id, initial_meta))
-                            .await;
+                    let result = smol::unblock(move || {
+                        settings_sync::sync_changes(&access_token, &user_id, initial_meta)
+                    })
+                    .await;
                     let _ = cx.update_global(|app: &mut AppStore, _| match result {
                         Ok(meta) => {
                             let _ = settings_sync::save_sync_meta(&app.store, &meta);

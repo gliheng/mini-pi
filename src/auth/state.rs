@@ -193,10 +193,7 @@ mod tests {
 
     #[test]
     fn list_pi_agent_json_files_only_includes_whitelisted_files() {
-        let temp = std::env::temp_dir().join(format!(
-            "mini-pi-agent-test-{}",
-            std::process::id()
-        ));
+        let temp = std::env::temp_dir().join(format!("mini-pi-agent-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp);
         std::fs::create_dir_all(&temp).unwrap();
 

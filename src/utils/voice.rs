@@ -61,9 +61,10 @@ pub fn start_recording() -> Result<VoiceRecorder, String> {
         cpal::SampleFormat::U16 => device.build_input_stream(
             &config.into(),
             move |data: &[u16], _: &_| {
-                samples_for_callback.lock().unwrap().extend(data.iter().map(|s| {
-                    (*s as f32 / u16::MAX as f32).mul_add(2.0, -1.0)
-                }));
+                samples_for_callback.lock().unwrap().extend(
+                    data.iter()
+                        .map(|s| (*s as f32 / u16::MAX as f32).mul_add(2.0, -1.0)),
+                );
             },
             err_fn,
             None,
@@ -155,14 +156,19 @@ const TRANSCRIBE_WORKER_URL: &str = "https://pi.raven-ai.one";
 /// The public API is async so callers can `.await` it, but the actual HTTP request runs on
 /// `smol`'s blocking thread pool because `reqwest`'s async client requires a Tokio runtime,
 /// while this app runs on `smol`.
-pub async fn transcribe(wav_bytes: &[u8]) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+pub async fn transcribe(
+    wav_bytes: &[u8],
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let wav_bytes = wav_bytes.to_vec();
     smol::unblock(move || transcribe_sync(&wav_bytes)).await
 }
 
 fn transcribe_sync(wav_bytes: &[u8]) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let client = reqwest::blocking::Client::new();
-    let url = format!("{}/api/transcribe", TRANSCRIBE_WORKER_URL.trim_end_matches('/'));
+    let url = format!(
+        "{}/api/transcribe",
+        TRANSCRIBE_WORKER_URL.trim_end_matches('/')
+    );
 
     let audio_data_uri = format!(
         "data:audio/wav;base64,{}",
@@ -186,15 +192,12 @@ fn transcribe_sync(wav_bytes: &[u8]) -> Result<String, Box<dyn std::error::Error
     }
 
     let json: serde_json::Value = response.json()?;
-    let text = json
-        .get("text")
-        .and_then(|c| c.as_str())
-        .ok_or_else(|| {
-            format!(
-                "unexpected transcribe response format: {}",
-                serde_json::to_string(&json).unwrap_or_default()
-            )
-        })?;
+    let text = json.get("text").and_then(|c| c.as_str()).ok_or_else(|| {
+        format!(
+            "unexpected transcribe response format: {}",
+            serde_json::to_string(&json).unwrap_or_default()
+        )
+    })?;
 
     Ok(text.trim().to_string())
 }

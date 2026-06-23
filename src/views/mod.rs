@@ -1,4 +1,5 @@
 pub mod chat_window;
+pub mod create_thread_button;
 pub mod pi_agent_import;
 pub mod reasoning;
 pub mod thread_list;

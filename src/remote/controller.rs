@@ -1350,8 +1350,9 @@ impl RemoteController {
         let messages = session.messages.clone();
         let state = session.state.clone();
 
-        self.active_streams
-            .retain_mut(|stream| stream.thread_id != *thread_id || stream.update(&messages, &state));
+        self.active_streams.retain_mut(|stream| {
+            stream.thread_id != *thread_id || stream.update(&messages, &state)
+        });
     }
 
     fn finish_active_streams_with_error(&mut self, message: &str) {

@@ -677,7 +677,9 @@ mod tests {
             .expect("request should succeed");
         assert_eq!(response.status(), 200);
         let body: serde_json::Value = response.json().expect("response should be JSON");
-        let workspaces = body["workspaces"].as_array().expect("workspaces should be an array");
+        let workspaces = body["workspaces"]
+            .as_array()
+            .expect("workspaces should be an array");
         assert_eq!(workspaces.len(), 1);
         assert_eq!(workspaces[0]["id"], "ws-1");
         assert_eq!(workspaces[0]["name"], "Default");
