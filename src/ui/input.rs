@@ -681,7 +681,7 @@ impl Element for TextElement {
                             bounds.bottom(),
                         ),
                     ),
-                    rgba(0x3311ff30),
+                    rgba(0x3b82f680),
                 )),
                 None,
             )

@@ -1769,7 +1769,6 @@ impl Render for ChatWindow {
                             .child(
                                 div()
                                     .flex()
-                                    .flex_1()
                                     .child(self.chat_input.clone())
                             )
                             .child(

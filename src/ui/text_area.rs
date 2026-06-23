@@ -3,11 +3,12 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{
-    App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, ElementInputHandler,
-    Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, Hsla,
-    KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    Pixels, Point, ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle,
-    Window, actions, div, fill, hsla, point, prelude::*, px, relative, rgba, size,
+    App, AvailableSpace, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId,
+    ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
+    GlobalElementId, Hsla, KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, PaintQuad, Pixels, Point, SharedString, Size, Style, TextRun, UTF16Selection,
+    UnderlineStyle, Window, WrappedLine, actions, div, fill, hsla, point, prelude::*, px, relative,
+    rgba, size,
 };
 use unicode_segmentation::*;
 
@@ -28,6 +29,7 @@ actions!(
         Home,
         End,
         ShowCharacterPalette,
+        Newline,
         Paste,
         Cut,
         CopyText,
@@ -68,7 +70,7 @@ pub struct TextArea {
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
-    last_layout: Option<ShapedLine>,
+    last_layout: Option<TextAreaLayout>,
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
     cursor_visible: bool,
@@ -197,7 +199,13 @@ impl TextArea {
         self.just_selected_mention = false;
     }
 
-    pub fn set_workspace(&mut self, id: String, dir: PathBuf, name: String, cx: &mut Context<Self>) {
+    pub fn set_workspace(
+        &mut self,
+        id: String,
+        dir: PathBuf,
+        name: String,
+        cx: &mut Context<Self>,
+    ) {
         if self.cached_workspace_id == Some(id.clone()) {
             return;
         }
@@ -526,6 +534,10 @@ impl TextArea {
         window.show_character_palette();
     }
 
+    fn newline(&mut self, _: &Newline, window: &mut Window, cx: &mut Context<Self>) {
+        self.replace_text_in_range(None, "\n", window, cx);
+    }
+
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
             self.replace_text_in_range(None, &text.replace("\n", " "), window, cx);
@@ -568,7 +580,7 @@ impl TextArea {
             return 0;
         }
 
-        let (Some(bounds), Some(line)) = (self.last_bounds.as_ref(), self.last_layout.as_ref())
+        let (Some(bounds), Some(layout)) = (self.last_bounds.as_ref(), self.last_layout.as_ref())
         else {
             return 0;
         };
@@ -578,7 +590,7 @@ impl TextArea {
         if position.y > bounds.bottom() {
             return self.content.len();
         }
-        line.closest_index_for_x(position.x - bounds.left())
+        layout.index_for_position(position - bounds.origin)
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -866,16 +878,18 @@ impl EntityInputHandler for TextArea {
     ) -> Option<Bounds<Pixels>> {
         let last_layout = self.last_layout.as_ref()?;
         let range = self.range_from_utf16(&range_utf16);
-        Some(Bounds::from_corners(
-            point(
-                bounds.left() + last_layout.x_for_index(range.start),
-                bounds.top(),
-            ),
-            point(
-                bounds.left() + last_layout.x_for_index(range.end),
-                bounds.bottom(),
-            ),
-        ))
+        if range.is_empty() {
+            let position = last_layout.position_for_index(range.start)?;
+            Some(Bounds::new(
+                bounds.origin + position,
+                size(px(2.), last_layout.line_height),
+            ))
+        } else {
+            last_layout
+                .selection_bounds(range, bounds)
+                .into_iter()
+                .next()
+        }
     }
 
     fn character_index_for_point(
@@ -887,7 +901,7 @@ impl EntityInputHandler for TextArea {
         let last_bounds = self.last_bounds?;
         let last_layout = self.last_layout.as_ref()?;
         let line_point = last_bounds.localize(&point)?;
-        let utf8_index = last_layout.index_for_x(point.x - line_point.x)?;
+        let utf8_index = last_layout.index_for_position(line_point);
         Some(self.offset_to_utf16(utf8_index))
     }
 }
@@ -896,10 +910,244 @@ struct TextAreaElement {
     input: Entity<TextArea>,
 }
 
+#[derive(Clone)]
+struct TextAreaLayout {
+    lines: Vec<WrappedLine>,
+    len: usize,
+    line_height: Pixels,
+    wrap_width: Option<Pixels>,
+    runs: Vec<TextRun>,
+    is_placeholder: bool,
+}
+
+impl TextAreaLayout {
+    fn size(&self) -> Size<Pixels> {
+        let mut size: Size<Pixels> = Size::default();
+        for line in &self.lines {
+            let segments = self.wrapped_segments(line);
+            size.height += self.line_height * segments.len();
+            let line_width = self
+                .wrap_width
+                .unwrap_or_else(|| line.size(self.line_height).width);
+            size.width = size.width.max(line_width).ceil();
+        }
+        size
+    }
+
+    fn wrapped_segments(&self, line: &WrappedLine) -> Vec<VisualSegment> {
+        if self.is_placeholder {
+            return vec![VisualSegment {
+                start: 0,
+                end: line.len(),
+                start_x: px(0.),
+            }];
+        }
+
+        let Some(wrap_width) = self.wrap_width else {
+            return vec![VisualSegment {
+                start: 0,
+                end: line.len(),
+                start_x: px(0.),
+            }];
+        };
+
+        if line.len() == 0 {
+            return vec![VisualSegment {
+                start: 0,
+                end: 0,
+                start_x: px(0.),
+            }];
+        }
+
+        let glyphs: Vec<_> = line
+            .runs()
+            .iter()
+            .flat_map(|run| {
+                run.glyphs
+                    .iter()
+                    .map(|glyph| (glyph.index, glyph.position.x))
+            })
+            .collect();
+
+        if glyphs.is_empty() {
+            return vec![VisualSegment {
+                start: 0,
+                end: line.len(),
+                start_x: px(0.),
+            }];
+        }
+
+        let mut segments = Vec::new();
+        let mut start = 0;
+        let mut start_x = px(0.);
+
+        for (ix, (index, x)) in glyphs.iter().copied().enumerate() {
+            let next_x = glyphs
+                .get(ix + 1)
+                .map(|(_, next_x)| *next_x)
+                .unwrap_or(line.unwrapped_layout.width);
+            let segment_width = next_x - start_x;
+            if segment_width > wrap_width && index > start {
+                segments.push(VisualSegment {
+                    start,
+                    end: index,
+                    start_x,
+                });
+                start = index;
+                start_x = x;
+            }
+        }
+
+        segments.push(VisualSegment {
+            start,
+            end: line.len(),
+            start_x,
+        });
+        segments
+    }
+
+    fn runs_for_range(&self, range: Range<usize>) -> Vec<TextRun> {
+        let mut runs = Vec::new();
+        let mut run_start = 0;
+        for run in &self.runs {
+            let run_end = run_start + run.len;
+            let start = range.start.max(run_start);
+            let end = range.end.min(run_end);
+            if start < end {
+                runs.push(TextRun {
+                    len: end - start,
+                    ..run.clone()
+                });
+            }
+            run_start = run_end;
+        }
+        runs
+    }
+
+    fn index_for_position(&self, position: Point<Pixels>) -> usize {
+        if position.y < Pixels::ZERO {
+            return 0;
+        }
+
+        let mut line_origin = point(px(0.), px(0.));
+        let mut line_start = 0;
+        for line in &self.lines {
+            let segments = self.wrapped_segments(line);
+            let line_height = self.line_height * segments.len();
+            let line_bottom = line_origin.y + line_height;
+            if position.y > line_bottom {
+                line_origin.y = line_bottom;
+                line_start += line.len() + 1;
+            } else {
+                let segment_ix = ((position.y - line_origin.y) / self.line_height).floor() as usize;
+                let segment = segments
+                    .get(segment_ix)
+                    .or_else(|| segments.last())
+                    .expect("text area layout always has at least one visual segment");
+                let local_x = position.x + segment.start_x;
+                let index = if position.x < px(0.) {
+                    segment.start
+                } else if position.x
+                    >= line.unwrapped_layout.x_for_index(segment.end) - segment.start_x
+                {
+                    segment.end
+                } else {
+                    line.unwrapped_layout.closest_index_for_x(local_x)
+                };
+                return (line_start + index).min(self.len);
+            }
+        }
+
+        self.len
+    }
+
+    fn position_for_index(&self, index: usize) -> Option<Point<Pixels>> {
+        let index = index.min(self.len);
+        let mut line_origin = point(px(0.), px(0.));
+        let mut line_start = 0;
+
+        for line in &self.lines {
+            let line_end = line_start + line.len();
+            if index > line_end {
+                line_origin.y += self.line_height * self.wrapped_segments(line).len();
+                line_start = line_end + 1;
+                continue;
+            }
+
+            let index_within_line = index.saturating_sub(line_start);
+            let segments = self.wrapped_segments(line);
+            for (segment_ix, segment) in segments.iter().enumerate() {
+                if index_within_line <= segment.end {
+                    let x = line.unwrapped_layout.x_for_index(index_within_line) - segment.start_x;
+                    return Some(point(
+                        line_origin.x + x,
+                        line_origin.y + self.line_height * segment_ix,
+                    ));
+                }
+            }
+        }
+
+        None
+    }
+
+    fn selection_bounds(&self, range: Range<usize>, bounds: Bounds<Pixels>) -> Vec<Bounds<Pixels>> {
+        let mut selection_bounds = Vec::new();
+        let selection_start = range.start.min(self.len);
+        let selection_end = range.end.min(self.len);
+        if selection_start >= selection_end {
+            return selection_bounds;
+        }
+
+        let mut line_origin = point(px(0.), px(0.));
+        let mut line_start = 0;
+        for line in &self.lines {
+            let line_end = line_start + line.len();
+            if selection_start <= line_end && selection_end >= line_start {
+                for (segment_ix, segment) in self.wrapped_segments(line).into_iter().enumerate() {
+                    let absolute_segment_start = line_start + segment.start;
+                    let absolute_segment_end = line_start + segment.end;
+                    let start = selection_start.max(absolute_segment_start);
+                    let end = selection_end.min(absolute_segment_end);
+                    if start > end || (start == end && selection_end != absolute_segment_end) {
+                        continue;
+                    }
+
+                    let start_x =
+                        line.unwrapped_layout.x_for_index(start - line_start) - segment.start_x;
+                    let end_x =
+                        line.unwrapped_layout.x_for_index(end - line_start) - segment.start_x;
+                    selection_bounds.push(Bounds::from_corners(
+                        point(
+                            bounds.left() + start_x,
+                            bounds.top() + line_origin.y + self.line_height * segment_ix,
+                        ),
+                        point(
+                            bounds.left() + end_x,
+                            bounds.top() + line_origin.y + self.line_height * (segment_ix + 1),
+                        ),
+                    ));
+                }
+            }
+
+            line_origin.y += self.line_height * self.wrapped_segments(line).len();
+            line_start = line_end + 1;
+        }
+
+        selection_bounds
+    }
+}
+
+#[derive(Clone)]
+struct VisualSegment {
+    start: usize,
+    end: usize,
+    start_x: Pixels,
+}
+
 struct PrepaintState {
-    line: Option<ShapedLine>,
+    layout: Option<TextAreaLayout>,
     cursor: Option<PaintQuad>,
-    selection: Option<PaintQuad>,
+    selections: Vec<PaintQuad>,
 }
 
 impl IntoElement for TextAreaElement {
@@ -910,8 +1158,88 @@ impl IntoElement for TextAreaElement {
     }
 }
 
+impl TextAreaElement {
+    fn shape_layout(
+        input: &Entity<TextArea>,
+        wrap_width: Option<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> TextAreaLayout {
+        let input = input.read(cx);
+        let content = input.content.clone();
+        let is_placeholder = content.is_empty();
+        let style = window.text_style();
+        let base_color = input.text_color.unwrap_or(style.color);
+        let (display_text, text_color) = if is_placeholder {
+            (
+                input.placeholder.clone(),
+                hsla(base_color.h, base_color.s, base_color.l, 0.3),
+            )
+        } else {
+            (content.clone(), base_color)
+        };
+
+        let run = TextRun {
+            len: display_text.len(),
+            font: style.font(),
+            color: text_color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+
+        let runs = if content.is_empty() {
+            vec![run]
+        } else if let Some(marked_range) = input.marked_range.as_ref() {
+            let marked_start = marked_range.start.min(display_text.len());
+            let marked_end = marked_range.end.min(display_text.len());
+            vec![
+                TextRun {
+                    len: marked_start,
+                    ..run.clone()
+                },
+                TextRun {
+                    len: marked_end.saturating_sub(marked_start),
+                    underline: Some(UnderlineStyle {
+                        color: Some(run.color),
+                        thickness: px(1.0),
+                        wavy: false,
+                    }),
+                    ..run.clone()
+                },
+                TextRun {
+                    len: display_text.len().saturating_sub(marked_end),
+                    ..run
+                },
+            ]
+            .into_iter()
+            .filter(|run| run.len > 0)
+            .collect()
+        } else {
+            vec![run]
+        };
+
+        let font_size = style.font_size.to_pixels(window.rem_size());
+        let lines = window
+            .text_system()
+            .shape_text(display_text, font_size, &runs, None, None)
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+
+        TextAreaLayout {
+            lines,
+            len: content.len(),
+            line_height: window.line_height(),
+            wrap_width,
+            runs,
+            is_placeholder,
+        }
+    }
+}
+
 impl Element for TextAreaElement {
-    type RequestLayoutState = ();
+    type RequestLayoutState = Option<TextAreaLayout>;
     type PrepaintState = PrepaintState;
 
     fn id(&self) -> Option<ElementId> {
@@ -927,12 +1255,31 @@ impl Element for TextAreaElement {
         _id: Option<&GlobalElementId>,
         _inspector_id: Option<&gpui::InspectorElementId>,
         window: &mut Window,
-        cx: &mut App,
+        _cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
         style.size.width = relative(1.).into();
-        style.size.height = window.line_height().into();
-        (window.request_layout(style, [], cx), ())
+        let input = self.input.clone();
+        (
+            window.request_measured_layout(
+                style,
+                move |known_dimensions, available_space, window, cx| {
+                    let wrap_width = known_dimensions.width.or(match available_space.width {
+                        AvailableSpace::Definite(width) => Some(width),
+                        _ => None,
+                    });
+
+                    let layout = TextAreaElement::shape_layout(&input, wrap_width, window, cx);
+                    let mut size = layout.size();
+                    if let Some(width) = wrap_width {
+                        size.width = width;
+                    }
+                    size.height = size.height.max(window.line_height());
+                    size
+                },
+            ),
+            None,
+        )
     }
 
     fn prepaint(
@@ -940,102 +1287,49 @@ impl Element for TextAreaElement {
         _id: Option<&GlobalElementId>,
         _inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
+        request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
+        let layout =
+            TextAreaElement::shape_layout(&self.input, Some(bounds.size.width), window, cx);
+        *request_layout = Some(layout.clone());
+
         let input = self.input.read(cx);
-        let content = input.content.clone();
         let selected_range = input.selected_range.clone();
-        let cursor = input.cursor_offset();
-        let style = window.text_style();
+        let cursor_offset = input.cursor_offset();
 
-        let base_color = input.text_color.unwrap_or(style.color);
-        let (display_text, text_color) = if content.is_empty() {
-            (
-                input.placeholder.clone(),
-                hsla(base_color.h, base_color.s, base_color.l, 0.3),
-            )
-        } else {
-            (content, base_color)
-        };
-
-        let run = TextRun {
-            len: display_text.len(),
-            font: style.font(),
-            color: text_color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        };
-        let runs = if let Some(marked_range) = input.marked_range.as_ref() {
-            vec![
-                TextRun {
-                    len: marked_range.start,
-                    ..run.clone()
-                },
-                TextRun {
-                    len: marked_range.end - marked_range.start,
-                    underline: Some(UnderlineStyle {
-                        color: Some(run.color),
-                        thickness: px(1.0),
-                        wavy: false,
-                    }),
-                    ..run.clone()
-                },
-                TextRun {
-                    len: display_text.len() - marked_range.end,
-                    ..run
-                },
-            ]
-            .into_iter()
-            .filter(|run| run.len > 0)
-            .collect()
-        } else {
-            vec![run]
-        };
-
-        let font_size = style.font_size.to_pixels(window.rem_size());
-        let line = window
-            .text_system()
-            .shape_line(display_text, font_size, &runs, None);
-
-        let cursor_pos = line.x_for_index(cursor);
-        let (selection, cursor) = if selected_range.is_empty() {
+        let (selections, cursor) = if selected_range.is_empty() {
             let cursor = if input.cursor_visible {
-                Some(fill(
-                    Bounds::new(
-                        point(bounds.left() + cursor_pos, bounds.top()),
-                        size(px(2.), bounds.bottom() - bounds.top()),
-                    ),
-                    hsla(200. / 360., 0.8, 0.7, 1.),
-                ))
+                layout
+                    .position_for_index(cursor_offset)
+                    .map(|cursor_position| {
+                        fill(
+                            Bounds::new(
+                                bounds.origin + cursor_position,
+                                size(px(2.), layout.line_height),
+                            ),
+                            hsla(200. / 360., 0.8, 0.7, 1.),
+                        )
+                    })
             } else {
                 None
             };
-            (None, cursor)
+            (Vec::new(), cursor)
         } else {
             (
-                Some(fill(
-                    Bounds::from_corners(
-                        point(
-                            bounds.left() + line.x_for_index(selected_range.start),
-                            bounds.top(),
-                        ),
-                        point(
-                            bounds.left() + line.x_for_index(selected_range.end),
-                            bounds.bottom(),
-                        ),
-                    ),
-                    rgba(0x3311ff30),
-                )),
+                layout
+                    .selection_bounds(selected_range, bounds)
+                    .into_iter()
+                    .map(|bounds| fill(bounds, rgba(0x3b82f680)))
+                    .collect(),
                 None,
             )
         };
         PrepaintState {
-            line: Some(line),
+            layout: Some(layout),
             cursor,
-            selection,
+            selections,
         }
     }
 
@@ -1055,14 +1349,36 @@ impl Element for TextAreaElement {
             ElementInputHandler::new(bounds, self.input.clone()),
             cx,
         );
-        if let Some(selection) = prepaint.selection.take() {
+        for selection in prepaint.selections.drain(..) {
             window.paint_quad(selection)
         }
-        let line = prepaint.line.take().unwrap();
-        let line_height = window.line_height();
-        let text_y = bounds.top() + (bounds.bottom() - bounds.top() - line_height) / 2.0;
-        line.paint(point(bounds.origin.x, text_y), line_height, window, cx)
-            .unwrap();
+        let layout = prepaint.layout.take().unwrap();
+        let font_size = window.text_style().font_size.to_pixels(window.rem_size());
+        let mut line_origin = bounds.origin;
+        let mut line_start = 0;
+        for line in &layout.lines {
+            let segments = layout.wrapped_segments(line);
+            for (segment_ix, segment) in segments.iter().enumerate() {
+                let segment_origin = point(
+                    bounds.origin.x,
+                    line_origin.y + layout.line_height * segment_ix,
+                );
+                let text = SharedString::from(line.text[segment.start..segment.end].to_string());
+                let runs =
+                    layout.runs_for_range(line_start + segment.start..line_start + segment.end);
+                let segment_line = window
+                    .text_system()
+                    .shape_line(text, font_size, &runs, None);
+                segment_line
+                    .paint_background(segment_origin, layout.line_height, window, cx)
+                    .ok();
+                segment_line
+                    .paint(segment_origin, layout.line_height, window, cx)
+                    .ok();
+            }
+            line_origin.y += layout.line_height * segments.len();
+            line_start += line.len() + 1;
+        }
 
         if focus_handle.is_focused(window)
             && let Some(cursor) = prepaint.cursor.take()
@@ -1071,7 +1387,7 @@ impl Element for TextAreaElement {
         }
 
         self.input.update(cx, |input, _cx| {
-            input.last_layout = Some(line);
+            input.last_layout = Some(layout);
             input.last_bounds = Some(bounds);
         });
     }
@@ -1088,7 +1404,6 @@ impl Render for TextArea {
         div()
             .key_context("TextArea")
             .w_full()
-            .h(px(28.))
             .track_focus(&self.focus_handle(cx))
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::backspace))
@@ -1103,6 +1418,7 @@ impl Render for TextArea {
             .on_action(cx.listener(Self::home))
             .on_action(cx.listener(Self::end))
             .on_action(cx.listener(Self::show_character_palette))
+            .on_action(cx.listener(Self::newline))
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))
@@ -1141,11 +1457,7 @@ impl Render for TextArea {
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .line_height(px(20.))
             .text_size(px(14.))
-            .child(
-                div()
-                    .size_full()
-                    .child(TextAreaElement { input: cx.entity() }),
-            )
+            .child(div().w_full().child(TextAreaElement { input: cx.entity() }))
     }
 }
 

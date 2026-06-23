@@ -12,4 +12,6 @@
 # UI
 - [ ] Modal can click through
 - [ ] Markdown render is still lacking
-- [ ]
+
+# Pi-Commander
+- [ ] Refresh workspace, model on settings change

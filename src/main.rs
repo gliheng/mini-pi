@@ -189,6 +189,7 @@ fn main() {
                 KeyBinding::new("end", ui::text_area::End, Some("TextArea")),
                 KeyBinding::new("ctrl-a", ui::text_area::Home, Some("TextArea")),
                 KeyBinding::new("ctrl-e", ui::text_area::End, Some("TextArea")),
+                KeyBinding::new("shift-enter", ui::text_area::Newline, Some("TextArea")),
             ]);
 
             cx.on_window_closed(|cx| {
