@@ -214,6 +214,13 @@ impl Render for CreateThreadButton {
                     cx.notify();
                 }),
             )
+            .on_mouse_up_out(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.pressed = false;
+                    cx.notify();
+                }),
+            )
             .on_click(cx.listener(|_, _, _, cx| {
                 cx.emit(CreateThreadButtonEvent::Clicked);
             }))
