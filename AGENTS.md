@@ -25,8 +25,9 @@ On first run, if `~/.pi/agent/` contains JSON files, the app offers to import th
 
 ```
 Cargo.toml              # Package manifest and dependencies
-src/main.rs             # App bootstrap, global key bindings, AppStore setup, initial ThreadList window
+src/main.rs             # Minimal launcher: delegates to mini_pi::app::run()
 src/lib.rs              # Public module re-exports (used by examples)
+src/app.rs              # Application bootstrap, global key bindings, AppStore setup, initial ThreadList window wrapped in gpui_component::Root
 src/core/
   actions.rs            # Global actions: CloseWindow, Quit, SendMessage, Login, Logout, SignUp
   app.rs                # AppStore GPUI Global and custom_window_options()
@@ -67,9 +68,10 @@ src/utils/
   llm.rs                # Cloudflare AI Gateway title generator
 src/views/
   thread_list.rs        # Home window showing pinned/unpinned threads
-  chat_window.rs        # Per-thread chat window, model dropdown, workspace bar, message rendering
+  chat_app.rs           # Per-thread window frame: gpui_component TitleBar with pin/export/workspace controls, wraps ChatWindow in Root
+  chat_window.rs        # Per-thread chat content: model dropdown, workspace bar, message rendering
   user_panel.rs         # Account/auth/settings panel, including remote-control toggle and QR code
-  title_bar.rs          # Custom title bar with pin, export, workspace, and avatar controls
+  title_bar.rs          # Platform-specific window-level helpers (pin-to-top) and the legacy custom title bar type
   workspace_manager.rs  # Modal workspace picker
   reasoning.rs          # Collapsible thinking/reasoning display
   pi_agent_import.rs    # First-run import prompt from ~/.pi/agent/

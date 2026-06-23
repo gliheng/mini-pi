@@ -1,6 +1,5 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use crate::views::title_bar::{TitleBarEvent, TitleBarVariant};
 use gpui::{
     Bounds, ClipboardItem, Context, Entity, FocusHandle, Focusable, InteractiveElement,
     IntoElement, KeyDownEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
@@ -21,13 +20,12 @@ use crate::ui::text_area::TextArea;
 use crate::ui::toast::Toast;
 use crate::utils::voice::{VoiceRecorder, VoiceState, start_recording, transcribe};
 use crate::views::reasoning::Reasoning;
-use crate::views::title_bar::TitleBar;
 use crate::views::workspace_manager::{WorkspaceManager, WorkspaceManagerEvent};
 
 pub struct ChatWindow {
     pub thread_id: Option<String>,
     pub session_file: String,
-    pub title_bar: gpui::Entity<TitleBar>,
+    pub title: SharedString,
     pub messages: Vec<Message>,
     pub chat_input: gpui::Entity<TextArea>,
     pub focus_handle: FocusHandle,
@@ -70,7 +68,6 @@ impl ChatWindow {
             .unwrap_or_else(|| "New Thread".into());
         let chat_input =
             cx.new(|cx| TextArea::new(cx, "Type a message...").with_text_color(rgb(0xe5e5e5)));
-        let title_bar = cx.new(|_| TitleBar::new(title.clone(), TitleBarVariant::Chat));
 
         let thread_id = thread.map(|t| t.id.clone());
         let selected_model: Option<String> = thread
@@ -145,7 +142,7 @@ impl ChatWindow {
         let mut window = Self {
             thread_id,
             session_file: String::new(),
-            title_bar: title_bar.clone(),
+            title: title.clone(),
             messages: vec![],
             chat_input,
             focus_handle: cx.focus_handle(),
@@ -205,56 +202,6 @@ impl ChatWindow {
         cx.observe(&window.toast, |_, _, cx| {
             cx.notify();
         })
-        .detach();
-
-        // Subscribe to title bar events
-        cx.subscribe(
-            &title_bar,
-            |this, _title_bar, event: &TitleBarEvent, cx| match event {
-                TitleBarEvent::ToggleUserPanel => {}
-                TitleBarEvent::ExportHtml => {
-                    let rx = cx.prompt_for_paths(PathPromptOptions {
-                        files: false,
-                        directories: true,
-                        multiple: false,
-                        prompt: Some("Choose a folder to export the session HTML".into()),
-                    });
-                    let session = this.session.clone();
-                    let session_file = session
-                        .as_ref()
-                        .map(|s| s.read(cx).session_file.clone())
-                        .unwrap_or_default();
-                    cx.spawn(async move |_, cx| {
-                        if let Ok(Ok(Some(paths))) = rx.await
-                            && let Some(dir) = paths.first()
-                        {
-                            let file_name = session_file
-                                .rsplit_once('.')
-                                .map(|(name, _)| format!("{}.html", name))
-                                .unwrap_or_else(|| "session.html".to_string());
-                            let output_path = dir.join(&file_name);
-                            let path_str = output_path.to_string_lossy().to_string();
-                            if let Some(ref s) = session {
-                                let _ = s.update(cx, |session, _cx| {
-                                    session.export_html(&path_str);
-                                });
-                            }
-                        }
-                    })
-                    .detach();
-                }
-                TitleBarEvent::OpenWorkspace => {
-                    let workspace_dir: Option<PathBuf> = this
-                        .selected_workspace_id
-                        .as_ref()
-                        .and_then(|id| this.workspaces.iter().find(|ws| ws.id == *id))
-                        .map(|ws| PathBuf::from(&ws.path));
-                    if let Some(dir) = workspace_dir {
-                        cx.reveal_path(&dir);
-                    }
-                }
-            },
-        )
         .detach();
 
         // Subscribe to model dropdown selection events
@@ -426,12 +373,10 @@ impl ChatWindow {
         self.messages = messages;
         self.state = state;
         self.session_file = session_file;
+        self.title = title;
         self.selected_model = selected_model.clone();
         self.thinking_level = thinking_level.clone();
 
-        self.title_bar.update(cx, |tb, _| {
-            tb.title = title;
-        });
         self.chat_input.update(cx, |ci, cx| {
             ci.set_commands(commands, cx);
         });
@@ -1363,9 +1308,9 @@ impl Render for ChatWindow {
             }))
             .flex()
             .flex_col()
-            .size_full()
+            .flex_1()
+            .min_h(px(0.))
             .bg(rgb(0x1a1a1a))
-            .child(self.title_bar.clone())
             .child(
                 div()
                     .flex_1()

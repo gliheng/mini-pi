@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyWindowHandle, BorrowAppContext, Bounds, Context, FocusHandle, Focusable, IntoElement,
+    AnyWindowHandle, BorrowAppContext, Bounds, Context, FocusHandle, IntoElement,
     ParentElement, Render, ScrollHandle, ScrollWheelEvent, SharedString, Styled, Window, div,
     prelude::*, px, rgb, size, svg,
 };
@@ -14,10 +14,9 @@ use crate::sync::settings_sync;
 use crate::ui::input::TextInput;
 use crate::ui::loader::loader;
 use crate::utils::format::format_relative_time;
-use crate::views::chat_window::ChatWindow;
+use crate::views::chat_app::open_chat_window;
 use crate::views::create_thread_button::{CreateThreadButton, CreateThreadButtonEvent};
 use crate::views::pi_agent_import::{PiAgentImport, PiAgentImportEvent};
-use crate::views::title_bar::{TitleBar, TitleBarEvent, TitleBarVariant};
 use crate::views::user_panel::{UserPanel, UserPanelEvent};
 
 pub struct ThreadItem {
@@ -109,16 +108,12 @@ impl Render for ThreadItem {
                     });
                 }
 
-                let handle = cx
-                    .open_window(custom_window_options(Some(bounds)), move |window, cx| {
-                        cx.new(|cx| {
-                            let chat = ChatWindow::new(cx, Some(&thread_meta), store.clone());
-                            let input_handle = chat.chat_input.read(cx).focus_handle(cx);
-                            window.focus(&input_handle);
-                            chat
-                        })
-                    })
-                    .unwrap();
+                let handle = open_chat_window(
+                    cx,
+                    Some(&thread_meta),
+                    store.clone(),
+                    custom_window_options(Some(bounds)),
+                );
                 cx.update_global::<AppStore, _>(|app_store, _| {
                     app_store.thread_windows.insert(thread_id, handle.into());
                 });
@@ -315,7 +310,6 @@ impl Render for ThreadItem {
 }
 
 pub struct ThreadList {
-    pub title_bar: gpui::Entity<TitleBar>,
     pub user_panel: gpui::Entity<UserPanel>,
     pub import_prompt: gpui::Entity<PiAgentImport>,
     pub create_thread_button: gpui::Entity<CreateThreadButton>,
@@ -331,7 +325,6 @@ pub struct ThreadList {
     pub loading_more: bool,
     pub search_input: gpui::Entity<TextInput>,
     pub _subscription: gpui::Subscription,
-    pub _titlebar_subscription: gpui::Subscription,
     pub _user_panel_subscription: gpui::Subscription,
     pub _import_prompt_subscription: gpui::Subscription,
     pub _create_thread_subscription: gpui::Subscription,
@@ -340,7 +333,6 @@ pub struct ThreadList {
 
 impl ThreadList {
     pub fn new(cx: &mut Context<Self>, store: Arc<Store>) -> Self {
-        let title_bar = cx.new(|_| TitleBar::new("Mini Pi", TitleBarVariant::Home));
         let subscription = cx.observe_global::<AppStore>(move |this, cx| {
             this.load_threads(cx);
         });
@@ -348,13 +340,6 @@ impl ThreadList {
         let user_panel = cx.new(UserPanel::new);
         let import_prompt = cx.new(|_| PiAgentImport::new());
         let create_thread_button = cx.new(|_| CreateThreadButton::new());
-
-        let titlebar_subscription =
-            cx.subscribe(&title_bar, move |_this, _, _event: &TitleBarEvent, cx| {
-                cx.update_global(|app: &mut AppStore, _| {
-                    app.user_panel_active = !app.user_panel_active;
-                });
-            });
 
         let user_panel_subscription =
             cx.subscribe(&user_panel, move |_this, _, _event: &UserPanelEvent, cx| {
@@ -434,7 +419,6 @@ impl ThreadList {
         let show_import_prompt = is_first && has_pi_settings;
 
         let mut thread_list = Self {
-            title_bar,
             user_panel,
             import_prompt,
             create_thread_button,
@@ -450,7 +434,6 @@ impl ThreadList {
             loading_more: false,
             search_input,
             _subscription: subscription,
-            _titlebar_subscription: titlebar_subscription,
             _user_panel_subscription: user_panel_subscription,
             _import_prompt_subscription: import_prompt_subscription,
             _create_thread_subscription: create_thread_subscription,
@@ -481,18 +464,7 @@ impl ThreadList {
         let store = cx.global::<AppStore>().store.clone();
         let _sessions_dir = store.sessions_dir().clone();
         let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
-        cx.open_window(
-            custom_window_options(Some(bounds)),
-            |window, cx| {
-                cx.new(|cx| {
-                    let chat = ChatWindow::new(cx, None, store.clone());
-                    let input_handle = chat.chat_input.read(cx).focus_handle(cx);
-                    window.focus(&input_handle);
-                    chat
-                })
-            },
-        )
-        .unwrap();
+        open_chat_window(cx, None, store.clone(), custom_window_options(Some(bounds)));
     }
 
     fn load_threads(&mut self, cx: &mut Context<Self>) {
@@ -656,9 +628,9 @@ impl Render for ThreadList {
                 })
                 .flex()
                 .flex_col()
-                .size_full()
+                .flex_1()
+                .min_h(px(0.))
                 .bg(rgb(0x1a1a1a))
-                .child(self.title_bar.clone())
                 .child(self.user_panel.clone());
         }
 
@@ -675,9 +647,9 @@ impl Render for ThreadList {
             })
             .flex()
             .flex_col()
-            .size_full()
+            .flex_1()
+            .min_h(px(0.))
             .bg(rgb(0x1a1a1a))
-            .child(self.title_bar.clone())
             .child(
                 div()
                     .id("thread-search-bar")
@@ -702,6 +674,7 @@ impl Render for ThreadList {
                 div()
                     .id("thread-list")
                     .flex_1()
+                    .min_h(px(0.))
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll_handle)
                     .on_scroll_wheel(cx.listener(|this, _event: &ScrollWheelEvent, window, cx| {

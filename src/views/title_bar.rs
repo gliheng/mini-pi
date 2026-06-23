@@ -411,6 +411,7 @@ impl Render for TitleBar {
     }
 }
 
+#[allow(dead_code)]
 fn caption_button_svg(
     icon_path: impl Into<SharedString>,
     area: WindowControlArea,
@@ -462,7 +463,7 @@ fn caption_button_svg(
 }
 
 #[cfg(target_os = "macos")]
-fn set_window_level(window: &Window, pinned: bool) {
+pub fn set_window_level(window: &Window, pinned: bool) {
     use objc::runtime::Object;
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
@@ -486,7 +487,7 @@ fn set_window_level(window: &Window, pinned: bool) {
 }
 
 #[cfg(target_os = "windows")]
-fn set_window_level(window: &Window, pinned: bool) {
+pub fn set_window_level(window: &Window, pinned: bool) {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
     type HWND = *mut std::ffi::c_void;
@@ -527,7 +528,7 @@ fn set_window_level(window: &Window, pinned: bool) {
 }
 
 #[cfg(target_os = "linux")]
-fn set_window_level(_window: &Window, pinned: bool) {
+pub fn set_window_level(_window: &Window, pinned: bool) {
     // Best-effort X11 support via wmctrl. Wayland has no standard always-on-top protocol.
     let _ = std::process::Command::new("wmctrl")
         .args([

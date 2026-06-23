@@ -368,6 +368,7 @@ async fn send_command(
     }
 }
 
+#[allow(dead_code)]
 enum ParseError {
     BadThreadId,
     InvalidBody(String),

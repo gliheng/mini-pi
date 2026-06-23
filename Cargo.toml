@@ -35,6 +35,7 @@ tower-http = { version = "0.6", features = ["cors"] }
 qrcode = { version = "0.14", default-features = false, features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 subtle = "2"
+gpui-component = "0.5.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
