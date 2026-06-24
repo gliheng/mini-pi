@@ -1,7 +1,9 @@
 use gpui::{
     Context, EventEmitter, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
-    SharedString, StatefulInteractiveElement, Styled, Window, div, px, rgb, svg,
+    SharedString, StatefulInteractiveElement, Styled, Window, div, px, rgb,
 };
+use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
+use gpui_component::{Icon, Sizable as _, Size};
 
 use crate::data::store::WorkspaceMeta;
 
@@ -101,41 +103,37 @@ impl Render for WorkspaceManager {
                                                     .child("Workspaces"),
                                             )
                                             .child(
-                                                div()
-                                                    .id("modal-add-workspace-btn")
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_center()
-                                                    .px_2()
-                                                    .py_0p5()
-                                                    .rounded_md()
-                                                    .bg(rgb(0x333333))
-                                                    .text_color(rgb(0xcccccc))
-                                                    .text_xs()
-                                                    .cursor_pointer()
-                                                    .hover(|style| style.bg(rgb(0x444444)))
-                                                    .child("+")
+                                                Button::new("modal-add-workspace-btn")
+                                                    .label("+")
+                                                    .with_size(Size::XSmall)
+                                                    .custom(
+                                                        ButtonCustomVariant::new(cx)
+                                                            .color(rgb(0x333333).into())
+                                                            .foreground(rgb(0xcccccc).into())
+                                                            .hover(rgb(0x444444).into())
+                                                            .active(rgb(0x555555).into()),
+                                                    )
                                                     .on_click(cx.listener(|_this, _, _window, cx| {
                                                         cx.emit(WorkspaceManagerEvent::AddRequested);
                                                     })),
                                             ),
                                     )
                                     .child(
-                                        div()
-                                            .id("modal-close-btn")
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .size(px(24.))
-                                            .cursor_pointer()
-                                            .text_color(rgb(0x888888))
-                                            .child(
-                                                svg()
+                                        Button::new("modal-close-btn")
+                                            .with_size(Size::XSmall)
+                                            .custom(
+                                                ButtonCustomVariant::new(cx)
+                                                    .color(gpui::rgba(0x00000000).into())
+                                                    .foreground(rgb(0x888888).into())
+                                                    .hover(rgb(0x333333).into())
+                                                    .active(rgb(0x444444).into()),
+                                            )
+                                            .icon(
+                                                Icon::empty()
                                                     .path("close.svg")
                                                     .size(px(14.))
                                                     .text_color(rgb(0x888888)),
                                             )
-                                            .hover(|style| style.text_color(rgb(0xcccccc)))
                                             .on_click(cx.listener(|_this, _, _window, cx| {
                                                 cx.emit(WorkspaceManagerEvent::CloseRequested);
                                             })),
@@ -160,20 +158,16 @@ impl Render for WorkspaceManager {
                                                 .child("No workspaces yet"),
                                         )
                                         .child(
-                                            div()
-                                                .id("modal-add-workspace-btn-empty")
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .px_3()
-                                                .py_1()
-                                                .rounded_md()
-                                                .bg(rgb(0x333333))
-                                                .text_color(rgb(0xcccccc))
-                                                .text_sm()
-                                                .cursor_pointer()
-                                                .hover(|style| style.bg(rgb(0x444444)))
-                                                .child("+ Add Workspace")
+                                            Button::new("modal-add-workspace-btn-empty")
+                                                .label("+ Add Workspace")
+                                                .with_size(Size::Small)
+                                                .custom(
+                                                    ButtonCustomVariant::new(cx)
+                                                        .color(rgb(0x333333).into())
+                                                        .foreground(rgb(0xcccccc).into())
+                                                        .hover(rgb(0x444444).into())
+                                                        .active(rgb(0x555555).into()),
+                                                )
                                                 .on_click(cx.listener(|_this, _, _window, cx| {
                                                     cx.emit(WorkspaceManagerEvent::AddRequested);
                                                 })),
@@ -219,21 +213,21 @@ impl Render for WorkspaceManager {
                                                         ),
                                                 )
                                                 .child(
-                                                    div()
-                                                        .id(SharedString::from(format!("ws-delete-{ws_id}")))
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_center()
-                                                        .size(px(22.))
-                                                        .cursor_pointer()
-                                                        .text_color(rgb(0x888888))
-                                                        .child(
-                                                            svg()
+                                                    Button::new(SharedString::from(format!("ws-delete-{ws_id}")))
+                                                        .with_size(Size::XSmall)
+                                                        .custom(
+                                                            ButtonCustomVariant::new(cx)
+                                                                .color(gpui::rgba(0x00000000).into())
+                                                                .foreground(rgb(0x888888).into())
+                                                                .hover(rgb(0x333333).into())
+                                                                .active(rgb(0x444444).into()),
+                                                        )
+                                                        .icon(
+                                                            Icon::empty()
                                                                 .path("close.svg")
                                                                 .size(px(12.))
                                                                 .text_color(rgb(0x888888)),
                                                         )
-                                                        .hover(|style| style.text_color(rgb(0xef4444)))
                                                         .on_click(cx.listener(move |_this, _, _window, cx| {
                                                             cx.emit(WorkspaceManagerEvent::DeleteRequested {
                                                                 workspace_id: ws_id.clone(),

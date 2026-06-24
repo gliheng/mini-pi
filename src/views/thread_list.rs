@@ -12,7 +12,8 @@ use crate::core::app::{AppStore, custom_window_options};
 use crate::data::store::{PaginatedThreads, Store, ThreadMeta};
 use crate::sync::settings_sync;
 use crate::ui::input::TextInput;
-use crate::ui::loader::loader;
+use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
+use gpui_component::{Icon, Size, Sizable as _, spinner::Spinner};
 use crate::utils::format::format_relative_time;
 use crate::views::chat_app::open_chat_window;
 use crate::views::create_thread_button::{CreateThreadButton, CreateThreadButtonEvent};
@@ -201,21 +202,21 @@ impl Render for ThreadItem {
                     })
                     .when(!confirming && hovered, |el| {
                         el.child(
-                            div()
-                                .id(SharedString::from(format!("pin-btn-{}", thread_id)))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .size(px(24.))
-                                .rounded_md()
-                                .cursor_pointer()
-                                .child(
-                                    svg()
+                            Button::new(SharedString::from(format!("pin-btn-{}", thread_id)))
+                                .with_size(Size::XSmall)
+                                .custom(
+                                    ButtonCustomVariant::new(cx)
+                                        .color(gpui::rgba(0x00000000).into())
+                                        .foreground(rgb(0x666666).into())
+                                        .hover(rgb(0x333333).into())
+                                        .active(rgb(0x444444).into()),
+                                )
+                                .icon(
+                                    Icon::empty()
                                         .path(if pinned { "unpin.svg" } else { "pin.svg" })
                                         .size(px(14.))
                                         .text_color(rgb(0x666666)),
                                 )
-                                .hover(|style| style.bg(rgb(0x333333)))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     cx.stop_propagation();
                                     let _ = this.store.toggle_pin(&this.thread.id);
@@ -223,22 +224,21 @@ impl Render for ThreadItem {
                                 })),
                         )
                         .child(
-                            div()
-                                .id(SharedString::from(format!("remove-btn-{}", thread_id)))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .size(px(24.))
-                                .rounded_md()
-                                .text_color(rgb(0x666666))
-                                .cursor_pointer()
-                                .child(
-                                    svg()
+                            Button::new(SharedString::from(format!("remove-btn-{}", thread_id)))
+                                .with_size(Size::XSmall)
+                                .custom(
+                                    ButtonCustomVariant::new(cx)
+                                        .color(gpui::rgba(0x00000000).into())
+                                        .foreground(rgb(0x666666).into())
+                                        .hover(rgb(0x7f1d1d).into())
+                                        .active(rgb(0x991b1b).into()),
+                                )
+                                .icon(
+                                    Icon::empty()
                                         .path("close.svg")
                                         .size(px(14.))
                                         .text_color(rgb(0x666666)),
                                 )
-                                .hover(|style| style.bg(rgb(0x7f1d1d)).text_color(rgb(0xfca5a5)))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     cx.stop_propagation();
                                     this.confirming = true;
@@ -255,23 +255,13 @@ impl Render for ThreadItem {
                                 .gap_1()
                                 .child(div().text_xs().text_color(rgb(0xfca5a5)).child("Delete?"))
                                 .child(
-                                    div()
-                                        .id(SharedString::from(format!(
-                                            "confirm-delete-btn-{}",
-                                            thread_id
-                                        )))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .px_2()
-                                        .py_1()
-                                        .rounded_md()
-                                        .bg(rgb(0x7f1d1d))
-                                        .text_color(rgb(0xffffff))
-                                        .text_xs()
-                                        .cursor_pointer()
-                                        .child("Yes")
-                                        .hover(|style| style.bg(rgb(0x991b1b)))
+                                    Button::new(SharedString::from(format!(
+                                        "confirm-delete-btn-{}",
+                                        thread_id
+                                    )))
+                                        .label("Yes")
+                                        .with_size(Size::XSmall)
+                                        .danger()
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             cx.stop_propagation();
                                             let _ = this.store.delete_thread(&this.thread.id);
@@ -280,23 +270,12 @@ impl Render for ThreadItem {
                                         })),
                                 )
                                 .child(
-                                    div()
-                                        .id(SharedString::from(format!(
-                                            "cancel-delete-btn-{}",
-                                            thread_id
-                                        )))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .px_2()
-                                        .py_1()
-                                        .rounded_md()
-                                        .bg(rgb(0x333333))
-                                        .text_color(rgb(0x888888))
-                                        .text_xs()
-                                        .cursor_pointer()
-                                        .child("No")
-                                        .hover(|style| style.bg(rgb(0x444444)))
+                                    Button::new(SharedString::from(format!(
+                                        "cancel-delete-btn-{}",
+                                        thread_id
+                                    )))
+                                        .label("No")
+                                        .with_size(Size::XSmall)
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             cx.stop_propagation();
                                             this.confirming = false;
@@ -719,7 +698,11 @@ impl Render for ThreadList {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .child(loader()),
+                                .child(
+                                    Spinner::new()
+                                        .with_size(Size::Small)
+                                        .color(gpui::rgb(0x888888).into()),
+                                ),
                         )
                     })
                     .when(self.all_threads_loaded(cx) && !self.thread_items.is_empty(), |el| {

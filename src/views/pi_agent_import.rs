@@ -1,7 +1,9 @@
 use gpui::{
     Context, EventEmitter, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
-    StatefulInteractiveElement, Styled, div, prelude::FluentBuilder, px, rgb, svg,
+    Styled, div, prelude::FluentBuilder, px, rgb,
 };
+use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::{Icon, Sizable as _, Size};
 
 use crate::auth::state;
 
@@ -109,7 +111,7 @@ impl Render for PiAgentImport {
                                     .items_center()
                                     .gap_2()
                                     .child(
-                                        svg()
+                                        Icon::empty()
                                             .path("folder.svg")
                                             .size(px(20.))
                                             .text_color(rgb(0x818cf8)),
@@ -139,47 +141,32 @@ impl Render for PiAgentImport {
                                     .gap_2()
                                     .child(
                                         div()
-                                            .id("import-btn")
                                             .flex_1()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .px_4()
-                                            .py_2()
-                                            .rounded_md()
-                                            .bg(rgb(0x4f46e5))
-                                            .cursor_pointer()
-                                            .text_color(rgb(0xffffff))
-                                            .text_sm()
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .hover(|style| style.bg(rgb(0x6366f1)))
-                                            .on_click(cx.listener(|this: &mut Self, _, _, cx| {
-                                                this.run_import();
-                                                cx.emit(PiAgentImportEvent::ImportRequested);
-                                                cx.notify();
-                                            }))
-                                            .child("Import"),
+                                            .child(
+                                                Button::new("import-btn")
+                                                    .label("Import")
+                                                    .primary()
+                                                    .with_size(Size::Small)
+                                                    .w_full()
+                                                    .on_click(cx.listener(|this: &mut Self, _, _, cx| {
+                                                        this.run_import();
+                                                        cx.emit(PiAgentImportEvent::ImportRequested);
+                                                        cx.notify();
+                                                    })),
+                                            ),
                                     )
                                     .child(
                                         div()
-                                            .id("skip-import-btn")
                                             .flex_1()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .px_4()
-                                            .py_2()
-                                            .rounded_md()
-                                            .bg(rgb(0x333333))
-                                            .cursor_pointer()
-                                            .text_color(rgb(0x888888))
-                                            .text_sm()
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .hover(|style| style.bg(rgb(0x444444)))
-                                            .on_click(cx.listener(|_this: &mut Self, _, _, cx| {
-                                                cx.emit(PiAgentImportEvent::SkipRequested);
-                                            }))
-                                            .child("Skip"),
+                                            .child(
+                                                Button::new("skip-import-btn")
+                                                    .label("Skip")
+                                                    .with_size(Size::Small)
+                                                    .w_full()
+                                                    .on_click(cx.listener(|_this: &mut Self, _, _, cx| {
+                                                        cx.emit(PiAgentImportEvent::SkipRequested);
+                                                    })),
+                                            ),
                                     ),
                             )
                             .when(self.import_result.is_some(), |el: gpui::Stateful<gpui::Div>| {

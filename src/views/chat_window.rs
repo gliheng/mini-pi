@@ -14,8 +14,9 @@ use crate::core::session_handle::{SessionEvent, SessionHandle, WorkspaceInfo};
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::data::store::{Store, ThreadMeta, WorkspaceMeta};
 use crate::ui::dropdown::{Direction, Dropdown, DropdownEvent, DropdownItem};
-use crate::ui::loader::{loader, spinner_with, text_loader};
 use crate::ui::markdown::MarkdownRenderer;
+use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
+use gpui_component::{Disableable as _, Icon, Size, Sizable as _, spinner::Spinner};
 use crate::ui::text_area::TextArea;
 use crate::ui::toast::Toast;
 use crate::utils::voice::{VoiceRecorder, VoiceState, start_recording, transcribe};
@@ -1390,33 +1391,18 @@ impl Render for ChatWindow {
                                                                             .gap_2()
                                                                             .justify_end()
                                                                             .child(
-                                                                                div()
-                                                                                    .id("inline-edit-save")
-                                                                                    .px_2()
-                                                                                    .py_1()
-                                                                                    .rounded_md()
-                                                                                    .bg(rgb(0x4f46e5))
-                                                                                    .text_color(rgb(0xffffff))
-                                                                                    .text_xs()
-                                                                                    .cursor_pointer()
-                                                                                    .hover(|style| style.bg(rgb(0x4338ca)))
-                                                                                    .child("Save")
+                                                                                Button::new("inline-edit-save")
+                                                                                    .label("Save")
+                                                                                    .with_size(Size::XSmall)
+                                                                                    .primary()
                                                                                     .on_click(cx.listener(|this, _, _window, cx| {
                                                                                         this.confirm_inline_edit(&ConfirmInlineEdit, _window, cx);
                                                                                     }))
                                                                             )
                                                                             .child(
-                                                                                div()
-                                                                                    .id("inline-edit-cancel")
-                                                                                    .px_2()
-                                                                                    .py_1()
-                                                                                    .rounded_md()
-                                                                                    .bg(rgb(0x3f3f46))
-                                                                                    .text_color(rgb(0xd4d4d8))
-                                                                                    .text_xs()
-                                                                                    .cursor_pointer()
-                                                                                    .hover(|style| style.bg(rgb(0x52525b)))
-                                                                                    .child("Cancel")
+                                                                                Button::new("inline-edit-cancel")
+                                                                                    .label("Cancel")
+                                                                                    .with_size(Size::XSmall)
                                                                                     .on_click(cx.listener(|this, _, _window, cx| {
                                                                                         this.cancel_inline_edit(&CancelInlineEdit, _window, cx);
                                                                                     }))
@@ -1443,7 +1429,11 @@ impl Render for ChatWindow {
                                                                             })
                                                                             .text_sm()
                                                                             .when(is_streaming_empty, |this| {
-                                                                                this.child(text_loader())
+                                                                                this.child(
+                                                                                    Spinner::new()
+                                                                                        .with_size(Size::XSmall)
+                                                                                        .color(gpui::rgb(0xe5e5e5).into()),
+                                                                                )
                                                                             })
                                                                             .when(!is_streaming_empty, |this| {
                                                                                 if let Some(md) = markdown_entity {
@@ -1466,17 +1456,20 @@ impl Render for ChatWindow {
                                                                     )
                                                                     .when(!is_user && !is_streaming_empty, |this| {
                                                                         this.child(
-                                                                            div()
-                                                                                .id(("copy-btn", msg_idx as u64))
-                                                                                .flex()
-                                                                                .items_center()
-                                                                                .cursor_pointer()
-                                                                                .child(
-                                                                                    svg()
+                                                                            Button::new(("copy-btn", msg_idx as u64))
+                                                                                .with_size(Size::XSmall)
+                                                                                .custom(
+                                                                                    ButtonCustomVariant::new(cx)
+                                                                                        .color(gpui::rgba(0x00000000).into())
+                                                                                        .foreground(rgb(0x888888).into())
+                                                                                        .hover(rgb(0x333333).into())
+                                                                                        .active(rgb(0x444444).into()),
+                                                                                )
+                                                                                .icon(
+                                                                                    Icon::empty()
                                                                                         .path("clipboard.svg")
                                                                                         .size(px(12.))
-                                                                                        .text_color(rgb(0x888888))
-                                                                                        .hover(|style| style.text_color(rgb(0xcccccc))),
+                                                                                        .text_color(rgb(0x888888)),
                                                                                 )
                                                                                 .on_click(cx.listener(move |_this, _, _window, cx| {
                                                                                     cx.write_to_clipboard(ClipboardItem::new_string(text_to_copy.to_string()));
@@ -1486,17 +1479,20 @@ impl Render for ChatWindow {
                                                                     .when(is_user && !is_streaming_empty, |this| {
                                                                         let edit_msg_id = msg_id.clone();
                                                                         this.child(
-                                                                            div()
-                                                                                .id(("edit-btn", msg_idx as u64))
-                                                                                .flex()
-                                                                                .items_center()
-                                                                                .cursor_pointer()
-                                                                                .child(
-                                                                                    svg()
+                                                                            Button::new(("edit-btn", msg_idx as u64))
+                                                                                .with_size(Size::XSmall)
+                                                                                .custom(
+                                                                                    ButtonCustomVariant::new(cx)
+                                                                                        .color(gpui::rgba(0x00000000).into())
+                                                                                        .foreground(rgb(0x888888).into())
+                                                                                        .hover(rgb(0x333333).into())
+                                                                                        .active(rgb(0x444444).into()),
+                                                                                )
+                                                                                .icon(
+                                                                                    Icon::empty()
                                                                                         .path("edit.svg")
                                                                                         .size(px(12.))
-                                                                                        .text_color(rgb(0x888888))
-                                                                                        .hover(|style| style.text_color(rgb(0xcccccc))),
+                                                                                        .text_color(rgb(0x888888)),
                                                                                 )
                                                                                 .on_click(cx.listener(move |this, _, _window, cx| {
                                                                                     this.start_edit_message(edit_msg_id.clone(), _window, cx);
@@ -1577,7 +1573,11 @@ impl Render for ChatWindow {
                                                 .bg(rgb(0x252525))
                                                 .text_color(rgb(0x888888))
                                                 .text_xs()
-                                                .child(loader()),
+                                                .child(
+                                                    Spinner::new()
+                                                        .with_size(Size::Small)
+                                                        .color(gpui::rgb(0x888888).into()),
+                                                ),
                                         ),
                                 )
                             })
@@ -1590,7 +1590,11 @@ impl Render for ChatWindow {
                                         .py_1()
                                         .text_color(rgb(0x888888))
                                         .text_xs()
-                                        .child(text_loader()),
+                                        .child(
+                                            Spinner::new()
+                                                .with_size(Size::XSmall)
+                                                .color(gpui::rgb(0x888888).into()),
+                                        ),
                                 )
                             })
                             .when(is_error, |el| {
@@ -1623,33 +1627,51 @@ impl Render for ChatWindow {
                         .gap_1()
                         .items_center()
                         .child(
-                            div()
-                                .id("manage-workspace-btn")
-                                .flex()
-                                .items_center()
-                                .gap_1()
-                                .px(px(7.))
-                                .py(px(1.))
-                                .rounded_md()
-                                .border_1()
-                                .border_color(if self.show_workspace_manager { rgb(0x4f46e5) } else { rgb(0x555555) })
-                                .text_color(if self.show_workspace_manager { rgb(0x4f46e5) } else { rgb(0xaaaaaa) })
-                                .text_xs()
-                                .cursor_pointer()
-                                .hover(|style| {
-                                    if self.show_workspace_manager {
-                                        style
-                                    } else {
-                                        style.border_color(rgb(0x888888)).text_color(rgb(0xcccccc))
-                                    }
-                                })
-                                .child(
-                                    svg()
+                            Button::new("manage-workspace-btn")
+                                .with_size(Size::XSmall)
+                                .compact()
+                                .outline()
+                                .custom(
+                                    ButtonCustomVariant::new(cx)
+                                        .color(gpui::rgba(0x00000000).into())
+                                        .foreground(
+                                            if self.show_workspace_manager {
+                                                rgb(0x4f46e5)
+                                            } else {
+                                                rgb(0xaaaaaa)
+                                            }
+                                            .into(),
+                                        )
+                                        .hover(
+                                            if self.show_workspace_manager {
+                                                rgb(0x4f46e5)
+                                            } else {
+                                                rgb(0xcccccc)
+                                            }
+                                            .into(),
+                                        )
+                                        .active(
+                                            if self.show_workspace_manager {
+                                                rgb(0x4f46e5)
+                                            } else {
+                                                rgb(0xcccccc)
+                                            }
+                                            .into(),
+                                        ),
+                                )
+                                .icon(
+                                    Icon::empty()
                                         .path("manage.svg")
                                         .size(px(10.))
-                                        .text_color(if self.show_workspace_manager { rgb(0x4f46e5) } else { rgb(0xaaaaaa) })
+                                        .text_color(
+                                            if self.show_workspace_manager {
+                                                rgb(0x4f46e5)
+                                            } else {
+                                                rgb(0xaaaaaa)
+                                            },
+                                        ),
                                 )
-                                .child("Workspace")
+                                .label("Workspace")
                                 .on_click(cx.listener(|this, _, _window, cx| {
                                     this.show_workspace_manager = !this.show_workspace_manager;
                                     cx.notify();
@@ -1660,27 +1682,59 @@ impl Render for ChatWindow {
                             let ws_id = ws.id.clone();
                             let ws_name = ws.name.clone();
                             let name: SharedString = ws_name.clone().into();
-                            div()
-                                .id(SharedString::from(format!("ws-{}", ws_id)))
-                                .flex()
-                                .items_center()
-                                .px_2()
-                                .py_0p5()
-                                .rounded_md()
-                                .bg(if is_selected { rgb(0x6366f1) } else { rgb(0x2a2a2a) })
-                                .text_color(if is_selected { rgb(0xffffff) } else { rgb(0xaaaaaa) })
-                                .text_xs()
-                                .cursor_pointer()
-                                .hover(|style| if is_selected { style } else { style.bg(rgb(0x333333)) })
+                            Button::new(SharedString::from(format!("ws-{}", ws_id)))
+                                .with_size(Size::XSmall)
+                                .compact()
+                                .custom(
+                                    ButtonCustomVariant::new(cx)
+                                        .color(
+                                            if is_selected {
+                                                rgb(0x6366f1)
+                                            } else {
+                                                rgb(0x2a2a2a)
+                                            }
+                                            .into(),
+                                        )
+                                        .foreground(
+                                            if is_selected {
+                                                rgb(0xffffff)
+                                            } else {
+                                                rgb(0xaaaaaa)
+                                            }
+                                            .into(),
+                                        )
+                                        .hover(
+                                            if is_selected {
+                                                rgb(0x6366f1)
+                                            } else {
+                                                rgb(0x333333)
+                                            }
+                                            .into(),
+                                        )
+                                        .active(
+                                            if is_selected {
+                                                rgb(0x4f46e5)
+                                            } else {
+                                                rgb(0x444444)
+                                            }
+                                            .into(),
+                                        ),
+                                )
                                 .when(ws.name == "Default", |this| {
-                                    this.gap_1().child(
-                                        svg()
+                                    this.icon(
+                                        Icon::empty()
                                             .path("folder.svg")
                                             .size(px(10.))
-                                            .text_color(if is_selected { rgb(0xffffff) } else { rgb(0xaaaaaa) })
+                                            .text_color(
+                                                if is_selected {
+                                                    rgb(0xffffff)
+                                                } else {
+                                                    rgb(0xaaaaaa)
+                                                },
+                                            ),
                                     )
                                 })
-                                .child(name)
+                                .label(name)
                                 .on_click(cx.listener(move |this, _, _window, cx| {
                                     this.selected_workspace_id = Some(ws_id.clone());
                                     let ws_dir = this.workspaces.iter().find(|w| w.id == ws_id).map(|w| PathBuf::from(&w.path));
@@ -1732,60 +1786,66 @@ impl Render for ChatWindow {
                                     .child({
                                         let is_recording = self.voice_state == VoiceState::Recording;
                                         let is_transcribing = self.voice_state == VoiceState::Transcribing;
-                                        let btn = div()
-                                            .id("voice-btn")
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .size(px(28.))
-                                            .rounded_md()
-                                            .text_color(rgb(0xffffff))
-                                            .bg(if is_recording {
-                                                rgb(0xef4444)
-                                            } else if is_transcribing {
-                                                rgb(0x666666)
-                                            } else {
-                                                rgb(0x4b5563)
-                                            })
-                                            .when(!is_transcribing, |this| this.cursor_pointer());
-                                        let btn = if is_transcribing {
-                                            btn.child(spinner_with(14.0, 0xffffff))
+                                        if is_transcribing {
+                                            Button::new("voice-btn")
+                                                .with_size(Size::Small)
+                                                .custom(
+                                                    ButtonCustomVariant::new(cx)
+                                                        .color(rgb(0x666666).into())
+                                                        .foreground(rgb(0xffffff).into())
+                                                        .hover(rgb(0x666666).into())
+                                                        .active(rgb(0x666666).into()),
+                                                )
+                                                .loading(true)
+                                                .disabled(true)
+                                                .into_any_element()
+                                        } else if is_recording {
+                                            Button::new("voice-btn")
+                                                .with_size(Size::Small)
+                                                .custom(
+                                                    ButtonCustomVariant::new(cx)
+                                                        .color(rgb(0xef4444).into())
+                                                        .foreground(rgb(0xffffff).into())
+                                                        .hover(rgb(0xdc2626).into())
+                                                        .active(rgb(0xb91c1c).into()),
+                                                )
+                                                .icon(
+                                                    Icon::empty()
+                                                        .path("mic.svg")
+                                                        .size(px(14.))
+                                                        .text_color(rgb(0xffffff)),
+                                                )
+                                                .on_click(cx.listener(Self::toggle_voice_input))
+                                                .into_any_element()
                                         } else {
-                                            btn.child(
-                                                svg()
-                                                    .path("mic.svg")
-                                                    .size(px(14.))
-                                                    .text_color(rgb(0xffffff)),
-                                            )
-                                        };
-                                        btn.when(!is_transcribing, |this| {
-                                            this.on_click(cx.listener(Self::toggle_voice_input))
-                                        })
+                                            Button::new("voice-btn")
+                                                .with_size(Size::Small)
+                                                .custom(
+                                                    ButtonCustomVariant::new(cx)
+                                                        .color(rgb(0x4b5563).into())
+                                                        .foreground(rgb(0xffffff).into())
+                                                        .hover(rgb(0x6b7280).into())
+                                                        .active(rgb(0x374151).into()),
+                                                )
+                                                .icon(
+                                                    Icon::empty()
+                                                        .path("mic.svg")
+                                                        .size(px(14.))
+                                                        .text_color(rgb(0xffffff)),
+                                                )
+                                                .on_click(cx.listener(Self::toggle_voice_input))
+                                                .into_any_element()
+                                        }
                                     })
                                     .child(
-                                        div()
-                                            .id("send-btn")
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .size(px(28.))
-                                            .bg(if is_disabled { rgb(0x666666) } else { rgb(0x6366f1) })
-                                            .rounded_md()
-                                            .text_color(rgb(0xffffff))
-                                            .when(!is_disabled, |this| this.cursor_pointer())
-                                            .child("➤")
-                                            .hover(|style| {
-                                                if !is_disabled {
-                                                    style.bg(rgb(0x2563eb))
-                                                } else {
-                                                    style
-                                                }
-                                            })
-                                            .when(!is_disabled, |this| {
-                                                this.on_click(cx.listener(|this, _, _window, cx| {
-                                                    this.send_message(&SendMessage, _window, cx);
-                                                }))
-                                            }),
+                                        Button::new("send-btn")
+                                            .label("➤")
+                                            .with_size(Size::Small)
+                                            .primary()
+                                            .disabled(is_disabled)
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.send_message(&SendMessage, _window, cx);
+                                            })),
                                     )
                             )
                     )
