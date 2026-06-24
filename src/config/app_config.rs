@@ -1,3 +1,4 @@
+use gpui_component::theme::ThemeMode;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -7,6 +8,8 @@ pub struct AppConfig {
     pub default_model: Option<String>,
     #[serde(default)]
     pub remote_control: RemoteControlConfig,
+    #[serde(default)]
+    pub theme: ThemeMode,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

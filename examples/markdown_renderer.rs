@@ -5,7 +5,7 @@ use gpui::{
     Window, actions, div, prelude::*, px, rgb, size,
 };
 use mini_pi::core::assets::Assets;
-use mini_pi::ui::markdown::MarkdownRenderer;
+use gpui_component::text::{TextView, TextViewState};
 
 actions!(markdown_example, [Quit]);
 
@@ -21,7 +21,7 @@ impl Render for EmptyDragGhost {
 }
 
 struct MarkdownExample {
-    renderer: Entity<MarkdownRenderer>,
+    renderer: Entity<TextViewState>,
     source: String,
     split_ratio: f32,
 }
@@ -140,7 +140,7 @@ impl Render for MarkdownExample {
                             .flex_1()
                             .p_4()
                             .overflow_y_scroll()
-                            .child(self.renderer.clone()),
+                            .child(TextView::new(&self.renderer).w_full()),
                     ),
             )
     }
@@ -174,7 +174,7 @@ fn main() {
                     ..Default::default()
                 },
                 |_window, cx| {
-                    let renderer = cx.new(|_cx| MarkdownRenderer::new(source.clone()));
+                    let renderer = cx.new(|cx| TextViewState::markdown(&source, cx));
 
                     cx.new(|_cx| MarkdownExample {
                         renderer,

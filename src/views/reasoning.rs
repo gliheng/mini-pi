@@ -1,11 +1,13 @@
 use gpui::{
-    Context, IntoElement, ParentElement, Render, SharedString, Styled, Window, div, prelude::*, px,
-    rgb, svg,
+    Context, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
+    StatefulInteractiveElement, Styled, Window, div, px, rgb, svg,
 };
+use gpui_component::collapsible::Collapsible;
 
 /// A self-contained reasoning/thinking display component.
 ///
-/// Manages its own collapsed/expanded state internally.
+/// Manages its own collapsed/expanded state internally and renders via
+/// `gpui_component::Collapsible`.
 pub struct Reasoning {
     content: SharedString,
     collapsed: bool,
@@ -34,16 +36,15 @@ impl Render for Reasoning {
         let collapsed = self.collapsed;
         let content = self.content.clone();
 
-        div()
-            .px_3()
-            .py_1()
-            .rounded_md()
+        Collapsible::new()
+            .open(!collapsed)
             .bg(rgb(0x2a2a2a))
-            .text_color(rgb(0x888888))
-            .text_xs()
+            .rounded_md()
             .child(
                 div()
                     .id("reasoning-toggle")
+                    .px_3()
+                    .py_1()
                     .flex()
                     .flex_row()
                     .gap_1()
@@ -55,13 +56,24 @@ impl Render for Reasoning {
                             .size(px(12.))
                             .text_color(rgb(0x888888)),
                     )
-                    .child(div().child(format!("Thinking {}", if collapsed { "▶" } else { "▼" })))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(0x888888))
+                            .child(format!("Thinking {}", if collapsed { "▶" } else { "▼" })),
+                    )
                     .on_click(cx.listener(|this, _, _window, cx| {
                         this.collapsed = !this.collapsed;
                         cx.notify();
-                    }))
-                    .into_any_element(),
+                    })),
             )
-            .when(!collapsed, |this| this.child(div().mt_1().child(content)))
+            .content(
+                div()
+                    .px_3()
+                    .pb_2()
+                    .text_xs()
+                    .text_color(rgb(0x888888))
+                    .child(content),
+            )
     }
 }

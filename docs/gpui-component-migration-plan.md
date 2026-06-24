@@ -51,50 +51,42 @@ Other notes:
   - `src/views/chat_window.rs` model/thinking selectors → `gpui_component::select::Select` / `SelectState` / `SelectItem` / `SearchableVec`
   - `src/views/chat_window.rs` + `src/views/user_panel.rs` toast → `gpui_component::notification::Notification` via `window.push_notification(...)`
 
+### Phase 3 — Chat input (`TextArea`) without losing `@` / `/`
+- Deleted `src/ui/text_area.rs`.
+- Added `src/ui/chat_input.rs` wrapping `gpui_component::input::InputState` (`.multi_line(true)`, `.auto_grow(1, 8)`, `.submit_on_enter(true)`).
+- Kept the `@` mention and `/` slash popups rendered inline with simple styled lists.
+- Preserved `file_scanner` cache and `[@name](path)` mention insertion logic.
+- Removed `TextArea` key bindings from `src/app.rs`.
+- Updated `src/views/chat_window.rs` (`chat_input`, `inline_edit_input`) and `src/core/session_handle.rs` (`CommandItem` import).
+- Popup keyboard navigation (`up`/`down`/`enter`/`tab`) is handled by an `on_key_down` listener on the input container; verify interactively that this correctly intercepts keys before `InputState` consumes them.
+
+### Phase 4 — Markdown renderer, modals, and reasoning
+- **Markdown:**
+  - Deleted `src/ui/markdown/` and removed `pulldown-cmark` + `syntect` from `Cargo.toml`.
+  - Replaced `MarkdownRenderer` with `gpui_component::text::{TextView, TextViewState}`.
+  - Updated `src/views/chat_window.rs` to render assistant messages with `TextView::new(&text_view_state).w_full()`.
+  - Updated `examples/markdown_renderer.rs` and `examples/markdown_test.md` to use `TextViewState::markdown(...)`.
+- **Modals:**
+  - `src/views/workspace_manager.rs` no longer implements `Render`; it builds dialog content via `render_dialog_content(...)` and is shown through `window.open_dialog(...)` in `src/views/chat_window.rs`.
+- **Reasoning:**
+  - `src/views/reasoning.rs` now uses `gpui_component::collapsible::Collapsible` for thinking/reasoning blocks.
+
 ---
 
 ## 🚧 Remaining work
 
-### Phase 3 — Chat input (`TextArea`) without losing `@` / `/`
-**Goal:** Replace the base text editor in `src/ui/text_area.rs` while preserving autocomplete.
+The major component migration is complete. Remaining items are verification and optional polish:
 
-1. Introduce a new `ChatInput` component backed by `gpui_component::input::InputState` with `.multi_line(true)` and `.submit_on_enter(true)`.
-2. Re-implement the `@` mention popup as a `gpui_component::popover::Popover` containing a `gpui_component::list::List` (or a simple styled list for a first pass).
-3. Re-implement the `/` slash palette the same way.
-4. Keep the existing `file_scanner` cache and mention insertion logic (`[@name](path)`); only the rendering layer changes.
-5. Delete `src/ui/text_area.rs` and remove the `TextArea` global key bindings from `src/app.rs`.
-6. Update `src/views/chat_window.rs` (`chat_input`, `inline_edit_input`) and any other callers.
-
-**Files likely to change:**
-- `src/ui/text_area.rs` — delete
-- `src/ui/mod.rs` — remove `text_area`
-- `src/app.rs` — remove `TextArea` key bindings
-- `src/views/chat_window.rs` — adopt new `ChatInput`
-- Possibly new file `src/ui/chat_input.rs` or `src/views/chat_input.rs`
-
-### Phase 4 — Markdown renderer and modals (highest risk)
-**Goal:** Align the richest custom components.
-
-1. **Markdown**
-   - Evaluate `gpui_component::text::{TextView, TextViewState}` against `src/ui/markdown/`.
-   - Prototype one assistant message with `TextView::markdown(...)` and compare rendering/syntax highlighting.
-   - If acceptable, replace `MarkdownRenderer` and delete `src/ui/markdown/`.
-   - If critical features are missing (custom block types, exact `syntect` theme), defer or wrap `TextView` with custom plugins.
-2. **Modals**
-   - Replace `src/views/workspace_manager.rs` inline modal with `gpui_component::dialog::*`.
-   - Replace `src/views/pi_agent_import.rs` import prompt with `gpui_component::dialog::*` if desired.
-3. **Reasoning**
-   - Replace `src/views/reasoning.rs` with `gpui_component::collapsible::*`.
-
-**Files likely to change:**
-- `src/ui/markdown/` — evaluate/delete
-- `src/views/workspace_manager.rs`
-- `src/views/reasoning.rs`
-- `src/views/pi_agent_import.rs`
-
-### Optional future — Tabs
-- If the multi-window thread model is ever consolidated into a single window, consider `gpui_component::tab::{Tab, TabBar}`.
-- This is **not** part of the current migration unless explicitly requested.
+1. **Manual GUI verification**
+   - Confirm `TextView` renders assistant markdown (paragraphs, lists, code blocks, links) correctly in a live chat window.
+   - Confirm the `Dialog`-based workspace manager opens, adds, and deletes workspaces correctly.
+   - Confirm the `Collapsible` reasoning block expands/collapses and preserves its toggle state.
+2. **Optional: import prompt dialog**
+   - `src/views/pi_agent_import.rs` still renders inline. If desired, migrate it to `gpui_component::dialog::*` for consistency with the workspace manager.
+3. **Optional: autocomplete popovers**
+   - Consider migrating the inline `@` mention and `/` slash popups to `gpui_component::popover::Popover` + `gpui_component::list::List` for more integrated focus management.
+4. **Optional: tabs**
+   - If the multi-window thread model is ever consolidated into a single window, consider `gpui_component::tab::{Tab, TabBar}`.
 
 ---
 
@@ -105,6 +97,8 @@ Other notes:
   - `gpui_component::Sizable as _`
   - `gpui_component::Disableable as _`
   - `gpui_component::button::ButtonVariants as _`
+  - `gpui_component::WindowExt as _` (for `window.open_dialog(...)` / `window.close_dialog(cx)`)
 - `Button` default variant is `Secondary`; there is **no** `.secondary()` method.
 - `Icon::empty().path("assets/relative.svg")` works with mini-pi’s asset loader; `IconName` bundled icons do not.
+- `gpui_component::text::TextView` and `TextViewState` live in the `text` submodule; `Collapsible` lives in `gpui_component::collapsible::Collapsible`; `Dialog` APIs live in `gpui_component::dialog`.
 - Run tests with: `NO_PROXY=localhost,127.0.0.1 cargo test`

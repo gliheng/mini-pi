@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use gpui::{
-    AnyWindowHandle, Bounds, ClipboardItem, Context, Entity, FocusHandle, Focusable,
+    AnyWindowHandle, Bounds, ClipboardItem, Context, Entity, FocusHandle,
     InteractiveElement, IntoElement, KeyDownEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, PathPromptOptions, Pixels, Render, ScrollHandle, SharedString, Styled, Window,
     canvas, div, fill, point, prelude::*, px, rgb, svg,
@@ -14,12 +14,13 @@ use crate::core::session_handle::{SessionEvent, SessionHandle, WorkspaceInfo};
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::data::store::{Store, ThreadMeta, WorkspaceMeta};
 use crate::ui::loader::{loader, text_loader};
-use crate::ui::markdown::MarkdownRenderer;
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
+use gpui_component::text::{TextView, TextViewState};
+use gpui_component::input::Input;
 use gpui_component::notification::Notification;
 use gpui_component::select::{Select, SelectEvent, SelectItem, SelectState, SearchableVec};
 use gpui_component::{Disableable as _, Icon, IndexPath, Size, Sizable as _, WindowExt as _};
-use crate::ui::text_area::TextArea;
+use crate::ui::chat_input::ChatInput;
 use crate::utils::voice::{VoiceRecorder, VoiceState, start_recording, transcribe};
 use crate::views::reasoning::Reasoning;
 use crate::views::workspace_manager::{WorkspaceManager, WorkspaceManagerEvent};
@@ -47,7 +48,7 @@ pub struct ChatWindow {
     pub session_file: String,
     pub title: SharedString,
     pub messages: Vec<Message>,
-    pub chat_input: gpui::Entity<TextArea>,
+    pub chat_input: gpui::Entity<ChatInput>,
     pub focus_handle: FocusHandle,
     pub state: ChatState,
     pub store: Arc<Store>,
@@ -60,16 +61,15 @@ pub struct ChatWindow {
     pub model_dropdown: gpui::Entity<SelectState<SearchableVec<SelectModelItem>>>,
     pub thinking_dropdown: gpui::Entity<SelectState<SearchableVec<SelectModelItem>>>,
     pub reasoning_displays: Vec<Vec<Option<gpui::Entity<Reasoning>>>>,
-    pub markdown_displays: Vec<Vec<Option<gpui::Entity<MarkdownRenderer>>>>,
+    pub markdown_displays: Vec<Vec<Option<gpui::Entity<gpui_component::text::TextViewState>>>>,
     pub scroll_handle: ScrollHandle,
     pub scroll_locked: bool,
     pub scrollbar_drag_offset_y: Option<Pixels>,
     pub workspaces: Vec<WorkspaceMeta>,
     pub selected_workspace_id: Option<String>,
-    pub show_workspace_manager: bool,
     pub workspace_manager: gpui::Entity<WorkspaceManager>,
     pub editing_message_id: Option<String>,
-    pub inline_edit_input: Option<gpui::Entity<TextArea>>,
+    pub inline_edit_input: Option<gpui::Entity<ChatInput>>,
     pub window_handle: AnyWindowHandle,
     pub voice_state: VoiceState,
     pub voice_recorder: Option<VoiceRecorder>,
@@ -91,8 +91,7 @@ impl ChatWindow {
                 }
             })
             .unwrap_or_else(|| "New Thread".into());
-        let chat_input =
-            cx.new(|cx| TextArea::new(cx, "Type a message...").with_text_color(rgb(0xe5e5e5)));
+        let chat_input = cx.new(|cx| ChatInput::new(window, cx, "Type a message..."));
 
         let thread_id = thread.map(|t| t.id.clone());
         let selected_model: Option<String> = thread
@@ -192,7 +191,6 @@ impl ChatWindow {
             scrollbar_drag_offset_y: None,
             workspaces,
             selected_workspace_id,
-            show_workspace_manager: false,
             workspace_manager: workspace_manager.clone(),
             editing_message_id: None,
             inline_edit_input: None,
@@ -222,9 +220,12 @@ impl ChatWindow {
         }
 
         // Subscribe to chat input events (re-render on changes)
-        cx.observe(&window.chat_input, |_, _, cx| {
-            cx.notify();
-        })
+        cx.subscribe(
+            &window.chat_input,
+            |_this, _input, _event: &crate::ui::chat_input::ChatInputEvent, cx| {
+                cx.notify();
+            },
+        )
         .detach();
 
         // Subscribe to model dropdown selection events
@@ -271,7 +272,7 @@ impl ChatWindow {
             &workspace_manager,
             |this, _manager, event: &WorkspaceManagerEvent, cx| match event {
                 WorkspaceManagerEvent::AddRequested => this.add_workspace(cx),
-                WorkspaceManagerEvent::CloseRequested => this.close_workspace_manager(cx),
+                WorkspaceManagerEvent::CloseRequested => {}
                 WorkspaceManagerEvent::DeleteRequested { workspace_id } => {
                     this.delete_workspace(workspace_id.clone(), cx);
                 }
@@ -444,9 +445,17 @@ impl ChatWindow {
         });
     }
 
-    fn close_workspace_manager(&mut self, cx: &mut Context<Self>) {
-        self.show_workspace_manager = false;
-        cx.notify();
+    fn open_workspace_manager(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_workspace_manager(cx);
+        let manager = self.workspace_manager.clone();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let manager_for_content = manager.clone();
+            dialog.title("Workspaces").content(move |content, window, cx| {
+                manager_for_content.update(cx, |manager, cx| {
+                    content.child(manager.render_dialog_content(window, cx))
+                })
+            })
+        });
     }
 
     fn add_workspace(&mut self, cx: &mut Context<Self>) {
@@ -595,10 +604,10 @@ impl ChatWindow {
         let content = if self.editing_message_id.is_some() {
             self.inline_edit_input
                 .as_ref()
-                .map(|i| i.read(cx).content().clone())
-                .unwrap_or_else(|| self.chat_input.read(cx).content().clone())
+                .map(|i| i.read(cx).content(cx).clone())
+                .unwrap_or_else(|| self.chat_input.read(cx).content(cx).clone())
         } else {
-            self.chat_input.read(cx).content().clone()
+            self.chat_input.read(cx).content(cx).clone()
         };
         eprintln!("[mini-pi] send_message: {} chars", content.len());
         if content.is_empty() {
@@ -608,7 +617,7 @@ impl ChatWindow {
         // Handle editing an existing user message: fork from it and send the
         // edited prompt into the new branch.
         if let Some(editing_id) = self.editing_message_id.take() {
-            self.chat_input.update(cx, |ci, cx| ci.reset(cx));
+            self.chat_input.update(cx, |ci, cx| ci.reset(_window, cx));
             let Some(edit_idx) = self.messages.iter().position(|m| m.id == editing_id) else {
                 eprintln!("[mini-pi] edited message {} not found", editing_id);
                 self.clear_inline_edit_state(cx);
@@ -638,7 +647,7 @@ impl ChatWindow {
             return;
         }
 
-        self.chat_input.update(cx, |ci, cx| ci.reset(cx));
+        self.chat_input.update(cx, |ci, cx| ci.reset(_window, cx));
         self.scroll_locked = true;
 
         let session = self.session.clone().unwrap();
@@ -724,7 +733,7 @@ impl ChatWindow {
         let content = self
             .inline_edit_input
             .as_ref()
-            .map(|i| i.read(cx).content().clone())
+            .map(|i| i.read(cx).content(cx).clone())
             .unwrap_or_default();
         if content.is_empty() {
             self.clear_inline_edit_state(cx);
@@ -764,14 +773,14 @@ impl ChatWindow {
             self.editing_message_id = Some(msg_id);
             let text = text.clone();
             let inline_input = cx.new(|cx| {
-                TextArea::new(cx, "Edit message...")
+                ChatInput::new(window, cx, "Edit message...")
                     .with_at_mention(false)
                     .with_slash_commands(false)
             });
             inline_input.update(cx, |ci, cx| {
-                ci.set_content(text, cx);
+                ci.set_content(text, window, cx);
+                ci.focus(window, cx);
             });
-            inline_input.focus_handle(cx).focus(window, cx);
             self.inline_edit_input = Some(inline_input);
             cx.notify();
         }
@@ -820,7 +829,7 @@ impl ChatWindow {
             this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(text) if !text.is_empty() => {
-                        let current = this.chat_input.read(cx).content().to_string();
+                        let current = this.chat_input.read(cx).content(cx).to_string();
                         let new_text = if current.is_empty() {
                             text
                         } else if current.ends_with(' ') {
@@ -829,7 +838,7 @@ impl ChatWindow {
                             current + " " + &text
                         };
                         this.chat_input.update(cx, |ci, cx| {
-                            ci.set_content(new_text, cx);
+                            ci.set_content(new_text, window, cx);
                         });
                     }
                     Ok(_) => {}
@@ -962,7 +971,7 @@ impl ChatWindow {
                             )
                             .on_click(cx.listener(move |this, _, _window, cx| {
                                 this.chat_input.update(cx, |ci, cx| {
-                                    ci.select_mention_at(item_idx, cx);
+                                    ci.select_mention_at(item_idx, _window, cx);
                                 });
                             }))
                     })),
@@ -1184,7 +1193,7 @@ impl ChatWindow {
                             )
                             .on_click(cx.listener(move |this, _, _window, cx| {
                                 this.chat_input.update(cx, |ci, cx| {
-                                    ci.select_command_at(item_idx, cx);
+                                    ci.select_command_at(item_idx, _window, cx);
                                 });
                             }))
                     })),
@@ -1203,7 +1212,7 @@ impl Render for ChatWindow {
         let is_error = matches!(self.state, ChatState::Error(_));
         let is_loading = matches!(self.state, ChatState::Loading);
         let is_streaming = matches!(self.state, ChatState::Streaming);
-        let input_empty = self.chat_input.read(cx).content().is_empty();
+        let input_empty = self.chat_input.read(cx).content(cx).is_empty();
         let is_disabled = is_streaming || is_loading || input_empty;
 
         // Ensure reasoning displays exist for reasoning parts
@@ -1249,10 +1258,10 @@ impl Render for ChatWindow {
         self.reasoning_displays.truncate(self.messages.len());
 
         // Ensure markdown displays exist for assistant text parts only
-        let mut markdown_entities: Vec<Vec<Option<gpui::Entity<MarkdownRenderer>>>> = Vec::new();
+        let mut markdown_entities: Vec<Vec<Option<gpui::Entity<TextViewState>>>> = Vec::new();
         let assistant_text_width = (window.viewport_size().width - px(80.)).max(px(320.));
         for (msg_idx, msg) in self.messages.iter().enumerate() {
-            let mut msg_markdown: Vec<Option<gpui::Entity<MarkdownRenderer>>> = Vec::new();
+            let mut msg_markdown: Vec<Option<gpui::Entity<TextViewState>>> = Vec::new();
             let is_assistant = matches!(msg.role, Role::Assistant);
             let part_count = msg.parts.len();
             if let Some(row) = self.markdown_displays.get_mut(msg_idx) {
@@ -1274,11 +1283,11 @@ impl Render for ChatWindow {
                         }
                         let entity = if let Some(Some(existing)) = row.get(part_idx) {
                             existing.update(cx, |display, _cx| {
-                                display.set_content(text);
+                                display.set_text(text, _cx);
                             });
                             existing.clone()
                         } else {
-                            let new = cx.new(|_cx| MarkdownRenderer::new(text));
+                            let new = cx.new(|cx| TextViewState::markdown(text, cx));
                             row[part_idx] = Some(new.clone());
                             new
                         };
@@ -1310,8 +1319,6 @@ impl Render for ChatWindow {
                 if event.keystroke.key == "escape" {
                     if this.chat_input.read(cx).is_popup_visible() {
                         this.chat_input.update(cx, |ci, cx| ci.close_popup(cx));
-                    } else if this.show_workspace_manager {
-                        this.close_workspace_manager(cx);
                     }
                 }
             }))
@@ -1391,7 +1398,7 @@ impl Render for ChatWindow {
                                                                             .bg(rgb(0xffffff))
                                                                             .text_color(rgb(0x000000))
                                                                             .text_sm()
-                                                                            .child(inline_input)
+                                                                            .child(Input::new(&inline_input.read(cx).input_state).w_full())
                                                                     )
                                                                     .child(
                                                                         div()
@@ -1440,7 +1447,7 @@ impl Render for ChatWindow {
                                                                                 this.child(text_loader())
                                                                             })
                                                                             .when(!is_streaming_empty, |this| {
-                                                                                if let Some(md) = markdown_entity {
+                                                                                if let Some(ref md) = markdown_entity {
                                                                                     this.child(
                                                                                         div()
                                                                                             .flex()
@@ -1450,7 +1457,7 @@ impl Render for ChatWindow {
                                                                                                 div()
                                                                                                     .flex_1()
                                                                                                     .min_w_0()
-                                                                                                    .child(md),
+                                                                                                    .child(TextView::new(md).selectable(true).w_full()),
                                                                                             ),
                                                                                     )
                                                                                 } else {
@@ -1459,6 +1466,7 @@ impl Render for ChatWindow {
                                                                             })
                                                                     )
                                                                     .when(!is_user && !is_streaming_empty, |this| {
+                                                                        let copy_text = text.clone();
                                                                         this.child(
                                                                             Button::new(("copy-btn", msg_idx as u64))
                                                                                 .with_size(Size::XSmall)
@@ -1476,31 +1484,57 @@ impl Render for ChatWindow {
                                                                                         .text_color(rgb(0x888888)),
                                                                                 )
                                                                                 .on_click(cx.listener(move |_this, _, _window, cx| {
-                                                                                    cx.write_to_clipboard(ClipboardItem::new_string(text_to_copy.to_string()));
+                                                                                    cx.write_to_clipboard(ClipboardItem::new_string(copy_text.to_string()));
                                                                                 }))
                                                                         )
                                                                     })
                                                                     .when(is_user && !is_streaming_empty, |this| {
                                                                         let edit_msg_id = msg_id.clone();
                                                                         this.child(
-                                                                            Button::new(("edit-btn", msg_idx as u64))
-                                                                                .with_size(Size::XSmall)
-                                                                                .custom(
-                                                                                    ButtonCustomVariant::new(cx)
-                                                                                        .color(gpui::rgba(0x00000000).into())
-                                                                                        .foreground(rgb(0x888888).into())
-                                                                                        .hover(rgb(0x333333).into())
-                                                                                        .active(rgb(0x444444).into()),
+                                                                            div()
+                                                                                .flex()
+                                                                                .gap_2()
+                                                                                .justify_end()
+                                                                                .child(
+                                                                                    Button::new(("copy-btn", msg_idx as u64))
+                                                                                        .with_size(Size::XSmall)
+                                                                                        .custom(
+                                                                                            ButtonCustomVariant::new(cx)
+                                                                                                .color(gpui::rgba(0x00000000).into())
+                                                                                                .foreground(rgb(0x888888).into())
+                                                                                                .hover(rgb(0x333333).into())
+                                                                                                .active(rgb(0x444444).into()),
+                                                                                        )
+                                                                                        .icon(
+                                                                                            Icon::empty()
+                                                                                                .path("clipboard.svg")
+                                                                                                .size(px(12.))
+                                                                                                .text_color(rgb(0x888888)),
+                                                                                        )
+                                                                                        .on_click(cx.listener(move |_this, _, _window, cx| {
+                                                                                            cx.write_to_clipboard(ClipboardItem::new_string(text_to_copy.to_string()));
+                                                                                        }))
                                                                                 )
-                                                                                .icon(
-                                                                                    Icon::empty()
-                                                                                        .path("edit.svg")
-                                                                                        .size(px(12.))
-                                                                                        .text_color(rgb(0x888888)),
+                                                                                .child(
+                                                                                    Button::new(("edit-btn", msg_idx as u64))
+                                                                                        .with_size(Size::XSmall)
+                                                                                        .custom(
+                                                                                            ButtonCustomVariant::new(cx)
+                                                                                                .color(gpui::rgba(0x00000000).into())
+                                                                                                .foreground(rgb(0x888888).into())
+                                                                                                .hover(rgb(0x333333).into())
+                                                                                                .active(rgb(0x444444).into()),
+                                                                                        )
+                                                                                        .icon(
+                                                                                            Icon::empty()
+                                                                                                .path("edit.svg")
+                                                                                                .size(px(12.))
+                                                                                                .text_color(rgb(0x888888)),
+                                                                                        )
+                                                                                        .on_click(cx.listener(move |this, _, _window, cx| {
+                                                                                            this.start_edit_message(edit_msg_id.clone(), _window, cx);
+                                                                                        }))
                                                                                 )
-                                                                                .on_click(cx.listener(move |this, _, _window, cx| {
-                                                                                    this.start_edit_message(edit_msg_id.clone(), _window, cx);
-                                                                                }))
                                                                         )
                                                                     })
                                                             }
@@ -1630,47 +1664,19 @@ impl Render for ChatWindow {
                                 .custom(
                                     ButtonCustomVariant::new(cx)
                                         .color(gpui::rgba(0x00000000).into())
-                                        .foreground(
-                                            if self.show_workspace_manager {
-                                                rgb(0x4f46e5)
-                                            } else {
-                                                rgb(0xaaaaaa)
-                                            }
-                                            .into(),
-                                        )
-                                        .hover(
-                                            if self.show_workspace_manager {
-                                                rgb(0x4f46e5)
-                                            } else {
-                                                rgb(0xcccccc)
-                                            }
-                                            .into(),
-                                        )
-                                        .active(
-                                            if self.show_workspace_manager {
-                                                rgb(0x4f46e5)
-                                            } else {
-                                                rgb(0xcccccc)
-                                            }
-                                            .into(),
-                                        ),
+                                        .foreground(rgb(0xaaaaaa).into())
+                                        .hover(rgb(0xcccccc).into())
+                                        .active(rgb(0xcccccc).into()),
                                 )
                                 .icon(
                                     Icon::empty()
                                         .path("manage.svg")
                                         .size(px(10.))
-                                        .text_color(
-                                            if self.show_workspace_manager {
-                                                rgb(0x4f46e5)
-                                            } else {
-                                                rgb(0xaaaaaa)
-                                            },
-                                        ),
+                                        .text_color(rgb(0xaaaaaa)),
                                 )
                                 .label("Workspace")
-                                .on_click(cx.listener(|this, _, _window, cx| {
-                                    this.show_workspace_manager = !this.show_workspace_manager;
-                                    cx.notify();
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_workspace_manager(window, cx);
                                 }))
                         )
                         .children(self.workspaces.iter().map(|ws| {
@@ -1768,7 +1774,35 @@ impl Render for ChatWindow {
                             .child(
                                 div()
                                     .flex()
-                                    .child(self.chat_input.clone())
+                                    .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                                        let at_popup_active = this.chat_input.read(cx).is_at_popup_visible();
+                                        let command_popup_active = this.chat_input.read(cx).is_command_popup_visible();
+                                        if at_popup_active || command_popup_active {
+                                            match event.keystroke.key.as_str() {
+                                                "up" => {
+                                                    this.chat_input.update(cx, |ci, cx| ci.navigate_popup(-1, cx));
+                                                    window.prevent_default();
+                                                    cx.stop_propagation();
+                                                }
+                                                "down" => {
+                                                    this.chat_input.update(cx, |ci, cx| ci.navigate_popup(1, cx));
+                                                    window.prevent_default();
+                                                    cx.stop_propagation();
+                                                }
+                                                "enter" | "tab" => {
+                                                    if at_popup_active {
+                                                        this.chat_input.update(cx, |ci, cx| ci.select_highlighted_mention(window, cx));
+                                                    } else {
+                                                        this.chat_input.update(cx, |ci, cx| ci.select_highlighted_command(window, cx));
+                                                    }
+                                                    window.prevent_default();
+                                                    cx.stop_propagation();
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }))
+                                    .child(Input::new(&self.chat_input.read(cx).input_state).w_full())
                             )
                             .child(
                                 div()
@@ -1846,8 +1880,5 @@ impl Render for ChatWindow {
                             )
                     )
             )
-            .when(self.show_workspace_manager, |this| {
-                this.child(self.workspace_manager.clone())
-            })
     }
 }

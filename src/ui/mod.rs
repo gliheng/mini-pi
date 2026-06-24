@@ -1,3 +1,2 @@
+pub mod chat_input;
 pub mod loader;
-pub mod markdown;
-pub mod text_area;

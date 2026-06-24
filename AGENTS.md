@@ -18,7 +18,7 @@ On first run, if `~/.pi/agent/` contains JSON files, the app offers to import th
 - **Async:** `smol` + `futures` for background tasks
 - **HTTP:** `reqwest` (blocking client for auth, sync, and title generation)
 - **Serialization:** `serde` / `serde_json`
-- **Markdown:** `pulldown-cmark` (tables, strikethrough, tasklists, smart punctuation, footnotes, GFM) plus `syntect` for code-block syntax highlighting
+- **Markdown:** `gpui_component::text::TextView` / `TextViewState` (Markdown/HTMl rendering via gpui-component)
 - **Platform specifics:** `objc` on macOS for native window chrome; `raw-window-handle` for cross-platform window handles; Windows `CREATE_NO_WINDOW` flag
 
 ## Repository Layout
@@ -33,7 +33,7 @@ src/core/
   app.rs                # AppStore GPUI Global and custom_window_options()
   assets.rs             # AssetSource implementation that loads SVGs from the assets/ directory
 src/config/
-  app_config.rs         # ~/.config/mini-pi/config.json (default_model, remote_control)
+  app_config.rs         # ~/.config/mini-pi/config.json (default_model, remote_control, theme)
   model_config.rs       # Hardcoded model list and provider/name helpers
 src/data/
   models.rs             # Domain enums: Role, PartState, MessagePart, Message, ChatState
@@ -57,11 +57,8 @@ pi-bridge/
 src/sync/
   settings_sync.rs      # Two-way sync of ~/.mini-pi/agent/ files with Supabase Storage bucket pi-sync
 src/ui/
-  input.rs              # TextInput: single-line custom input with cursor, selection, password mode
-  text_area.rs          # TextArea: multi-line chat input with @ mention and / slash-command autocomplete
-  dropdown.rs           # Reusable searchable dropdown component
+  chat_input.rs         # ChatInput: multi-line chat input backed by gpui_component::input::InputState with @ mention and / slash-command autocomplete
   loader.rs             # Animated dot loader and text-loader spinner
-  markdown.rs           # Markdown parser → custom AST → GPUI renderer, with syntax highlighting
 src/utils/
   file_scanner.rs       # Workspace file-tree scanner used by @ mention autocomplete
   format.rs             # Relative-time formatting and string truncation helpers
@@ -69,11 +66,11 @@ src/utils/
 src/views/
   thread_list.rs        # Home window showing pinned/unpinned threads
   chat_app.rs           # Per-thread window frame: gpui_component TitleBar with pin/export/workspace controls, wraps ChatWindow in Root
-  chat_window.rs        # Per-thread chat content: model dropdown, workspace bar, message rendering
-  user_panel.rs         # Account/auth/settings panel, including remote-control toggle and QR code
+  chat_window.rs        # Per-thread chat content: model dropdown, workspace bar, message rendering via TextView
+  user_panel.rs         # Account/auth/settings panel, including theme toggle, remote-control toggle and QR code
   title_bar.rs          # Platform-specific window-level helpers (pin-to-top) and the legacy custom title bar type
-  workspace_manager.rs  # Modal workspace picker
-  reasoning.rs          # Collapsible thinking/reasoning display
+  workspace_manager.rs  # Workspace picker content rendered inside a gpui_component::Dialog
+  reasoning.rs          # Collapsible thinking/reasoning display using gpui_component::Collapsible
   pi_agent_import.rs    # First-run import prompt from ~/.pi/agent/
 assets/                 # SVG icons loaded at runtime
 assets/prompts/         # System prompt files (e.g. title_generator.txt)
@@ -171,7 +168,7 @@ When enabled in the user settings panel (`remote_control.enabled` in `~/.config/
 
 ### Key Bindings
 
-Global bindings are registered in `main.rs`. Context-sensitive bindings use GPUI's `key_context` system (e.g. `"TextInput"` and `"TextArea"`). Common bindings:
+Global bindings are registered in `main.rs`. Context-sensitive bindings use GPUI's `key_context` system (e.g. `"Input"` for `gpui_component::input::Input`). Common bindings:
 
 - `Cmd/Ctrl + W` — Close window
 - `Cmd + Q` — Quit
@@ -182,7 +179,7 @@ Global bindings are registered in `main.rs`. Context-sensitive bindings use GPUI
 - Home/End or `Ctrl+A/E` — Line start/end
 - `Escape` — Close mention/command popups or workspace manager
 
-Dropdowns handle `up`, `down`, `enter`, and `escape` internally.
+Dropdowns handle `up`, `down`, `enter`, and `escape` internally. The chat input's `@` / `/` popup navigation is handled by an `on_key_down` listener on the input container.
 
 ## Code Organization Conventions
 
@@ -191,10 +188,9 @@ Dropdowns handle `up`, `down`, `enter`, and `escape` internally.
 - **Actions:** Global actions are declared with the `actions!` macro in `src/core/actions.rs`.
 - **Globals:** `AppStore` is a GPUI `Global` holding `Arc<Store>`, config, auth state, session, sync state, and a window handle map.
 - **Styling:** Uses GPUI's Tailwind-inspired fluent API (`div().flex().bg(rgb(...)).child(...)`).
-- **Text input:** Two custom input implementations exist:
-  - `ui::input::TextInput` — basic single-line input with custom `EntityInputHandler` (used in auth forms and dropdown search)
-  - `ui::text_area::TextArea` — chat-specific multi-line input with `@` mention autocomplete and `/` slash-command palette support
-- **Markdown:** `ui::markdown::MarkdownRenderer` parses content into custom `BlockNode` / `InlineNode` ASTs and renders them to GPUI elements. Code blocks are highlighted with `syntect` using the `base16-ocean.dark` theme.
+- **Text input:** Custom inputs use `gpui_component::input::Input` / `InputState`:
+  - `ui::chat_input::ChatInput` — multi-line chat input with `@` mention autocomplete and `/` slash-command palette support, backed by `gpui_component::input::InputState`
+- **Markdown:** `gpui_component::text::TextView` / `TextViewState` renders assistant messages and the standalone markdown example.
 
 ## External SDK Dependency
 
@@ -209,8 +205,8 @@ This application is a thin GUI wrapper around the `@earendil-works/pi-coding-age
 
 ## Testing
 
-- `cargo test` runs the unit tests in `src/ui/markdown.rs` and the remote-control tests in `src/remote/`.
-- The current codebase has **58 unit tests** total, including markdown parsing/rendering, tunnel URL extraction, bearer-token validation, SSE framing, and HTTP-server integration (status, auth, `since_id`, SSE CORS headers, SSE heartbeat, and SSE query-token auth); all pass.
+- `cargo test` runs the remote-control tests in `src/remote/` and the markdown example doc-tests.
+- The current codebase has **40 unit tests** plus doc-tests, including tunnel URL extraction, bearer-token validation, SSE framing, and HTTP-server integration (status, auth, `since_id`, SSE CORS headers, SSE heartbeat, and SSE query-token auth); all pass.
 - There are no integration tests and no CI workflows configured for this repository.
 
 ## Documentation

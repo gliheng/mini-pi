@@ -10,7 +10,7 @@ use crate::core::app::AppStore;
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::data::store::Store;
 use crate::rpc::pi_rpc::{BridgeEvent, LoadedMessage, LoadedPart, PiRpc};
-use crate::ui::text_area::CommandItem;
+use crate::ui::chat_input::CommandItem;
 use crate::utils::format::truncate_str;
 use crate::utils::llm::generate_title;
 

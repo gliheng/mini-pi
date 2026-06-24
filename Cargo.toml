@@ -17,7 +17,6 @@ rusqlite = { version = "0.33", features = ["bundled"] }
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 nanoid = "0.4"
-pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
 reqwest = { version = "0.12", features = ["blocking", "json", "multipart"] }
 sha2 = "0.10"
 cpal = "0.15"
@@ -26,7 +25,6 @@ base64 = "0.22"
 url = "2"
 percent-encoding = "2"
 fs2 = "0.4"
-syntect = "5"
 linkify = "0.9"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "net"] }
 tokio-stream = { version = "0.1", features = ["sync"] }

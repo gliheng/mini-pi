@@ -10,6 +10,7 @@ use gpui::{
     WindowDecorations, WindowOptions, px, size,
 };
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
+use gpui_component::theme::Theme;
 use gpui_component::{ActiveTheme, Icon, Root, Sizable as _, TitleBar};
 
 use crate::auth::state::{self, AuthState};
@@ -81,6 +82,7 @@ pub fn run() {
         .with_assets(Assets { base: assets_dir })
         .run(move |cx: &mut App| {
             gpui_component::init(cx);
+            Theme::change(config.theme, None, cx);
 
             let models = pi_bridge
                 .as_ref()
@@ -151,35 +153,6 @@ pub fn run() {
                 KeyBinding::new("cmd-w", crate::core::actions::CloseWindow, None),
                 KeyBinding::new("cmd-q", Quit, None),
                 KeyBinding::new("enter", crate::core::actions::SendMessage, None),
-                KeyBinding::new(
-                    "backspace",
-                    crate::ui::text_area::Backspace,
-                    Some("TextArea"),
-                ),
-                KeyBinding::new("delete", crate::ui::text_area::Delete, Some("TextArea")),
-                KeyBinding::new("left", crate::ui::text_area::Left, Some("TextArea")),
-                KeyBinding::new("right", crate::ui::text_area::Right, Some("TextArea")),
-                KeyBinding::new(
-                    "shift-left",
-                    crate::ui::text_area::SelectLeft,
-                    Some("TextArea"),
-                ),
-                KeyBinding::new(
-                    "shift-right",
-                    crate::ui::text_area::SelectRight,
-                    Some("TextArea"),
-                ),
-                KeyBinding::new("ctrl-f", crate::ui::text_area::Forward, Some("TextArea")),
-                KeyBinding::new("ctrl-b", crate::ui::text_area::Backward, Some("TextArea")),
-                KeyBinding::new("cmd-a", crate::ui::text_area::SelectAll, Some("TextArea")),
-                KeyBinding::new("cmd-v", crate::ui::text_area::Paste, Some("TextArea")),
-                KeyBinding::new("cmd-c", crate::ui::text_area::CopyText, Some("TextArea")),
-                KeyBinding::new("cmd-x", crate::ui::text_area::Cut, Some("TextArea")),
-                KeyBinding::new("home", crate::ui::text_area::Home, Some("TextArea")),
-                KeyBinding::new("end", crate::ui::text_area::End, Some("TextArea")),
-                KeyBinding::new("ctrl-a", crate::ui::text_area::Home, Some("TextArea")),
-                KeyBinding::new("ctrl-e", crate::ui::text_area::End, Some("TextArea")),
-                KeyBinding::new("shift-enter", crate::ui::text_area::Newline, Some("TextArea")),
             ]);
 
             cx.set_menus(vec![Menu {

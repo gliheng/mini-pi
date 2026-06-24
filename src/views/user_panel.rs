@@ -15,7 +15,9 @@ use crate::sync::settings_sync;
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::notification::Notification;
-use gpui_component::{Disableable as _, Icon, Size, Sizable as _, WindowExt as _};
+use gpui_component::switch::Switch;
+use gpui_component::theme::{Theme, ThemeMode};
+use gpui_component::{ActiveTheme as _, Disableable as _, Icon, Size, Sizable as _, WindowExt as _};
 
 #[derive(Clone)]
 pub enum UserPanelEvent {
@@ -41,17 +43,17 @@ struct StatusLogTooltip {
 }
 
 impl Render for StatusLogTooltip {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .max_w(px(320.))
             .px_3()
             .py_2()
             .rounded_md()
-            .bg(rgb(0x2a2a2a))
+            .bg(cx.theme().popover)
             .border_1()
-            .border_color(rgb(0x444444))
+            .border_color(cx.theme().border)
             .text_xs()
-            .text_color(rgb(0xe5e5e5))
+            .text_color(cx.theme().popover_foreground)
             .whitespace_normal()
             .child(self.text.clone())
     }
@@ -183,7 +185,7 @@ impl Render for UserPanel {
                 gpui::svg()
                     .path("logo.svg")
                     .size(px(48.))
-                    .text_color(rgb(0x6366f1)),
+                    .text_color(cx.theme().primary),
             )
             .child(render_auth_content(self, &auth, window, cx));
 
@@ -206,16 +208,16 @@ impl Render for UserPanel {
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_email_field(self))
-                .child(render_password_field(self))
+                .child(render_email_field(self, cx))
+                .child(render_password_field(self, cx))
                 .when(dialog == AuthDialog::Signup, |el: gpui::Div| {
-                    el.child(render_confirm_password_field(self))
+                    el.child(render_confirm_password_field(self, cx))
                 })
                 .when(error_msg.is_some(), |el: gpui::Div| {
                     el.child(
                         div()
                             .text_xs()
-                            .text_color(rgb(0xfca5a5))
+                            .text_color(cx.theme().danger)
                             .child(error_msg.unwrap_or_default()),
                     )
                 })
@@ -293,9 +295,9 @@ impl Render for UserPanel {
                                 .px_6()
                                 .py_6()
                                 .rounded_xl()
-                                .bg(rgb(0x1f1f1f))
+                                .bg(cx.theme().secondary)
                                 .border_1()
-                                .border_color(rgb(0x333333))
+                                .border_color(cx.theme().border)
                                 .on_click(|_, _, cx| {
                                     cx.stop_propagation();
                                 })
@@ -303,10 +305,10 @@ impl Render for UserPanel {
                                     div()
                                         .text_xl()
                                         .font_weight(gpui::FontWeight::BOLD)
-                                        .text_color(rgb(0xe0e0e0))
+                                        .text_color(cx.theme().foreground)
                                         .child(title),
                                 )
-                                .child(div().text_sm().text_color(rgb(0x888888)).child(subtitle))
+                                .child(div().text_sm().text_color(cx.theme().muted_foreground).child(subtitle))
                                 .child(form_fields)
                                 .child(
                                     Button::new("auth-dialog-close-btn")
@@ -441,9 +443,9 @@ fn render_cloudflared_dialog(
                 .px_6()
                 .py_6()
                 .rounded_xl()
-                .bg(rgb(0x1f1f1f))
+                .bg(cx.theme().secondary)
                 .border_1()
-                .border_color(rgb(0x333333))
+                .border_color(cx.theme().border)
                 .on_click(|_, _, cx| {
                     cx.stop_propagation();
                 })
@@ -451,12 +453,12 @@ fn render_cloudflared_dialog(
                     div()
                         .text_xl()
                         .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(rgb(0xe0e0e0))
+                        .text_color(cx.theme().foreground)
                         .child(title),
                 )
-                .child(div().text_sm().text_color(rgb(0x888888)).child(body))
+                .child(div().text_sm().text_color(cx.theme().muted_foreground).child(body))
                 .when_some(error_msg, |this, err| {
-                    this.child(div().text_xs().text_color(rgb(0xfca5a5)).child(err))
+                    this.child(div().text_xs().text_color(cx.theme().danger).child(err))
                 })
                 .child(
                     div()
@@ -522,10 +524,10 @@ fn render_remote_control_section(
         RemoteStatus::Error(e) => format!("Error: {}", e).into(),
     };
     let status_color = match &status {
-        RemoteStatus::Running => rgb(0x22c55e),
-        RemoteStatus::Error(_) => rgb(0xef4444),
-        RemoteStatus::Reconnecting => rgb(0xf59e0b),
-        _ => rgb(0x888888),
+        RemoteStatus::Running => cx.theme().success,
+        RemoteStatus::Error(_) => cx.theme().danger,
+        RemoteStatus::Reconnecting => cx.theme().warning,
+        _ => cx.theme().muted_foreground,
     };
 
     let mut section = div()
@@ -538,7 +540,7 @@ fn render_remote_control_section(
                 .px_2()
                 .py_1()
                 .text_xs()
-                .text_color(rgb(0x888888))
+                .text_color(cx.theme().muted_foreground)
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .child("REMOTE CONTROL"),
         )
@@ -553,12 +555,12 @@ fn render_remote_control_section(
                 .px_4()
                 .py_3()
                 .rounded_lg()
-                .bg(rgb(0x252525))
+                .bg(cx.theme().secondary)
                 .child(
                     div()
                         .flex_1()
                         .text_sm()
-                        .text_color(rgb(0xe0e0e0))
+                        .text_color(cx.theme().foreground)
                         .child("Enable remote control"),
                 )
                 .child(
@@ -568,9 +570,9 @@ fn render_remote_control_section(
                         .h(px(24.))
                         .rounded_full()
                         .bg(if enabled {
-                            rgb(0x6366f1)
+                            cx.theme().primary
                         } else {
-                            rgb(0x444444)
+                            cx.theme().muted
                         })
                         .when(!is_busy, |s| s.cursor_pointer())
                         .when(is_busy, |s| s.opacity(0.6))
@@ -614,8 +616,8 @@ fn render_remote_control_section(
                 .px_4()
                 .py_2()
                 .rounded_lg()
-                .bg(rgb(0x252525))
-                .child(div().text_xs().text_color(rgb(0x888888)).child("Status"))
+                .bg(cx.theme().secondary)
+                .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Status"))
                 .child(div().flex_1())
                 .child(
                     div()
@@ -626,9 +628,9 @@ fn render_remote_control_section(
                         .child(div().text_xs().text_color(status_color).child(status_text))
                         .when_some(tunnel_log.clone(), |this, log: TunnelLog| {
                             let icon_color = match log.level.as_str() {
-                                "ERR" => rgb(0xfca5a5),
-                                "WRN" => rgb(0xfbbf24),
-                                _ => rgb(0x888888),
+                                "ERR" => cx.theme().danger,
+                                "WRN" => cx.theme().warning,
+                                _ => cx.theme().muted_foreground,
                             };
                             let tooltip_text = format!("[{}] {}", log.level, log.message);
                             this.child(
@@ -672,7 +674,7 @@ fn render_remote_control_section(
                 .px_4()
                 .py_4()
                 .rounded_lg()
-                .bg(rgb(0x252525))
+                .bg(cx.theme().secondary)
                 .child(
                     div()
                         .w_full()
@@ -682,7 +684,7 @@ fn render_remote_control_section(
                         .justify_center()
                         .gap_1()
                         .text_xs()
-                        .text_color(rgb(0x888888))
+                        .text_color(cx.theme().muted_foreground)
                         .child("Scan with ")
                         .child(
                             Button::new("pi-commander-link")
@@ -703,16 +705,16 @@ fn render_remote_control_section(
                         .with_size(Size::Small)
                         .custom(
                             ButtonCustomVariant::new(cx)
-                                .color(rgb(0x1f1f1f).into())
-                                .foreground(rgb(0xcccccc).into())
-                                .hover(rgb(0x2a2a2a).into())
-                                .active(rgb(0x333333).into()),
+                                .color(cx.theme().secondary.into())
+                                .foreground(cx.theme().foreground.into())
+                                .hover(cx.theme().secondary_hover.into())
+                                .active(cx.theme().secondary_active.into()),
                         )
                         .icon(
                             Icon::empty()
                                 .path("clipboard.svg")
                                 .size(px(14.))
-                                .text_color(rgb(0x888888)),
+                                .text_color(cx.theme().muted_foreground),
                         )
                         .label(tunnel_for_display)
                         .on_click(cx.listener(move |_, _, window, cx| {
@@ -739,17 +741,17 @@ fn render_remote_control_section(
                 .px_4()
                 .py_3()
                 .rounded_lg()
-                .bg(rgb(0x2a1a1a))
+                .bg(cx.theme().secondary)
                 .border_1()
-                .border_color(rgb(0x7f1d1d))
+                .border_color(cx.theme().danger)
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0xfca5a5))
+                        .text_color(cx.theme().danger)
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .child("Remote control failed"),
                 )
-                .child(div().text_xs().text_color(rgb(0xfca5a5)).child(err)),
+                .child(div().text_xs().text_color(cx.theme().danger).child(err)),
         );
     }
 
@@ -761,16 +763,16 @@ fn render_back_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
         .with_size(Size::Small)
         .custom(
             ButtonCustomVariant::new(cx)
-                .color(rgb(0x252525).into())
-                .foreground(rgb(0x888888).into())
-                .hover(rgb(0x333333).into())
-                .active(rgb(0x444444).into()),
+                .color(cx.theme().secondary.into())
+                .foreground(cx.theme().muted_foreground.into())
+                .hover(cx.theme().secondary_hover.into())
+                .active(cx.theme().secondary_active.into()),
         )
         .icon(
             Icon::empty()
                 .path("arrow-left.svg")
                 .size(px(16.))
-                .text_color(rgb(0x888888)),
+                .text_color(cx.theme().muted_foreground),
         )
         .on_click(cx.listener(|_this, _, _, cx| {
             cx.emit(UserPanelEvent::BackPressed);
@@ -835,14 +837,14 @@ fn render_auth_content(
                         .child(
                             div()
                                 .text_sm()
-                                .text_color(rgb(0xe0e0e0))
+                                .text_color(cx.theme().foreground)
                                 .overflow_x_hidden()
                                 .child(user.email.clone()),
                         )
                         .child(
                             div()
                                 .text_xs()
-                                .text_color(rgb(0x888888))
+                                .text_color(cx.theme().muted_foreground)
                                 .child("Authenticated"),
                         ),
                 )
@@ -857,15 +859,15 @@ fn render_auth_content(
                             .px_4()
                             .py_3()
                             .rounded_lg()
-                            .bg(rgb(0x252525))
+                            .bg(cx.theme().secondary)
                             .child(
                                 div()
                                     .text_lg()
                                     .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(rgb(0xe0e0e0))
+                                    .text_color(cx.theme().foreground)
                                     .child(threads_count.to_string()),
                             )
-                            .child(div().text_xs().text_color(rgb(0x888888)).child("Threads")),
+                            .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Threads")),
                     ),
                 )
                 .child(
@@ -879,11 +881,11 @@ fn render_auth_content(
                                 .px_2()
                                 .py_1()
                                 .text_xs()
-                                .text_color(rgb(0x888888))
+                                .text_color(cx.theme().muted_foreground)
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .child("SYNC"),
                         )
-                        .child(sync_row("Agent Settings", &sync_label))
+                        .child(sync_row("Agent Settings", &sync_label, cx))
                         .child(render_sync_button(cx)),
                 )
                 .child(render_remote_control_section(window, cx))
@@ -898,15 +900,15 @@ fn render_auth_content(
                                 .px_2()
                                 .py_1()
                                 .text_xs()
-                                .text_color(rgb(0x888888))
+                                .text_color(cx.theme().muted_foreground)
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .child("SETTINGS"),
                         )
-                        .child(settings_row("Account", "account.svg"))
-                        .child(settings_row("Notifications", "notifications.svg"))
-                        .child(settings_row("Appearance", "appearance.svg"))
-                        .child(settings_row("Keyboard Shortcuts", "keyboard.svg"))
-                        .child(settings_row("About", "about.svg")),
+                        .child(settings_row("Account", "account.svg", cx))
+                        .child(settings_row("Notifications", "notifications.svg", cx))
+                        .child(render_appearance_row(window, cx))
+                        .child(settings_row("Keyboard Shortcuts", "keyboard.svg", cx))
+                        .child(settings_row("About", "about.svg", cx)),
                 )
                 .child(render_logout_button(cx))
         }
@@ -936,7 +938,7 @@ fn render_auth_content(
             .child(
                 div()
                     .text_xs()
-                    .text_color(rgb(0x888888))
+                    .text_color(cx.theme().muted_foreground)
                     .child("Sign in to sync your agent settings"),
             )
             .child(render_remote_control_section(window, cx))
@@ -951,19 +953,22 @@ fn render_auth_content(
                             .px_2()
                             .py_1()
                             .text_xs()
-                            .text_color(rgb(0x888888))
+                            .text_color(cx.theme().muted_foreground)
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child("SETTINGS"),
                     )
-                    .child(settings_row("Notifications", "notifications.svg"))
-                    .child(settings_row("Appearance", "appearance.svg"))
-                    .child(settings_row("Keyboard Shortcuts", "keyboard.svg"))
-                    .child(settings_row("About", "about.svg")),
+                    .child(settings_row("Notifications", "notifications.svg", cx))
+                    .child(render_appearance_row(window, cx))
+                    .child(settings_row("Keyboard Shortcuts", "keyboard.svg", cx))
+                    .child(settings_row("About", "about.svg", cx)),
             ),
     }
 }
 
-fn render_email_field(panel: &UserPanel) -> impl IntoElement {
+fn render_email_field(
+    panel: &UserPanel,
+    cx: &mut Context<UserPanel>,
+) -> impl IntoElement {
     div()
         .w_full()
         .flex()
@@ -972,7 +977,7 @@ fn render_email_field(panel: &UserPanel) -> impl IntoElement {
         .child(
             div()
                 .text_xs()
-                .text_color(rgb(0x888888))
+                .text_color(cx.theme().muted_foreground)
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .child("EMAIL"),
         )
@@ -982,14 +987,17 @@ fn render_email_field(panel: &UserPanel) -> impl IntoElement {
                 .px_3()
                 .py_2()
                 .rounded_lg()
-                .bg(rgb(0x252525))
+                .bg(cx.theme().secondary)
                 .border_1()
-                .border_color(rgb(0x444444))
+                .border_color(cx.theme().border)
                 .child(Input::new(&panel.email_input).appearance(false).w_full()),
         )
 }
 
-fn render_password_field(panel: &UserPanel) -> impl IntoElement {
+fn render_password_field(
+    panel: &UserPanel,
+    cx: &mut Context<UserPanel>,
+) -> impl IntoElement {
     div()
         .w_full()
         .flex()
@@ -998,7 +1006,7 @@ fn render_password_field(panel: &UserPanel) -> impl IntoElement {
         .child(
             div()
                 .text_xs()
-                .text_color(rgb(0x888888))
+                .text_color(cx.theme().muted_foreground)
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .child("PASSWORD"),
         )
@@ -1008,9 +1016,9 @@ fn render_password_field(panel: &UserPanel) -> impl IntoElement {
                 .px_3()
                 .py_2()
                 .rounded_lg()
-                .bg(rgb(0x252525))
+                .bg(cx.theme().secondary)
                 .border_1()
-                .border_color(rgb(0x444444))
+                .border_color(cx.theme().border)
                 .child(Input::new(&panel.password_input).appearance(false).w_full()),
         )
 }
@@ -1066,7 +1074,10 @@ fn render_login_button(
         }))
 }
 
-fn render_confirm_password_field(panel: &UserPanel) -> impl IntoElement {
+fn render_confirm_password_field(
+    panel: &UserPanel,
+    cx: &mut Context<UserPanel>,
+) -> impl IntoElement {
     div()
         .w_full()
         .flex()
@@ -1075,7 +1086,7 @@ fn render_confirm_password_field(panel: &UserPanel) -> impl IntoElement {
         .child(
             div()
                 .text_xs()
-                .text_color(rgb(0x888888))
+                .text_color(cx.theme().muted_foreground)
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .child("CONFIRM PASSWORD"),
         )
@@ -1085,9 +1096,9 @@ fn render_confirm_password_field(panel: &UserPanel) -> impl IntoElement {
                 .px_3()
                 .py_2()
                 .rounded_lg()
-                .bg(rgb(0x252525))
+                .bg(cx.theme().secondary)
                 .border_1()
-                .border_color(rgb(0x444444))
+                .border_color(cx.theme().border)
                 .child(Input::new(&panel.confirm_password_input).appearance(false).w_full()),
         )
 }
@@ -1241,16 +1252,20 @@ fn render_sync_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
         }))
 }
 
-fn sync_row(label: impl Into<SharedString>, status_label: &SharedString) -> impl IntoElement {
+fn sync_row(
+    label: impl Into<SharedString>,
+    status_label: &SharedString,
+    cx: &mut Context<UserPanel>,
+) -> impl IntoElement {
     let label: SharedString = label.into();
     let status_color = if status_label.as_ref() == "Synced" {
-        rgb(0x22c55e)
+        cx.theme().success
     } else if status_label.as_ref() == "Syncing..." {
-        rgb(0xeab308)
+        cx.theme().warning
     } else if status_label.starts_with("Error") {
-        rgb(0xef4444)
+        cx.theme().danger
     } else {
-        rgb(0x888888)
+        cx.theme().muted_foreground
     };
     div()
         .id(SharedString::from(format!(
@@ -1264,14 +1279,14 @@ fn sync_row(label: impl Into<SharedString>, status_label: &SharedString) -> impl
         .px_4()
         .py_3()
         .rounded_lg()
-        .bg(rgb(0x252525))
+        .bg(cx.theme().secondary)
         .child(
             div()
                 .flex_1()
                 .flex()
                 .flex_row()
                 .items_center()
-                .child(div().text_sm().text_color(rgb(0xe0e0e0)).child(label)),
+                .child(div().text_sm().text_color(cx.theme().foreground).child(label)),
         )
         .child(
             div()
@@ -1281,9 +1296,66 @@ fn sync_row(label: impl Into<SharedString>, status_label: &SharedString) -> impl
         )
 }
 
+fn render_appearance_row(
+    _window: &mut Window,
+    cx: &mut Context<UserPanel>,
+) -> impl IntoElement {
+    let is_dark = cx.theme().mode.is_dark();
+    div()
+        .id("settings-appearance")
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_3()
+        .px_4()
+        .py_3()
+        .rounded_lg()
+        .bg(cx.theme().secondary)
+        .child(
+            div()
+                .size(px(20.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    gpui::svg()
+                        .path("appearance.svg")
+                        .size(px(18.))
+                        .text_color(cx.theme().muted_foreground),
+                ),
+        )
+        .child(
+            div()
+                .flex_1()
+                .text_sm()
+                .text_color(cx.theme().foreground)
+                .child("Dark Mode"),
+        )
+        .child(
+            Switch::new("dark-mode-switch")
+                .checked(is_dark)
+                .on_click(cx.listener(move |_this, checked: &bool, window, cx| {
+                    let mode = if *checked {
+                        ThemeMode::Dark
+                    } else {
+                        ThemeMode::Light
+                    };
+                    cx.update_global(|app: &mut AppStore, _| {
+                        app.config.theme = mode;
+                        if let Err(e) = app.config.save() {
+                            eprintln!("[theme] failed to save config: {}", e);
+                        }
+                    });
+                    Theme::change(mode, Some(window), cx);
+                    cx.refresh_windows();
+                })),
+        )
+}
+
 fn settings_row(
     label: impl Into<SharedString>,
     icon_path: impl Into<SharedString>,
+    cx: &mut Context<UserPanel>,
 ) -> impl IntoElement {
     let label: SharedString = label.into();
     let icon_path: SharedString = icon_path.into();
@@ -1299,9 +1371,9 @@ fn settings_row(
         .px_4()
         .py_3()
         .rounded_lg()
-        .bg(rgb(0x252525))
+        .bg(cx.theme().secondary)
         .cursor_pointer()
-        .hover(|style| style.bg(rgb(0x333333)))
+        .hover(|style| style.bg(cx.theme().secondary_hover))
         .child(
             div()
                 .size(px(20.))
@@ -1312,20 +1384,20 @@ fn settings_row(
                     gpui::svg()
                         .path(icon_path)
                         .size(px(18.))
-                        .text_color(rgb(0x888888)),
+                        .text_color(cx.theme().muted_foreground),
                 ),
         )
         .child(
             div()
                 .flex_1()
                 .text_sm()
-                .text_color(rgb(0xe0e0e0))
+                .text_color(cx.theme().foreground)
                 .child(label),
         )
         .child(
             gpui::svg()
                 .path("chevron-right.svg")
                 .size(px(16.))
-                .text_color(rgb(0x666666)),
+                .text_color(cx.theme().muted_foreground),
         )
 }
