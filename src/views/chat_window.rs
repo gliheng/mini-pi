@@ -1,10 +1,10 @@
 use std::{path::PathBuf, sync::Arc};
 
 use gpui::{
-    AnyWindowHandle, Bounds, ClipboardItem, Context, Entity, FocusHandle, InteractiveElement,
-    IntoElement, KeyDownEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
-    PathPromptOptions, Pixels, Render, ScrollHandle, SharedString, Styled, Window, canvas, div,
-    fill, point, prelude::*, px, rgb, svg,
+    AnyElement, AnyWindowHandle, Bounds, ClipboardItem, Context, Entity, FocusHandle,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, PathPromptOptions, Pixels, Render, ScrollHandle, SharedString, Styled, Window,
+    canvas, div, fill, point, prelude::*, px, svg,
 };
 
 use crate::config::model_config::all_models;
@@ -23,7 +23,12 @@ use gpui_component::input::Input;
 use gpui_component::notification::Notification;
 use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
 use gpui_component::text::{TextView, TextViewState};
-use gpui_component::{Disableable as _, Icon, IndexPath, Sizable as _, Size, WindowExt as _};
+use gpui_component::{
+    ActiveTheme as _, Disableable as _, Icon, IndexPath, Sizable as _, Size, WindowExt as _,
+};
+
+type ReasoningEntities = Vec<Vec<Option<Entity<Reasoning>>>>;
+type MarkdownEntities = Vec<Vec<Option<Entity<TextViewState>>>>;
 
 #[derive(Clone)]
 pub struct SelectModelItem {
@@ -60,8 +65,8 @@ pub struct ChatWindow {
     pub thinking_level: Option<String>,
     pub model_dropdown: gpui::Entity<SelectState<SearchableVec<SelectModelItem>>>,
     pub thinking_dropdown: gpui::Entity<SelectState<SearchableVec<SelectModelItem>>>,
-    pub reasoning_displays: Vec<Vec<Option<gpui::Entity<Reasoning>>>>,
-    pub markdown_displays: Vec<Vec<Option<gpui::Entity<gpui_component::text::TextViewState>>>>,
+    pub reasoning_displays: ReasoningEntities,
+    pub markdown_displays: MarkdownEntities,
     pub scroll_handle: ScrollHandle,
     pub scroll_locked: bool,
     pub scrollbar_drag_offset_y: Option<Pixels>,
@@ -899,13 +904,13 @@ impl ChatWindow {
                     .right(px(12.))
                     .max_h(px(240.))
                     .overflow_y_scroll()
-                    .bg(rgb(0x1e1e1e))
+                    .bg(cx.theme().popover)
                     .border_1()
-                    .border_color(rgb(0x6366f1))
+                    .border_color(cx.theme().primary)
                     .rounded_md()
                     .py_1()
                     .shadow(vec![gpui::BoxShadow {
-                        color: gpui::rgba(0x000000aa).into(),
+                        color: cx.theme().overlay,
                         offset: gpui::point(px(0.), px(4.)),
                         blur_radius: px(12.),
                         spread_radius: px(0.),
@@ -937,16 +942,16 @@ impl ChatWindow {
                             .px_3()
                             .py_1p5()
                             .cursor_pointer()
-                            .when(is_highlighted, |s| s.bg(rgb(0x2a2a2a)))
-                            .hover(|style| style.bg(rgb(0x2a2a2a)))
+                            .when(is_highlighted, |s| s.bg(cx.theme().accent))
+                            .hover(|style| style.bg(cx.theme().accent))
                             .child(
                                 svg()
                                     .path(icon)
                                     .size(px(14.))
                                     .text_color(if is_highlighted {
-                                        rgb(0x6366f1)
+                                        cx.theme().primary
                                     } else {
-                                        rgb(0x888888)
+                                        cx.theme().muted_foreground
                                     }),
                             )
                             .child(
@@ -959,15 +964,18 @@ impl ChatWindow {
                                         div()
                                             .text_sm()
                                             .text_color(if is_highlighted {
-                                                rgb(0xffffff)
+                                                cx.theme().foreground
                                             } else {
-                                                rgb(0xcccccc)
+                                                cx.theme().muted_foreground
                                             })
                                             .child(label),
                                     )
                                     .when(!detail.is_empty(), |s| {
                                         s.child(
-                                            div().text_xs().text_color(rgb(0x666666)).child(detail),
+                                            div()
+                                                .text_xs()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child(detail),
                                         )
                                     }),
                             )
@@ -983,6 +991,8 @@ impl ChatWindow {
     fn render_messages_scrollbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let scroll_handle = self.scroll_handle.clone();
         let entity = cx.entity();
+        let scrollbar_color = cx.theme().scrollbar;
+        let scrollbar_thumb_color = cx.theme().scrollbar_thumb;
         div()
             .id("messages-scrollbar")
             .absolute()
@@ -1074,8 +1084,8 @@ impl ChatWindow {
                             }
                         });
 
-                        window.paint_quad(fill(track_bounds, rgb(0x2a2a2a)));
-                        window.paint_quad(fill(thumb_bounds, rgb(0x666666)));
+                        window.paint_quad(fill(track_bounds, scrollbar_color));
+                        window.paint_quad(fill(thumb_bounds, scrollbar_thumb_color));
                     },
                 )
                 .size_full(),
@@ -1122,13 +1132,13 @@ impl ChatWindow {
                     .right(px(12.))
                     .max_h(px(240.))
                     .overflow_y_scroll()
-                    .bg(rgb(0x1e1e1e))
+                    .bg(cx.theme().popover)
                     .border_1()
-                    .border_color(rgb(0x6366f1))
+                    .border_color(cx.theme().primary)
                     .rounded_md()
                     .py_1()
                     .shadow(vec![gpui::BoxShadow {
-                        color: gpui::rgba(0x000000aa).into(),
+                        color: cx.theme().overlay,
                         offset: gpui::point(px(0.), px(4.)),
                         blur_radius: px(12.),
                         spread_radius: px(0.),
@@ -1160,17 +1170,17 @@ impl ChatWindow {
                             .px_3()
                             .py_1p5()
                             .cursor_pointer()
-                            .when(is_highlighted, |s| s.bg(rgb(0x2a2a2a)))
-                            .hover(|style| style.bg(rgb(0x2a2a2a)))
+                            .when(is_highlighted, |s| s.bg(cx.theme().accent))
+                            .hover(|style| style.bg(cx.theme().accent))
                             .child(
                                 div()
                                     .w(px(160.))
                                     .overflow_hidden()
                                     .text_sm()
                                     .text_color(if is_highlighted {
-                                        rgb(0xffffff)
+                                        cx.theme().foreground
                                     } else {
-                                        rgb(0xcccccc)
+                                        cx.theme().muted_foreground
                                     })
                                     .child(div().whitespace_nowrap().text_ellipsis().child(label)),
                             )
@@ -1179,7 +1189,7 @@ impl ChatWindow {
                                     .flex_1()
                                     .min_w(px(0.))
                                     .text_xs()
-                                    .text_color(rgb(0x666666))
+                                    .text_color(cx.theme().muted_foreground)
                                     .line_clamp(2)
                                     .when(!detail.is_empty(), |s| s.child(detail)),
                             )
@@ -1189,8 +1199,8 @@ impl ChatWindow {
                                     .px_1()
                                     .py_0p5()
                                     .rounded_sm()
-                                    .bg(rgb(0x333333))
-                                    .text_color(rgb(0x888888))
+                                    .bg(cx.theme().secondary)
+                                    .text_color(cx.theme().secondary_foreground)
                                     .child(source_label),
                             )
                             .on_click(cx.listener(move |this, _, _window, cx| {
@@ -1201,25 +1211,13 @@ impl ChatWindow {
                     })),
             )
     }
-}
 
-impl Render for ChatWindow {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let status = match &self.state {
-            ChatState::Idle => None,
-            ChatState::Loading => Some(SharedString::from("Loading...")),
-            ChatState::Streaming => Some(SharedString::from("Thinking...")),
-            ChatState::Error(msg) => Some(msg.clone()),
-        };
-        let is_error = matches!(self.state, ChatState::Error(_));
-        let is_loading = matches!(self.state, ChatState::Loading);
-        let is_streaming = matches!(self.state, ChatState::Streaming);
-        let input_empty = self.chat_input.read(cx).content(cx).is_empty();
-        let is_disabled = is_streaming || is_loading || input_empty;
-        let input_focused = self.chat_input.read(cx).focus_handle.is_focused(window);
-
+    fn sync_display_entities(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> (ReasoningEntities, MarkdownEntities) {
         // Ensure reasoning displays exist for reasoning parts
-        let mut reasoning_entities: Vec<Vec<Option<gpui::Entity<Reasoning>>>> = Vec::new();
+        let mut reasoning_entities: ReasoningEntities = Vec::new();
         for (msg_idx, msg) in self.messages.iter().enumerate() {
             let mut msg_reasoning: Vec<Option<gpui::Entity<Reasoning>>> = Vec::new();
             let part_count = msg.parts.len();
@@ -1261,8 +1259,7 @@ impl Render for ChatWindow {
         self.reasoning_displays.truncate(self.messages.len());
 
         // Ensure markdown displays exist for assistant text parts only
-        let mut markdown_entities: Vec<Vec<Option<gpui::Entity<TextViewState>>>> = Vec::new();
-        let assistant_text_width = (window.viewport_size().width - px(80.)).max(px(320.));
+        let mut markdown_entities: MarkdownEntities = Vec::new();
         for (msg_idx, msg) in self.messages.iter().enumerate() {
             let mut msg_markdown: Vec<Option<gpui::Entity<TextViewState>>> = Vec::new();
             let is_assistant = matches!(msg.role, Role::Assistant);
@@ -1311,6 +1308,663 @@ impl Render for ChatWindow {
         }
         self.markdown_displays.truncate(self.messages.len());
 
+        (reasoning_entities, markdown_entities)
+    }
+
+    fn render_workspace_selector(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_3()
+            .pb_1()
+            .flex()
+            .flex_row()
+            .gap_1()
+            .items_center()
+            .child(
+                Button::new("manage-workspace-btn")
+                    .with_size(Size::XSmall)
+                    .compact()
+                    .outline()
+                    .custom(
+                        ButtonCustomVariant::new(cx)
+                            .color(gpui::rgba(0x00000000).into())
+                            .foreground(cx.theme().muted_foreground.into())
+                            .hover(cx.theme().foreground.into())
+                            .active(cx.theme().foreground.into()),
+                    )
+                    .icon(
+                        Icon::empty()
+                            .path("manage.svg")
+                            .size(px(10.))
+                            .text_color(cx.theme().muted_foreground),
+                    )
+                    .label("Workspace")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_workspace_manager(window, cx);
+                    })),
+            )
+            .children(self.workspaces.iter().map(|ws| {
+                let is_selected = self.selected_workspace_id == Some(ws.id.clone());
+                let ws_id = ws.id.clone();
+                let ws_name = ws.name.clone();
+                let name: SharedString = ws_name.clone().into();
+                let (fg_color, bg_color, hover_color, active_color) = if is_selected {
+                    (
+                        cx.theme().primary_foreground,
+                        cx.theme().primary,
+                        cx.theme().primary_hover,
+                        cx.theme().primary_active,
+                    )
+                } else {
+                    (
+                        cx.theme().muted_foreground,
+                        cx.theme().secondary,
+                        cx.theme().secondary_hover,
+                        cx.theme().secondary_active,
+                    )
+                };
+                Button::new(SharedString::from(format!("ws-{}", ws_id)))
+                    .with_size(Size::XSmall)
+                    .compact()
+                    .custom(
+                        ButtonCustomVariant::new(cx)
+                            .color(bg_color.into())
+                            .foreground(fg_color.into())
+                            .hover(hover_color.into())
+                            .active(active_color.into()),
+                    )
+                    .when(ws.name == "Default", |this| {
+                        this.icon(
+                            Icon::empty()
+                                .path("folder.svg")
+                                .size(px(10.))
+                                .text_color(active_color),
+                        )
+                    })
+                    .label(name)
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        this.selected_workspace_id = Some(ws_id.clone());
+                        let ws_dir = this
+                            .workspaces
+                            .iter()
+                            .find(|w| w.id == ws_id)
+                            .map(|w| PathBuf::from(&w.path));
+                        if let Some(dir) = ws_dir {
+                            this.chat_input.update(cx, |ci, cx| {
+                                ci.set_workspace(ws_id.clone(), dir, ws_name.clone(), cx);
+                            });
+                        }
+                        cx.notify();
+                    }))
+            }))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_messages(
+        &mut self,
+        cx: &mut Context<Self>,
+        reasoning_entities: &ReasoningEntities,
+        markdown_entities: &MarkdownEntities,
+        assistant_text_width: Pixels,
+        status: Option<SharedString>,
+        is_error: bool,
+        is_loading: bool,
+        is_streaming: bool,
+    ) -> impl IntoElement {
+        div()
+            .id("messages")
+            .size_full()
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll_handle)
+            .on_scroll_wheel(
+                cx.listener(|this, event: &gpui::ScrollWheelEvent, window, cx| {
+                    let delta = event.delta.pixel_delta(window.line_height());
+                    if this.scroll_locked && delta.y > gpui::px(0.) {
+                        this.scroll_locked = false;
+                    }
+                    if !this.scroll_locked {
+                        let offset_y = this.scroll_handle.offset().y;
+                        let max_y = this.scroll_handle.max_offset().y;
+                        if offset_y.abs() >= max_y - gpui::px(5.) {
+                            this.scroll_locked = true;
+                        }
+                    }
+                    cx.notify();
+                }),
+            )
+            .flex()
+            .flex_col()
+            .p_3()
+            .pr_4()
+            .gap_2()
+            .children(self.messages.iter().enumerate().map(|(msg_idx, msg)| {
+                let msg_reasoning = reasoning_entities.get(msg_idx).cloned().unwrap_or_default();
+                let msg_markdown = markdown_entities.get(msg_idx).cloned().unwrap_or_default();
+                self.render_message(
+                    cx,
+                    msg_idx,
+                    msg,
+                    msg_reasoning,
+                    msg_markdown,
+                    assistant_text_width,
+                )
+            }))
+            .when(self.messages.is_empty(), |el| {
+                el.items_center().justify_center().child(
+                    svg()
+                        .path("logo.svg")
+                        .text_color(cx.theme().muted)
+                        .size(px(180.)),
+                )
+            })
+            .when(is_loading, |el| {
+                el.child(
+                    div().flex().justify_center().child(
+                        div()
+                            .px_3()
+                            .py_1()
+                            .rounded_md()
+                            .bg(cx.theme().secondary)
+                            .text_color(cx.theme().muted_foreground)
+                            .text_xs()
+                            .child(loader()),
+                    ),
+                )
+            })
+            .when(is_streaming, |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .w_full()
+                        .px_3()
+                        .py_1()
+                        .text_color(cx.theme().muted_foreground)
+                        .text_xs()
+                        .child(text_loader()),
+                )
+            })
+            .when(is_error, |el| {
+                el.child(
+                    div().flex().justify_center().child(
+                        div()
+                            .px_3()
+                            .py_1()
+                            .rounded_md()
+                            .bg(cx.theme().danger)
+                            .text_color(cx.theme().danger_foreground)
+                            .text_xs()
+                            .child(status.unwrap_or_default()),
+                    ),
+                )
+            })
+    }
+
+    fn render_message(
+        &self,
+        cx: &mut Context<Self>,
+        msg_idx: usize,
+        msg: &Message,
+        msg_reasoning: Vec<Option<Entity<Reasoning>>>,
+        msg_markdown: Vec<Option<Entity<TextViewState>>>,
+        assistant_text_width: Pixels,
+    ) -> impl IntoElement + use<> {
+        let is_user = matches!(msg.role, Role::User);
+        let msg_id = msg.id.clone();
+        div()
+            .flex()
+            .w_full()
+            .when(is_user, |this| this.justify_end())
+            .when(!is_user, |this| this.justify_start())
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .min_w_0()
+                    .when(is_user, |this| this.items_end())
+                    .gap_1()
+                    .children(msg.parts.iter().enumerate().map(|(part_idx, part)| {
+                        let markdown_entity = msg_markdown.get(part_idx).and_then(|e| e.clone());
+                        let reasoning_entity = msg_reasoning.get(part_idx).and_then(|e| e.clone());
+                        self.render_message_part(
+                            cx,
+                            msg_idx,
+                            part_idx,
+                            part,
+                            markdown_entity,
+                            reasoning_entity,
+                            assistant_text_width,
+                            is_user,
+                            msg_id.clone(),
+                        )
+                    })),
+            )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_message_part(
+        &self,
+        cx: &mut Context<Self>,
+        msg_idx: usize,
+        _part_idx: usize,
+        part: &MessagePart,
+        markdown_entity: Option<Entity<TextViewState>>,
+        reasoning_entity: Option<Entity<Reasoning>>,
+        assistant_text_width: Pixels,
+        is_user: bool,
+        msg_id: String,
+    ) -> AnyElement {
+        match part {
+            MessagePart::Text { text, state } => self.render_text_part(
+                cx,
+                msg_idx,
+                text.clone(),
+                state.clone(),
+                markdown_entity,
+                assistant_text_width,
+                is_user,
+                msg_id,
+            ),
+            MessagePart::Reasoning { .. } => div()
+                .flex()
+                .flex_col()
+                .w_full()
+                .when(reasoning_entity.is_some(), |this| {
+                    this.child(reasoning_entity.unwrap())
+                })
+                .into_any_element(),
+            MessagePart::ToolCall { name, args, .. } => div()
+                .flex()
+                .w_full()
+                .justify_start()
+                .child(
+                    div()
+                        .px_3()
+                        .py_1()
+                        .rounded_md()
+                        .bg(cx.theme().warning)
+                        .text_color(cx.theme().warning_foreground)
+                        .text_xs()
+                        .w_full()
+                        .child(format!("⚙ {} {}", name, args)),
+                )
+                .into_any_element(),
+            MessagePart::ToolResult { name, output, .. } => div()
+                .flex()
+                .w_full()
+                .justify_start()
+                .child(
+                    div()
+                        .px_3()
+                        .py_1()
+                        .rounded_md()
+                        .bg(cx.theme().info)
+                        .text_color(cx.theme().info_foreground)
+                        .text_xs()
+                        .w_full()
+                        .child(format!("↳ {}: {}", name, output)),
+                )
+                .into_any_element(),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_text_part(
+        &self,
+        cx: &mut Context<Self>,
+        msg_idx: usize,
+        text: SharedString,
+        state: Option<PartState>,
+        markdown_entity: Option<Entity<TextViewState>>,
+        assistant_text_width: Pixels,
+        is_user: bool,
+        msg_id: String,
+    ) -> AnyElement {
+        let is_streaming_empty = state == Some(PartState::Streaming) && text.is_empty();
+        let is_editing = is_user && self.editing_message_id.as_ref() == Some(&msg_id);
+
+        if is_editing {
+            let inline_input = self
+                .inline_edit_input
+                .clone()
+                .unwrap_or_else(|| self.chat_input.clone());
+            return div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .w_full()
+                .child(
+                    div()
+                        .px_3()
+                        .py_2()
+                        .rounded_md()
+                        .bg(cx.theme().background)
+                        .text_color(cx.theme().foreground)
+                        .text_sm()
+                        .child(Input::new(&inline_input.read(cx).input_state).w_full()),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .justify_end()
+                        .child(
+                            Button::new("inline-edit-save")
+                                .label("Save")
+                                .with_size(Size::XSmall)
+                                .primary()
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.confirm_inline_edit(&ConfirmInlineEdit, _window, cx);
+                                })),
+                        )
+                        .child(
+                            Button::new("inline-edit-cancel")
+                                .label("Cancel")
+                                .with_size(Size::XSmall)
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.cancel_inline_edit(&CancelInlineEdit, _window, cx);
+                                })),
+                        ),
+                )
+                .into_any_element();
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .when(!is_user, |this| this.w_full().min_w_0())
+            .child(
+                div()
+                    .py_2()
+                    .rounded_md()
+                    .when(!is_user, |this| this.w_full().min_w_0())
+                    .when(is_user, |this| {
+                        this.px_3()
+                            .bg(cx.theme().primary)
+                            .text_color(cx.theme().primary_foreground)
+                    })
+                    .when(!is_user, |this| this.text_color(cx.theme().foreground))
+                    .text_sm()
+                    .when(is_streaming_empty, |this| this.child(text_loader()))
+                    .when(!is_streaming_empty, |this| {
+                        if let Some(ref md) = markdown_entity {
+                            this.child(
+                                div().flex().w(assistant_text_width).min_w_0().child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(TextView::new(md).selectable(true).w_full()),
+                                ),
+                            )
+                        } else {
+                            this.child(text.clone())
+                        }
+                    }),
+            )
+            .when(!is_user && !is_streaming_empty, |this| {
+                let copy_text = text.clone();
+                this.child(
+                    Button::new(("copy-btn", msg_idx as u64))
+                        .with_size(Size::XSmall)
+                        .custom(
+                            ButtonCustomVariant::new(cx)
+                                .color(gpui::rgba(0x00000000).into())
+                                .foreground(cx.theme().muted_foreground.into())
+                                .hover(cx.theme().secondary.into())
+                                .active(cx.theme().secondary_active.into()),
+                        )
+                        .icon(
+                            Icon::empty()
+                                .path("clipboard.svg")
+                                .size(px(12.))
+                                .text_color(cx.theme().muted_foreground),
+                        )
+                        .on_click(cx.listener(move |_this, _, _window, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(copy_text.to_string()));
+                        })),
+                )
+            })
+            .when(is_user && !is_streaming_empty, |this| {
+                let edit_msg_id = msg_id.clone();
+                let text_to_copy = text.clone();
+                this.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .justify_end()
+                        .child(
+                            Button::new(("copy-btn", msg_idx as u64))
+                                .with_size(Size::XSmall)
+                                .custom(
+                                    ButtonCustomVariant::new(cx)
+                                        .color(gpui::rgba(0x00000000).into())
+                                        .foreground(cx.theme().muted_foreground.into())
+                                        .hover(cx.theme().secondary.into())
+                                        .active(cx.theme().secondary_active.into()),
+                                )
+                                .icon(
+                                    Icon::empty()
+                                        .path("clipboard.svg")
+                                        .size(px(12.))
+                                        .text_color(cx.theme().muted_foreground),
+                                )
+                                .on_click(cx.listener(move |_this, _, _window, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        text_to_copy.to_string(),
+                                    ));
+                                })),
+                        )
+                        .child(
+                            Button::new(("edit-btn", msg_idx as u64))
+                                .with_size(Size::XSmall)
+                                .custom(
+                                    ButtonCustomVariant::new(cx)
+                                        .color(gpui::rgba(0x00000000).into())
+                                        .foreground(cx.theme().muted_foreground.into())
+                                        .hover(cx.theme().secondary.into())
+                                        .active(cx.theme().secondary_active.into()),
+                                )
+                                .icon(
+                                    Icon::empty()
+                                        .path("edit.svg")
+                                        .size(px(12.))
+                                        .text_color(cx.theme().muted_foreground),
+                                )
+                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                    this.start_edit_message(edit_msg_id.clone(), _window, cx);
+                                })),
+                        ),
+                )
+            })
+            .into_any_element()
+    }
+
+    fn render_input_area(
+        &mut self,
+        cx: &mut Context<Self>,
+        is_disabled: bool,
+        input_focused: bool,
+    ) -> impl IntoElement {
+        div()
+            .px_3()
+            .pb_3()
+            .when(self.chat_input.read(cx).is_at_popup_visible(), |this| {
+                this.child(self.render_at_mention_popup(cx))
+            })
+            .when(
+                self.chat_input.read(cx).is_command_popup_visible(),
+                |this| this.child(self.render_command_popup(cx)),
+            )
+            .child(
+                div()
+                    .bg(cx.theme().secondary)
+                    .rounded_xl()
+                    .border_1()
+                    .border_color(if input_focused {
+                        cx.theme().primary
+                    } else {
+                        cx.theme().border
+                    })
+                    .shadow_sm()
+                    .px_3()
+                    .py_2()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .flex()
+                            .on_key_down(cx.listener(
+                                |this, event: &gpui::KeyDownEvent, window, cx| {
+                                    let at_popup_active =
+                                        this.chat_input.read(cx).is_at_popup_visible();
+                                    let command_popup_active =
+                                        this.chat_input.read(cx).is_command_popup_visible();
+                                    if at_popup_active || command_popup_active {
+                                        match event.keystroke.key.as_str() {
+                                            "up" => {
+                                                this.chat_input
+                                                    .update(cx, |ci, cx| ci.navigate_popup(-1, cx));
+                                                window.prevent_default();
+                                                cx.stop_propagation();
+                                            }
+                                            "down" => {
+                                                this.chat_input
+                                                    .update(cx, |ci, cx| ci.navigate_popup(1, cx));
+                                                window.prevent_default();
+                                                cx.stop_propagation();
+                                            }
+                                            "enter" | "tab" => {
+                                                if at_popup_active {
+                                                    this.chat_input.update(cx, |ci, cx| {
+                                                        ci.select_highlighted_mention(window, cx)
+                                                    });
+                                                } else {
+                                                    this.chat_input.update(cx, |ci, cx| {
+                                                        ci.select_highlighted_command(window, cx)
+                                                    });
+                                                }
+                                                window.prevent_default();
+                                                cx.stop_propagation();
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                },
+                            ))
+                            .child(
+                                Input::new(&self.chat_input.read(cx).input_state)
+                                    .appearance(false)
+                                    .w_full(),
+                            ),
+                    )
+                    .child(self.render_toolbar(cx, is_disabled)),
+            )
+    }
+
+    fn render_toolbar(&self, cx: &mut Context<Self>, is_disabled: bool) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_row()
+            .gap_1()
+            .items_center()
+            .child(
+                div()
+                    .max_w_40()
+                    .child(Select::new(&self.model_dropdown).with_size(Size::Small)),
+            )
+            .child(
+                div()
+                    .max_w_40()
+                    .child(Select::new(&self.thinking_dropdown).with_size(Size::Small)),
+            )
+            .child(div().flex_1())
+            .child({
+                let is_recording = self.voice_state == VoiceState::Recording;
+                let is_transcribing = self.voice_state == VoiceState::Transcribing;
+                if is_transcribing {
+                    Button::new("voice-btn")
+                        .with_size(Size::Small)
+                        .ghost()
+                        .icon(
+                            Icon::empty()
+                                .path("mic.svg")
+                                .size(px(14.))
+                                .text_color(cx.theme().muted_foreground),
+                        )
+                        .loading(true)
+                        .disabled(true)
+                        .into_any_element()
+                } else if is_recording {
+                    Button::new("voice-btn")
+                        .with_size(Size::Small)
+                        .custom(
+                            ButtonCustomVariant::new(cx)
+                                .color(cx.theme().danger.into())
+                                .foreground(cx.theme().danger_foreground.into())
+                                .hover(cx.theme().danger_hover.into())
+                                .active(cx.theme().danger_active.into()),
+                        )
+                        .icon(
+                            Icon::empty()
+                                .path("mic.svg")
+                                .size(px(14.))
+                                .text_color(cx.theme().danger_foreground),
+                        )
+                        .on_click(cx.listener(Self::toggle_voice_input))
+                        .into_any_element()
+                } else {
+                    Button::new("voice-btn")
+                        .with_size(Size::Small)
+                        .ghost()
+                        .icon(
+                            Icon::empty()
+                                .path("mic.svg")
+                                .size(px(14.))
+                                .text_color(cx.theme().muted_foreground),
+                        )
+                        .on_click(cx.listener(Self::toggle_voice_input))
+                        .into_any_element()
+                }
+            })
+            .child(
+                Button::new("send-btn")
+                    .with_size(Size::Small)
+                    .primary()
+                    .icon(
+                        Icon::empty()
+                            .path("send.svg")
+                            .size(px(14.))
+                            .text_color(cx.theme().primary_foreground),
+                    )
+                    .disabled(is_disabled)
+                    .on_click(cx.listener(|this, _, _window, cx| {
+                        this.send_message(&SendMessage, _window, cx);
+                    })),
+            )
+    }
+}
+
+impl Render for ChatWindow {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let status = match &self.state {
+            ChatState::Idle => None,
+            ChatState::Loading => Some(SharedString::from("Loading...")),
+            ChatState::Streaming => Some(SharedString::from("Thinking...")),
+            ChatState::Error(msg) => Some(msg.clone()),
+        };
+        let is_error = matches!(self.state, ChatState::Error(_));
+        let is_loading = matches!(self.state, ChatState::Loading);
+        let is_streaming = matches!(self.state, ChatState::Streaming);
+        let input_empty = self.chat_input.read(cx).content(cx).is_empty();
+        let is_disabled = is_streaming || is_loading || input_empty;
+        let input_focused = self.chat_input.read(cx).focus_handle.is_focused(window);
+
+        let (reasoning_entities, markdown_entities) = self.sync_display_entities(cx);
+        let assistant_text_width = (window.viewport_size().width - px(80.)).max(px(320.));
+
         div()
             .relative()
             .track_focus(&self.focus_handle)
@@ -1329,572 +1983,27 @@ impl Render for ChatWindow {
             .flex_col()
             .flex_1()
             .min_h(px(0.))
-            .bg(rgb(0x1a1a1a))
+            .bg(cx.theme().background)
             .child(
                 div()
                     .flex_1()
                     .min_h(px(0.0))
                     .relative()
-                    .child(
-                        div()
-                            .id("messages")
-                            .size_full()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.scroll_handle)
-                            .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, window, cx| {
-                                let delta = event.delta.pixel_delta(window.line_height());
-                                if this.scroll_locked && delta.y > gpui::px(0.) {
-                                    this.scroll_locked = false;
-                                }
-                                if !this.scroll_locked {
-                                    let offset_y = this.scroll_handle.offset().y;
-                                    let max_y = this.scroll_handle.max_offset().y;
-                                    if offset_y.abs() >= max_y - gpui::px(5.) {
-                                        this.scroll_locked = true;
-                                    }
-                                }
-                                cx.notify();
-                            }))
-                            .flex()
-                            .flex_col()
-                            .p_3()
-                            .pr_4()
-                            .gap_2()
-                            .children(
-                                self.messages.iter().enumerate().map(|(msg_idx, msg)| {
-                                    let is_user = matches!(msg.role, Role::User);
-                                    let msg_id = msg.id.clone();
-                                    let msg_reasoning = reasoning_entities.get(msg_idx).cloned().unwrap_or_default();
-                                    let msg_markdown = markdown_entities.get(msg_idx).cloned().unwrap_or_default();
-                                    div()
-                                        .flex()
-                                        .w_full()
-                                        .when(is_user, |this| this.justify_end())
-                                        .when(!is_user, |this| this.justify_start())
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .flex_col()
-                                                .w_full()
-                                                .min_w_0()
-                                                .when(is_user, |this| this.items_end())
-                                                .gap_1()
-                                                .children(msg.parts.iter().enumerate().map(|(part_idx, part)| {
-                                                    match part {
-                                                        MessagePart::Text { text, state } => {
-                                                            let is_streaming_empty = *state == Some(PartState::Streaming) && text.is_empty();
-                                                            let markdown_entity = msg_markdown.get(part_idx).and_then(|e| e.clone());
-                                                            let text_to_copy: SharedString = text.clone();
-                                                            let is_editing = is_user && self.editing_message_id.as_ref() == Some(&msg_id);
-                                                            if is_editing {
-                                                                let inline_input = self.inline_edit_input.clone().unwrap_or_else(|| self.chat_input.clone());
-                                                                div()
-                                                                    .flex()
-                                                                    .flex_col()
-                                                                    .gap_1()
-                                                                    .w_full()
-                                                                    .child(
-                                                                        div()
-                                                                            .px_3()
-                                                                            .py_2()
-                                                                            .rounded_md()
-                                                                            .bg(rgb(0xffffff))
-                                                                            .text_color(rgb(0x000000))
-                                                                            .text_sm()
-                                                                            .child(Input::new(&inline_input.read(cx).input_state).w_full())
-                                                                    )
-                                                                    .child(
-                                                                        div()
-                                                                            .flex()
-                                                                            .gap_2()
-                                                                            .justify_end()
-                                                                            .child(
-                                                                                Button::new("inline-edit-save")
-                                                                                    .label("Save")
-                                                                                    .with_size(Size::XSmall)
-                                                                                    .primary()
-                                                                                    .on_click(cx.listener(|this, _, _window, cx| {
-                                                                                        this.confirm_inline_edit(&ConfirmInlineEdit, _window, cx);
-                                                                                    }))
-                                                                            )
-                                                                            .child(
-                                                                                Button::new("inline-edit-cancel")
-                                                                                    .label("Cancel")
-                                                                                    .with_size(Size::XSmall)
-                                                                                    .on_click(cx.listener(|this, _, _window, cx| {
-                                                                                        this.cancel_inline_edit(&CancelInlineEdit, _window, cx);
-                                                                                    }))
-                                                                            )
-                                                                    )
-                                                            } else {
-                                                                div()
-                                                                    .flex()
-                                                                    .flex_col()
-                                                                    .gap_1()
-                                                                    .when(!is_user, |this| this.w_full().min_w_0())
-                                                                    .child(
-                                                                        div()
-                                                                            .py_2()
-                                                                            .rounded_md()
-                                                                            .when(!is_user, |this| this.w_full().min_w_0())
-                                                                            .when(is_user, |this| {
-                                                                                this.px_3()
-                                                                                    .bg(rgb(0x6366f1))
-                                                                                    .text_color(rgb(0xffffff))
-                                                                            })
-                                                                            .when(matches!(msg.role, Role::Assistant), |this| {
-                                                                                this.text_color(rgb(0xe5e5e5))
-                                                                            })
-                                                                            .text_sm()
-                                                                            .when(is_streaming_empty, |this| {
-                                                                                this.child(text_loader())
-                                                                            })
-                                                                            .when(!is_streaming_empty, |this| {
-                                                                                if let Some(ref md) = markdown_entity {
-                                                                                    this.child(
-                                                                                        div()
-                                                                                            .flex()
-                                                                                            .w(assistant_text_width)
-                                                                                            .min_w_0()
-                                                                                            .child(
-                                                                                                div()
-                                                                                                    .flex_1()
-                                                                                                    .min_w_0()
-                                                                                                    .child(TextView::new(md).selectable(true).w_full()),
-                                                                                            ),
-                                                                                    )
-                                                                                } else {
-                                                                                    this.child(text.clone())
-                                                                                }
-                                                                            })
-                                                                    )
-                                                                    .when(!is_user && !is_streaming_empty, |this| {
-                                                                        let copy_text = text.clone();
-                                                                        this.child(
-                                                                            Button::new(("copy-btn", msg_idx as u64))
-                                                                                .with_size(Size::XSmall)
-                                                                                .custom(
-                                                                                    ButtonCustomVariant::new(cx)
-                                                                                        .color(gpui::rgba(0x00000000).into())
-                                                                                        .foreground(rgb(0x888888).into())
-                                                                                        .hover(rgb(0x333333).into())
-                                                                                        .active(rgb(0x444444).into()),
-                                                                                )
-                                                                                .icon(
-                                                                                    Icon::empty()
-                                                                                        .path("clipboard.svg")
-                                                                                        .size(px(12.))
-                                                                                        .text_color(rgb(0x888888)),
-                                                                                )
-                                                                                .on_click(cx.listener(move |_this, _, _window, cx| {
-                                                                                    cx.write_to_clipboard(ClipboardItem::new_string(copy_text.to_string()));
-                                                                                }))
-                                                                        )
-                                                                    })
-                                                                    .when(is_user && !is_streaming_empty, |this| {
-                                                                        let edit_msg_id = msg_id.clone();
-                                                                        this.child(
-                                                                            div()
-                                                                                .flex()
-                                                                                .gap_2()
-                                                                                .justify_end()
-                                                                                .child(
-                                                                                    Button::new(("copy-btn", msg_idx as u64))
-                                                                                        .with_size(Size::XSmall)
-                                                                                        .custom(
-                                                                                            ButtonCustomVariant::new(cx)
-                                                                                                .color(gpui::rgba(0x00000000).into())
-                                                                                                .foreground(rgb(0x888888).into())
-                                                                                                .hover(rgb(0x333333).into())
-                                                                                                .active(rgb(0x444444).into()),
-                                                                                        )
-                                                                                        .icon(
-                                                                                            Icon::empty()
-                                                                                                .path("clipboard.svg")
-                                                                                                .size(px(12.))
-                                                                                                .text_color(rgb(0x888888)),
-                                                                                        )
-                                                                                        .on_click(cx.listener(move |_this, _, _window, cx| {
-                                                                                            cx.write_to_clipboard(ClipboardItem::new_string(text_to_copy.to_string()));
-                                                                                        }))
-                                                                                )
-                                                                                .child(
-                                                                                    Button::new(("edit-btn", msg_idx as u64))
-                                                                                        .with_size(Size::XSmall)
-                                                                                        .custom(
-                                                                                            ButtonCustomVariant::new(cx)
-                                                                                                .color(gpui::rgba(0x00000000).into())
-                                                                                                .foreground(rgb(0x888888).into())
-                                                                                                .hover(rgb(0x333333).into())
-                                                                                                .active(rgb(0x444444).into()),
-                                                                                        )
-                                                                                        .icon(
-                                                                                            Icon::empty()
-                                                                                                .path("edit.svg")
-                                                                                                .size(px(12.))
-                                                                                                .text_color(rgb(0x888888)),
-                                                                                        )
-                                                                                        .on_click(cx.listener(move |this, _, _window, cx| {
-                                                                                            this.start_edit_message(edit_msg_id.clone(), _window, cx);
-                                                                                        }))
-                                                                                )
-                                                                        )
-                                                                    })
-                                                            }
-                                                        }
-                                                        MessagePart::Reasoning { .. } => {
-                                                            let reasoning_entity = msg_reasoning.get(part_idx).and_then(|e| e.clone());
-                                                            div()
-                                                                .flex()
-                                                                .flex_col()
-                                                                .w_full()
-                                                                .when(reasoning_entity.is_some(), |this| {
-                                                                    this.child(reasoning_entity.unwrap())
-                                                                })
-                                                        }
-                                                        MessagePart::ToolCall { name, args, .. } => {
-                                                            div()
-                                                                .flex()
-                                                                .w_full()
-                                                                .justify_start()
-                                                                .child(
-                                                                    div()
-                                                                        .px_3()
-                                                                        .py_1()
-                                                                        .rounded_md()
-                                                                        .bg(rgb(0x3b2818))
-                                                                        .text_color(rgb(0xfbbf24))
-                                                                        .text_xs()
-                                                                        .w_full()
-                                                                        .child(format!("⚙ {} {}", name, args)),
-                                                                )
-                                                        }
-                                                        MessagePart::ToolResult { name, output, .. } => {
-                                                            div()
-                                                                .flex()
-                                                                .w_full()
-                                                                .justify_start()
-                                                                .child(
-                                                                    div()
-                                                                        .px_3()
-                                                                        .py_1()
-                                                                        .rounded_md()
-                                                                        .bg(rgb(0x1a1a2e))
-                                                                        .text_color(rgb(0xa5b4fc))
-                                                                        .text_xs()
-                                                                        .w_full()
-                                                                        .child(format!("↳ {}: {}", name, output)),
-                                                                )
-                                                        }
-                                                    }
-                                                }))
-                                        )
-                                })
-                            )
-                            .when(self.messages.is_empty(), |el| {
-                                el.items_center()
-                                    .justify_center()
-                                    .child(
-                                        svg()
-                                            .path("logo.svg")
-                                            .text_color(rgb(0x252525))
-                                            .size(px(180.)),
-                                    )
-                            })
-                            .when(is_loading, |el| {
-                                el.child(
-                                    div()
-                                        .flex()
-                                        .justify_center()
-                                        .child(
-                                            div()
-                                                .px_3()
-                                                .py_1()
-                                                .rounded_md()
-                                                .bg(rgb(0x252525))
-                                                .text_color(rgb(0x888888))
-                                                .text_xs()
-                                                .child(loader()),
-                                        ),
-                                )
-                            })
-                            .when(is_streaming, |el| {
-                                el.child(
-                                    div()
-                                        .flex()
-                                        .w_full()
-                                        .px_3()
-                                        .py_1()
-                                        .text_color(rgb(0x888888))
-                                        .text_xs()
-                                        .child(text_loader()),
-                                )
-                            })
-                            .when(is_error, |el| {
-                                el.child(
-                                    div()
-                                        .flex()
-                                        .justify_center()
-                                        .child(
-                                            div()
-                                                .px_3()
-                                                .py_1()
-                                                .rounded_md()
-                                                .bg(rgb(0x7f1d1d))
-                                                .text_color(rgb(0xfca5a5))
-                                                .text_xs()
-                                                .child(status.unwrap_or_default()),
-                                        ),
-                                )
-                            }),
-                    )
+                    .child(self.render_messages(
+                        cx,
+                        &reasoning_entities,
+                        &markdown_entities,
+                        assistant_text_width,
+                        status,
+                        is_error,
+                        is_loading,
+                        is_streaming,
+                    ))
                     .child(self.render_messages_scrollbar(cx)),
             )
             .when(self.session.is_none(), |el| {
-                el.child(
-                    div()
-                        .px_3()
-                        .pb_1()
-                        .flex()
-                        .flex_row()
-                        .gap_1()
-                        .items_center()
-                        .child(
-                            Button::new("manage-workspace-btn")
-                                .with_size(Size::XSmall)
-                                .compact()
-                                .outline()
-                                .custom(
-                                    ButtonCustomVariant::new(cx)
-                                        .color(gpui::rgba(0x00000000).into())
-                                        .foreground(rgb(0xaaaaaa).into())
-                                        .hover(rgb(0xcccccc).into())
-                                        .active(rgb(0xcccccc).into()),
-                                )
-                                .icon(
-                                    Icon::empty()
-                                        .path("manage.svg")
-                                        .size(px(10.))
-                                        .text_color(rgb(0xaaaaaa)),
-                                )
-                                .label("Workspace")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.open_workspace_manager(window, cx);
-                                }))
-                        )
-                        .children(self.workspaces.iter().map(|ws| {
-                            let is_selected = self.selected_workspace_id == Some(ws.id.clone());
-                            let ws_id = ws.id.clone();
-                            let ws_name = ws.name.clone();
-                            let name: SharedString = ws_name.clone().into();
-                            Button::new(SharedString::from(format!("ws-{}", ws_id)))
-                                .with_size(Size::XSmall)
-                                .compact()
-                                .custom(
-                                    ButtonCustomVariant::new(cx)
-                                        .color(
-                                            if is_selected {
-                                                rgb(0x6366f1)
-                                            } else {
-                                                rgb(0x2a2a2a)
-                                            }
-                                            .into(),
-                                        )
-                                        .foreground(
-                                            if is_selected {
-                                                rgb(0xffffff)
-                                            } else {
-                                                rgb(0xaaaaaa)
-                                            }
-                                            .into(),
-                                        )
-                                        .hover(
-                                            if is_selected {
-                                                rgb(0x6366f1)
-                                            } else {
-                                                rgb(0x333333)
-                                            }
-                                            .into(),
-                                        )
-                                        .active(
-                                            if is_selected {
-                                                rgb(0x4f46e5)
-                                            } else {
-                                                rgb(0x444444)
-                                            }
-                                            .into(),
-                                        ),
-                                )
-                                .when(ws.name == "Default", |this| {
-                                    this.icon(
-                                        Icon::empty()
-                                            .path("folder.svg")
-                                            .size(px(10.))
-                                            .text_color(
-                                                if is_selected {
-                                                    rgb(0xffffff)
-                                                } else {
-                                                    rgb(0xaaaaaa)
-                                                },
-                                            ),
-                                    )
-                                })
-                                .label(name)
-                                .on_click(cx.listener(move |this, _, _window, cx| {
-                                    this.selected_workspace_id = Some(ws_id.clone());
-                                    let ws_dir = this.workspaces.iter().find(|w| w.id == ws_id).map(|w| PathBuf::from(&w.path));
-                                    if let Some(dir) = ws_dir {
-                                        this.chat_input.update(cx, |ci, cx| {
-                                            ci.set_workspace(ws_id.clone(), dir, ws_name.clone(), cx);
-                                        });
-                                    }
-                                    cx.notify();
-                                }))
-                        }))
-                )
+                el.child(self.render_workspace_selector(cx))
             })
-            .child(
-                div()
-                    .px_3()
-                    .pb_3()
-                    .when(self.chat_input.read(cx).is_at_popup_visible(), |this| {
-                        this.child(self.render_at_mention_popup(cx))
-                    })
-                    .when(self.chat_input.read(cx).is_command_popup_visible(), |this| {
-                        this.child(self.render_command_popup(cx))
-                    })
-                    .child(
-                        div()
-                            .bg(rgb(0x1f1f1f))
-                            .rounded_xl()
-                            .border_1()
-                            .border_color(if input_focused {
-                                rgb(0x6366f1)
-                            } else {
-                                rgb(0x3a3a3a)
-                            })
-                            .shadow_sm()
-                            .px_3()
-                            .py_2()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .flex()
-                                    .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                                        let at_popup_active = this.chat_input.read(cx).is_at_popup_visible();
-                                        let command_popup_active = this.chat_input.read(cx).is_command_popup_visible();
-                                        if at_popup_active || command_popup_active {
-                                            match event.keystroke.key.as_str() {
-                                                "up" => {
-                                                    this.chat_input.update(cx, |ci, cx| ci.navigate_popup(-1, cx));
-                                                    window.prevent_default();
-                                                    cx.stop_propagation();
-                                                }
-                                                "down" => {
-                                                    this.chat_input.update(cx, |ci, cx| ci.navigate_popup(1, cx));
-                                                    window.prevent_default();
-                                                    cx.stop_propagation();
-                                                }
-                                                "enter" | "tab" => {
-                                                    if at_popup_active {
-                                                        this.chat_input.update(cx, |ci, cx| ci.select_highlighted_mention(window, cx));
-                                                    } else {
-                                                        this.chat_input.update(cx, |ci, cx| ci.select_highlighted_command(window, cx));
-                                                    }
-                                                    window.prevent_default();
-                                                    cx.stop_propagation();
-                                                }
-                                                _ => {}
-                                            }
-                                        }
-                                    }))
-                                    .child(
-                                        Input::new(&self.chat_input.read(cx).input_state)
-                                            .appearance(false)
-                                            .w_full(),
-                                    )
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .gap_1()
-                                    .items_center()
-                                    .child(
-                                        div().max_w_40().child(
-                                            Select::new(&self.model_dropdown)
-                                                .with_size(Size::Small),
-                                        ),
-                                    )
-                                    .child(
-                                        div().max_w_40().child(
-                                            Select::new(&self.thinking_dropdown)
-                                                .with_size(Size::Small),
-                                        ),
-                                    )
-                                    .child(div().flex_1())
-                                    .child({
-                                        let is_recording = self.voice_state == VoiceState::Recording;
-                                        let is_transcribing = self.voice_state == VoiceState::Transcribing;
-                                        if is_transcribing {
-                                            Button::new("voice-btn")
-                                                .with_size(Size::Small)
-                                                .ghost()
-                                                .icon(
-                                                    Icon::empty()
-                                                        .path("mic.svg")
-                                                        .size(px(14.))
-                                                        .text_color(rgb(0x9ca3af)),
-                                                )
-                                                .loading(true)
-                                                .disabled(true)
-                                                .into_any_element()
-                                        } else if is_recording {
-                                            Button::new("voice-btn")
-                                                .with_size(Size::Small)
-                                                .custom(
-                                                    ButtonCustomVariant::new(cx)
-                                                        .color(rgb(0xef4444).into())
-                                                        .foreground(rgb(0xffffff).into())
-                                                        .hover(rgb(0xdc2626).into())
-                                                        .active(rgb(0xb91c1c).into()),
-                                                )
-                                                .icon(
-                                                    Icon::empty()
-                                                        .path("mic.svg")
-                                                        .size(px(14.))
-                                                        .text_color(rgb(0xffffff)),
-                                                )
-                                                .on_click(cx.listener(Self::toggle_voice_input))
-                                                .into_any_element()
-                                        } else {
-                                            Button::new("voice-btn")
-                                                .with_size(Size::Small)
-                                                .ghost()
-                                                .icon(
-                                                    Icon::empty()
-                                                        .path("mic.svg")
-                                                        .size(px(14.))
-                                                        .text_color(rgb(0x9ca3af)),
-                                                )
-                                                .on_click(cx.listener(Self::toggle_voice_input))
-                                                .into_any_element()
-                                        }
-                                    })
-                                    .child(
-                                        Button::new("send-btn")
-                                            .label("➤")
-                                            .with_size(Size::Small)
-                                            .primary()
-                                            .disabled(is_disabled)
-                                            .on_click(cx.listener(|this, _, _window, cx| {
-                                                this.send_message(&SendMessage, _window, cx);
-                                            })),
-                                    )
-                            )
-                    )
-            )
+            .child(self.render_input_area(cx, is_disabled, input_focused))
     }
 }

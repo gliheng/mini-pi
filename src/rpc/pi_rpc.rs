@@ -724,12 +724,18 @@ fn find_runtime(bridge_dir: &PathBuf) -> Result<(String, Vec<String>), PiRpcErro
         let node_candidates: Vec<PathBuf> = if cfg!(windows) {
             vec![
                 bridge_dir.join("node.exe"),
-                bridge_dir.parent().map(|p| p.join("node.exe")).unwrap_or_default(),
+                bridge_dir
+                    .parent()
+                    .map(|p| p.join("node.exe"))
+                    .unwrap_or_default(),
             ]
         } else {
             vec![
                 bridge_dir.join("node"),
-                bridge_dir.parent().map(|p| p.join("node")).unwrap_or_default(),
+                bridge_dir
+                    .parent()
+                    .map(|p| p.join("node"))
+                    .unwrap_or_default(),
             ]
         };
         for node in node_candidates {
