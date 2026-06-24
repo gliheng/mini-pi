@@ -209,7 +209,7 @@ pub fn open_chat_window(
             .read(cx)
             .focus_handle(cx)
             .clone();
-        window.focus(&focus_handle);
+        window.focus(&focus_handle, cx);
         cx.new(|cx| Root::new(app, window, cx))
     })
     .expect("failed to open the chat window")

@@ -564,7 +564,7 @@ impl ThreadList {
         if self.all_threads_loaded(cx) {
             return;
         }
-        let max_y = self.scroll_handle.max_offset().height;
+        let max_y = self.scroll_handle.max_offset().y;
         if max_y <= px(0.) {
             return;
         }

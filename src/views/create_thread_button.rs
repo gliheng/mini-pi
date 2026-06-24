@@ -30,6 +30,7 @@ impl CreateThreadButton {
             offset: point(px(0.), px(0.)),
             blur_radius: px(blur),
             spread_radius: px(spread),
+            inset: false,
         }
     }
 
@@ -39,6 +40,7 @@ impl CreateThreadButton {
             offset: point(px(0.), px(0.)),
             blur_radius: px(blur),
             spread_radius: px(0.),
+            inset: false,
         }
     }
 
@@ -74,6 +76,7 @@ impl CreateThreadButton {
                         offset: point(px(0.), px(0.)),
                         blur_radius: px(blur),
                         spread_radius: px(0.),
+                        inset: false,
                     }])
                 },
             )
@@ -120,6 +123,7 @@ impl Render for CreateThreadButton {
                 offset: point(px(0.), px(4.)),
                 blur_radius: px(10.),
                 spread_radius: px(0.),
+                inset: false,
             },
             Self::glow_shadow(0.35, 16., 0.),
         ];
@@ -130,6 +134,7 @@ impl Render for CreateThreadButton {
                 offset: point(px(0.), px(6.)),
                 blur_radius: px(14.),
                 spread_radius: px(0.),
+                inset: false,
             },
             Self::glow_shadow(0.55, 24., 0.),
             Self::cyan_glow(0.28, 32.),
@@ -141,6 +146,7 @@ impl Render for CreateThreadButton {
                 offset: point(px(0.), px(2.)),
                 blur_radius: px(6.),
                 spread_radius: px(0.),
+                inset: false,
             },
             Self::glow_shadow(0.25, 10., 0.),
         ];

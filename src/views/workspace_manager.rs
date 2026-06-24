@@ -78,6 +78,7 @@ impl Render for WorkspaceManager {
                                 offset: gpui::point(px(0.), px(4.)),
                                 blur_radius: px(12.),
                                 spread_radius: px(0.),
+                                inset: false,
                             }])
                             .child(
                                 div()

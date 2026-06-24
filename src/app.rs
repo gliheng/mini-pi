@@ -77,7 +77,7 @@ pub fn run() {
         }
     };
 
-    Application::new()
+    Application::with_platform(gpui_platform::current_platform(false))
         .with_assets(Assets { base: assets_dir })
         .run(move |cx: &mut App| {
             gpui_component::init(cx);
@@ -185,9 +185,10 @@ pub fn run() {
             cx.set_menus(vec![Menu {
                 name: "Mini Pi".into(),
                 items: vec![MenuItem::action("Quit", Quit)],
+                disabled: false,
             }]);
 
-            cx.on_window_closed(|cx: &mut App| {
+            cx.on_window_closed(|cx: &mut App, _window_id| {
                 if cx.windows().is_empty() {
                     cx.quit();
                 }
@@ -209,7 +210,7 @@ pub fn run() {
             cx.open_window(window_options, |window, cx| {
                 let app = cx.new(|cx| MiniPiApp::new(window, cx));
                 let focus_handle = app.read(cx).thread_list.read(cx).focus_handle.clone();
-                window.focus(&focus_handle);
+                window.focus(&focus_handle, cx);
                 cx.new(|cx| Root::new(app, window, cx))
             })
             .expect("failed to open the Mini Pi window");

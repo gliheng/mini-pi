@@ -1,14 +1,15 @@
 use std::ops::Range;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
     App, AvailableSpace, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId,
     ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
     GlobalElementId, Hsla, KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PaintQuad, Pixels, Point, SharedString, Size, Style, TextRun, UTF16Selection,
-    UnderlineStyle, Window, WrappedLine, actions, div, fill, hsla, point, prelude::*, px, relative,
-    rgba, size,
+    MouseUpEvent, PaintQuad, Pixels, Point, SharedString, Size, Style, TextAlign, TextRun,
+    UTF16Selection, UnderlineStyle, Window, WrappedLine, actions, div, fill, hsla, point, prelude::*,
+    px, relative, rgba, size,
 };
 use unicode_segmentation::*;
 
@@ -504,7 +505,7 @@ impl TextArea {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         window.prevent_default();
         self.is_selecting = true;
 
@@ -912,7 +913,7 @@ struct TextAreaElement {
 
 #[derive(Clone)]
 struct TextAreaLayout {
-    lines: Vec<WrappedLine>,
+    lines: Arc<Vec<WrappedLine>>,
     len: usize,
     line_height: Pixels,
     wrap_width: Option<Pixels>,
@@ -923,7 +924,7 @@ struct TextAreaLayout {
 impl TextAreaLayout {
     fn size(&self) -> Size<Pixels> {
         let mut size: Size<Pixels> = Size::default();
-        for line in &self.lines {
+        for line in self.lines.iter() {
             let segments = self.wrapped_segments(line);
             size.height += self.line_height * segments.len();
             let line_width = self
@@ -1031,7 +1032,7 @@ impl TextAreaLayout {
 
         let mut line_origin = point(px(0.), px(0.));
         let mut line_start = 0;
-        for line in &self.lines {
+        for line in self.lines.iter() {
             let segments = self.wrapped_segments(line);
             let line_height = self.line_height * segments.len();
             let line_bottom = line_origin.y + line_height;
@@ -1066,7 +1067,7 @@ impl TextAreaLayout {
         let mut line_origin = point(px(0.), px(0.));
         let mut line_start = 0;
 
-        for line in &self.lines {
+        for line in self.lines.iter() {
             let line_end = line_start + line.len();
             if index > line_end {
                 line_origin.y += self.line_height * self.wrapped_segments(line).len();
@@ -1100,7 +1101,7 @@ impl TextAreaLayout {
 
         let mut line_origin = point(px(0.), px(0.));
         let mut line_start = 0;
-        for line in &self.lines {
+        for line in self.lines.iter() {
             let line_end = line_start + line.len();
             if selection_start <= line_end && selection_end >= line_start {
                 for (segment_ix, segment) in self.wrapped_segments(line).into_iter().enumerate() {
@@ -1220,12 +1221,14 @@ impl TextAreaElement {
         };
 
         let font_size = style.font_size.to_pixels(window.rem_size());
-        let lines = window
-            .text_system()
-            .shape_text(display_text, font_size, &runs, None, None)
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+        let lines = Arc::new(
+            window
+                .text_system()
+                .shape_text(display_text, font_size, &runs, None, None)
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
+        );
 
         TextAreaLayout {
             lines,
@@ -1356,7 +1359,7 @@ impl Element for TextAreaElement {
         let font_size = window.text_style().font_size.to_pixels(window.rem_size());
         let mut line_origin = bounds.origin;
         let mut line_start = 0;
-        for line in &layout.lines {
+        for line in layout.lines.iter() {
             let segments = layout.wrapped_segments(line);
             for (segment_ix, segment) in segments.iter().enumerate() {
                 let segment_origin = point(
@@ -1370,10 +1373,17 @@ impl Element for TextAreaElement {
                     .text_system()
                     .shape_line(text, font_size, &runs, None);
                 segment_line
-                    .paint_background(segment_origin, layout.line_height, window, cx)
+                    .paint_background(
+                        segment_origin,
+                        layout.line_height,
+                        TextAlign::Left,
+                        None,
+                        window,
+                        cx,
+                    )
                     .ok();
                 segment_line
-                    .paint(segment_origin, layout.line_height, window, cx)
+                    .paint(segment_origin, layout.line_height, TextAlign::Left, None, window, cx)
                     .ok();
             }
             line_origin.y += layout.line_height * segments.len();

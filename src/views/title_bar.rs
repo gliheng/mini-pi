@@ -15,6 +15,7 @@ pub fn set_window_level(window: &Window, pinned: bool) {
         && let RawWindowHandle::AppKit(appkit) = handle.as_raw()
     {
         let ns_view = appkit.ns_view.as_ptr() as *mut Object;
+        #[allow(unexpected_cfgs)]
         unsafe {
             let ns_window: *mut Object = msg_send![ns_view, window];
             let level = if pinned {

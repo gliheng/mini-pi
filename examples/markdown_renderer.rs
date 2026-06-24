@@ -158,7 +158,7 @@ fn main() {
 
     let assets_dir = std::path::PathBuf::from(manifest_dir).join("assets");
 
-    Application::new()
+    Application::with_platform(gpui_platform::current_platform(false))
         .with_assets(Assets { base: assets_dir })
         .run(move |cx: &mut App| {
             cx.on_action(quit);
@@ -185,7 +185,7 @@ fn main() {
             )
             .unwrap();
 
-            cx.on_window_closed(|cx| {
+            cx.on_window_closed(|cx, _window_id| {
                 if cx.windows().is_empty() {
                     cx.quit();
                 }

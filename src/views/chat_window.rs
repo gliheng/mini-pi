@@ -771,7 +771,7 @@ impl ChatWindow {
             inline_input.update(cx, |ci, cx| {
                 ci.set_content(text, cx);
             });
-            inline_input.focus_handle(cx).focus(window);
+            inline_input.focus_handle(cx).focus(window, cx);
             self.inline_edit_input = Some(inline_input);
             cx.notify();
         }
@@ -898,6 +898,7 @@ impl ChatWindow {
                         offset: gpui::point(px(0.), px(4.)),
                         blur_radius: px(12.),
                         spread_radius: px(0.),
+                        inset: false,
                     }])
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                         cx.stop_propagation();
@@ -983,7 +984,7 @@ impl ChatWindow {
                     |_, _, _| (),
                     move |bounds, _, window, _| {
                         let viewport_height = scroll_handle.bounds().size.height;
-                        let max_scroll = scroll_handle.max_offset().height;
+                        let max_scroll = scroll_handle.max_offset().y;
                         if viewport_height <= px(0.) || max_scroll <= px(0.) {
                             return;
                         }
@@ -1000,7 +1001,9 @@ impl ChatWindow {
                         let content_height = viewport_height + max_scroll;
                         let thumb_height = ((viewport_height / content_height) * track_height)
                             .clamp(px(36.), track_height);
-                        let progress = (-scroll_handle.offset().y / max_scroll).clamp(0., 1.);
+                        let progress =
+                            (f32::from(-scroll_handle.offset().y) / f32::from(max_scroll))
+                                .clamp(0., 1.);
                         let thumb_top =
                             track_bounds.top() + (track_height - thumb_height) * progress;
                         let thumb_bounds = Bounds::from_corners(
@@ -1118,6 +1121,7 @@ impl ChatWindow {
                         offset: gpui::point(px(0.), px(4.)),
                         blur_radius: px(12.),
                         spread_radius: px(0.),
+                        inset: false,
                     }])
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                         cx.stop_propagation();
@@ -1334,7 +1338,7 @@ impl Render for ChatWindow {
                                 }
                                 if !this.scroll_locked {
                                     let offset_y = this.scroll_handle.offset().y;
-                                    let max_y = this.scroll_handle.max_offset().height;
+                                    let max_y = this.scroll_handle.max_offset().y;
                                     if offset_y.abs() >= max_y - gpui::px(5.) {
                                         this.scroll_locked = true;
                                     }
