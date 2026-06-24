@@ -1,10 +1,13 @@
 /// Generate a title for a chat thread using an LLM.
 ///
-/// Cloudflare AI Gateway credentials are embedded below.
+/// Cloudflare AI Gateway credentials are read from environment variables.
 pub fn generate_title(content: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    const CLOUDFLARE_API_KEY: &str = "<REDACTED>";
-    const CLOUDFLARE_ACCOUNT_ID: &str = "c963aaaebd80b17d39cc4789854876f8";
-    const CLOUDFLARE_GATEWAY_ID: &str = "pub";
+    let cloudflare_api_key = std::env::var("CLOUDFLARE_API_KEY")
+        .map_err(|_| "CLOUDFLARE_API_KEY environment variable is not set")?;
+    let cloudflare_account_id = std::env::var("CLOUDFLARE_ACCOUNT_ID")
+        .map_err(|_| "CLOUDFLARE_ACCOUNT_ID environment variable is not set")?;
+    let cloudflare_gateway_id = std::env::var("CLOUDFLARE_GATEWAY_ID")
+        .map_err(|_| "CLOUDFLARE_GATEWAY_ID environment variable is not set")?;
 
     let client = reqwest::blocking::Client::new();
 
@@ -20,13 +23,13 @@ pub fn generate_title(content: &str) -> Result<String, Box<dyn std::error::Error
 
     let url = format!(
         "https://gateway.ai.cloudflare.com/v1/{}/{}/compat/chat/completions",
-        CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_GATEWAY_ID
+        cloudflare_account_id, cloudflare_gateway_id
     );
     let response = client
         .post(&url)
         .header(
             "cf-aig-authorization",
-            format!("Bearer {}", CLOUDFLARE_API_KEY),
+            format!("Bearer {}", cloudflare_api_key),
         )
         .header("Content-Type", "application/json")
         .json(&body)
