@@ -195,6 +195,7 @@ pub fn run() {
                 KeyBinding::new("end", crate::ui::text_area::End, Some("TextArea")),
                 KeyBinding::new("ctrl-a", crate::ui::text_area::Home, Some("TextArea")),
                 KeyBinding::new("ctrl-e", crate::ui::text_area::End, Some("TextArea")),
+                KeyBinding::new("shift-enter", crate::ui::text_area::Newline, Some("TextArea")),
             ]);
 
             cx.set_menus(vec![Menu {
