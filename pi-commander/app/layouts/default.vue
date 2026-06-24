@@ -136,6 +136,17 @@ defineShortcuts({
       </template>
 
       <template #footer="{ collapsed }">
+        <UButton
+          :label="collapsed ? undefined : 'Pi settings'"
+          icon="i-lucide-globe"
+          color="neutral"
+          variant="ghost"
+          block
+          :square="collapsed"
+          class="data-[state=open]:bg-elevated"
+          @click="settings.open()"
+        />
+
         <UserMenu :collapsed="collapsed" />
       </template>
     </UDashboardSidebar>
