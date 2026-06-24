@@ -11,9 +11,10 @@ use crate::core::actions::CloseWindow;
 use crate::core::app::{AppStore, custom_window_options};
 use crate::data::store::{PaginatedThreads, Store, ThreadMeta};
 use crate::sync::settings_sync;
-use crate::ui::input::TextInput;
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
-use gpui_component::{Icon, Size, Sizable as _, spinner::Spinner};
+use gpui_component::input::{Input, InputEvent, InputState};
+use gpui_component::{Icon, Size, Sizable as _};
+use crate::ui::loader::loader;
 use crate::utils::format::format_relative_time;
 use crate::views::chat_app::open_chat_window;
 use crate::views::create_thread_button::{CreateThreadButton, CreateThreadButtonEvent};
@@ -302,7 +303,7 @@ pub struct ThreadList {
     pub total_pages: usize,
     pub total: usize,
     pub loading_more: bool,
-    pub search_input: gpui::Entity<TextInput>,
+    pub search_input: gpui::Entity<InputState>,
     pub _subscription: gpui::Subscription,
     pub _user_panel_subscription: gpui::Subscription,
     pub _import_prompt_subscription: gpui::Subscription,
@@ -311,12 +312,12 @@ pub struct ThreadList {
 }
 
 impl ThreadList {
-    pub fn new(cx: &mut Context<Self>, store: Arc<Store>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>, store: Arc<Store>) -> Self {
         let subscription = cx.observe_global::<AppStore>(move |this, cx| {
             this.load_threads(cx);
         });
 
-        let user_panel = cx.new(UserPanel::new);
+        let user_panel = cx.new(|cx| UserPanel::new(window, cx));
         let import_prompt = cx.new(|_| PiAgentImport::new());
         let create_thread_button = cx.new(|_| CreateThreadButton::new());
 
@@ -389,9 +390,16 @@ impl ThreadList {
             },
         );
 
-        let search_input = cx.new(|cx| TextInput::new(cx, "Search threads..."));
+        let search_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Search threads...")
+        });
         let _search_input_subscription =
-            cx.observe(&search_input, |this, _, cx| this.load_threads(cx));
+            cx.subscribe_in(&search_input, window, |this, _, event: &InputEvent, _window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.load_threads(cx);
+                }
+            });
 
         let is_first = state::is_first_run();
         let has_pi_settings = import_prompt.read(cx).has_files();
@@ -425,7 +433,7 @@ impl ThreadList {
     fn search_query(&self, cx: &Context<Self>) -> String {
         self.search_input
             .read(cx)
-            .content()
+            .value()
             .to_string()
             .trim()
             .to_lowercase()
@@ -647,7 +655,7 @@ impl Render for ThreadList {
                             .size(px(16.))
                             .text_color(rgb(0x666666)),
                     )
-                    .child(self.search_input.clone()),
+                    .child(Input::new(&self.search_input).appearance(false).w_full()),
             )
             .child(
                 div()
@@ -698,11 +706,7 @@ impl Render for ThreadList {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .child(
-                                    Spinner::new()
-                                        .with_size(Size::Small)
-                                        .color(gpui::rgb(0x888888).into()),
-                                ),
+                                .child(loader()),
                         )
                     })
                     .when(self.all_threads_loaded(cx) && !self.thread_items.is_empty(), |el| {

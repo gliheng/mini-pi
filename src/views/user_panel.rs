@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use gpui::{
     AppContext, BorrowAppContext, ClipboardItem, Context, EventEmitter, InteractiveElement,
     IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
@@ -14,10 +12,10 @@ use crate::remote::cloudflared;
 use crate::remote::controller::TunnelLog;
 use crate::remote::qr::qr_image_source;
 use crate::sync::settings_sync;
-use crate::ui::input::TextInput;
-use crate::ui::toast::Toast;
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
-use gpui_component::{Disableable as _, Icon, Size, Sizable as _};
+use gpui_component::input::{Input, InputState};
+use gpui_component::notification::Notification;
+use gpui_component::{Disableable as _, Icon, Size, Sizable as _, WindowExt as _};
 
 #[derive(Clone)]
 pub enum UserPanelEvent {
@@ -60,26 +58,31 @@ impl Render for StatusLogTooltip {
 }
 
 pub struct UserPanel {
-    pub email_input: gpui::Entity<TextInput>,
-    pub password_input: gpui::Entity<TextInput>,
-    pub confirm_password_input: gpui::Entity<TextInput>,
+    pub email_input: gpui::Entity<InputState>,
+    pub password_input: gpui::Entity<InputState>,
+    pub confirm_password_input: gpui::Entity<InputState>,
     pub auth_error: Option<String>,
     pub auth_dialog: Option<AuthDialog>,
     pub cloudflared_dialog: Option<CloudflaredDialog>,
-    pub toast: gpui::Entity<Toast>,
     pub _email_sub: gpui::Subscription,
     pub _password_sub: gpui::Subscription,
     pub _confirm_password_sub: gpui::Subscription,
     pub _remote_sub: Option<gpui::Subscription>,
-    pub _toast_sub: gpui::Subscription,
 }
 
 impl UserPanel {
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        let email_input = cx.new(|cx| TextInput::new(cx, "Email"));
-        let password_input = cx.new(|cx| TextInput::new(cx, "Password").with_password_mode());
-        let confirm_password_input =
-            cx.new(|cx| TextInput::new(cx, "Confirm Password").with_password_mode());
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let email_input = cx.new(|cx| InputState::new(window, cx).placeholder("Email"));
+        let password_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Password")
+                .masked(true)
+        });
+        let confirm_password_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Confirm Password")
+                .masked(true)
+        });
 
         let _email_sub = cx.observe(&email_input, |_, _, cx| {
             cx.notify();
@@ -98,11 +101,6 @@ impl UserPanel {
             })
         });
 
-        let toast = cx.new(|_| Toast::new(""));
-        let _toast_sub = cx.observe(&toast, |_this, _toast, cx| {
-            cx.notify();
-        });
-
         Self {
             email_input,
             password_input,
@@ -110,12 +108,10 @@ impl UserPanel {
             auth_error: None,
             auth_dialog: None,
             cloudflared_dialog: None,
-            toast,
             _email_sub,
             _password_sub,
             _confirm_password_sub,
             _remote_sub: remote_sub,
-            _toast_sub,
         }
     }
 
@@ -154,14 +150,14 @@ impl UserPanel {
 impl EventEmitter<UserPanelEvent> for UserPanel {}
 
 impl Render for UserPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let auth = cx.global::<AppStore>().auth.clone();
         if auth.is_logged_in() && self.auth_dialog.is_some() {
             self.auth_dialog = None;
         }
 
-        let email_val = self.email_input.read(cx).content().clone();
-        let password_val = self.password_input.read(cx).content().clone();
+        let email_val = self.email_input.read(cx).value();
+        let password_val = self.password_input.read(cx).value();
         let is_logging_in = matches!(auth, AuthState::LoggingIn);
         let error_msg: Option<SharedString> = self.auth_error.clone().map(|s| s.into());
 
@@ -189,10 +185,10 @@ impl Render for UserPanel {
                     .size(px(48.))
                     .text_color(rgb(0x6366f1)),
             )
-            .child(render_auth_content(self, &auth, cx));
+            .child(render_auth_content(self, &auth, window, cx));
 
         if let Some(dialog) = self.auth_dialog {
-            let confirm_password_val = self.confirm_password_input.read(cx).content().clone();
+            let confirm_password_val = self.confirm_password_input.read(cx).value();
 
             let (title, subtitle): (SharedString, SharedString) = match dialog {
                 AuthDialog::Login => (
@@ -257,6 +253,7 @@ impl Render for UserPanel {
                             email_val.clone(),
                             password_val.clone(),
                             confirm_password_val.clone(),
+                            window,
                             cx,
                         ))
                     },
@@ -369,9 +366,6 @@ impl Render for UserPanel {
                 .when(self.cloudflared_dialog.is_some(), |this| {
                     this.child(render_cloudflared_dialog(self, cx))
                 })
-                .when(self.toast.read(cx).visible, |this| {
-                    this.child(render_toast_overlay(self, cx))
-                })
         } else {
             div()
                 .id("user-panel")
@@ -383,24 +377,8 @@ impl Render for UserPanel {
                 .when(self.cloudflared_dialog.is_some(), |this| {
                     this.child(render_cloudflared_dialog(self, cx))
                 })
-                .when(self.toast.read(cx).visible, |this| {
-                    this.child(render_toast_overlay(self, cx))
-                })
         }
     }
-}
-
-fn render_toast_overlay(panel: &UserPanel, _cx: &mut Context<UserPanel>) -> impl IntoElement {
-    div()
-        .absolute()
-        .top(px(48.))
-        .left(px(0.))
-        .right(px(0.))
-        .flex()
-        .flex_row()
-        .items_center()
-        .justify_center()
-        .child(panel.toast.clone())
 }
 
 fn render_cloudflared_dialog(
@@ -518,7 +496,10 @@ fn render_cloudflared_dialog(
         )
 }
 
-fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElement {
+fn render_remote_control_section(
+    _window: &mut Window,
+    cx: &mut Context<UserPanel>,
+) -> impl IntoElement {
     let Some(controller) = cx.global::<AppStore>().remote_controller.clone() else {
         return div();
     };
@@ -734,15 +715,14 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                                 .text_color(rgb(0x888888)),
                         )
                         .label(tunnel_for_display)
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                        .on_click(cx.listener(move |_, _, window, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(
                                 tunnel_for_text_copy.clone(),
                             ));
-                            this.toast.update(cx, |toast, cx| {
-                                toast.set_message("URL copied to clipboard");
-                                toast.show_for(Duration::from_secs(3), cx);
-                            });
-                            cx.notify();
+                            window.push_notification(
+                                Notification::success("URL copied to clipboard"),
+                                cx,
+                            );
                         })),
                 ),
         );
@@ -800,6 +780,7 @@ fn render_back_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
 fn render_auth_content(
     _panel: &UserPanel,
     auth: &AuthState,
+    window: &mut Window,
     cx: &mut Context<UserPanel>,
 ) -> impl IntoElement {
     match auth {
@@ -905,7 +886,7 @@ fn render_auth_content(
                         .child(sync_row("Agent Settings", &sync_label))
                         .child(render_sync_button(cx)),
                 )
-                .child(render_remote_control_section(cx))
+                .child(render_remote_control_section(window, cx))
                 .child(
                     div()
                         .w_full()
@@ -958,7 +939,7 @@ fn render_auth_content(
                     .text_color(rgb(0x888888))
                     .child("Sign in to sync your agent settings"),
             )
-            .child(render_remote_control_section(cx))
+            .child(render_remote_control_section(window, cx))
             .child(
                 div()
                     .w_full()
@@ -1004,7 +985,7 @@ fn render_email_field(panel: &UserPanel) -> impl IntoElement {
                 .bg(rgb(0x252525))
                 .border_1()
                 .border_color(rgb(0x444444))
-                .child(panel.email_input.clone()),
+                .child(Input::new(&panel.email_input).appearance(false).w_full()),
         )
 }
 
@@ -1030,7 +1011,7 @@ fn render_password_field(panel: &UserPanel) -> impl IntoElement {
                 .bg(rgb(0x252525))
                 .border_1()
                 .border_color(rgb(0x444444))
-                .child(panel.password_input.clone()),
+                .child(Input::new(&panel.password_input).appearance(false).w_full()),
         )
 }
 
@@ -1107,7 +1088,7 @@ fn render_confirm_password_field(panel: &UserPanel) -> impl IntoElement {
                 .bg(rgb(0x252525))
                 .border_1()
                 .border_color(rgb(0x444444))
-                .child(panel.confirm_password_input.clone()),
+                .child(Input::new(&panel.confirm_password_input).appearance(false).w_full()),
         )
 }
 
@@ -1115,14 +1096,16 @@ fn render_signup_submit_button(
     email_val: SharedString,
     password_val: SharedString,
     confirm_password_val: SharedString,
+    window: &mut Window,
     cx: &mut Context<UserPanel>,
 ) -> impl IntoElement {
+    let window_handle = window.window_handle();
     Button::new("signup-submit-button")
         .label("Create Account")
         .with_size(Size::Small)
         .primary()
         .w_full()
-        .on_click(cx.listener(move |this, _, _, cx| {
+        .on_click(cx.listener(move |this, _, _window, cx| {
             this.auth_error = None;
             let email = email_val.to_string();
             let password = password_val.to_string();
@@ -1161,9 +1144,13 @@ fn render_signup_submit_button(
                                 if msg.as_str() == CONFIRM_MSG {
                                     this.auth_error = None;
                                     this.auth_dialog = Some(AuthDialog::Login);
-                                    this.toast.update(cx, |toast, cx| {
-                                        toast.set_message("Confirmation email sent. Please sign in.");
-                                        toast.show_for(Duration::from_secs(5), cx);
+                                    let _ = window_handle.update(cx, |_, window, cx| {
+                                        window.push_notification(
+                                            Notification::success(
+                                                "Confirmation email sent. Please sign in.",
+                                            ),
+                                            cx,
+                                        );
                                     });
                                     cx.update_global(|app: &mut AppStore, _| {
                                         app.auth = AuthState::LoggedOut;

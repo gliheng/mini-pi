@@ -151,22 +151,6 @@ pub fn run() {
                 KeyBinding::new("cmd-w", crate::core::actions::CloseWindow, None),
                 KeyBinding::new("cmd-q", Quit, None),
                 KeyBinding::new("enter", crate::core::actions::SendMessage, None),
-                KeyBinding::new("backspace", crate::ui::input::Backspace, None),
-                KeyBinding::new("delete", crate::ui::input::Delete, None),
-                KeyBinding::new("left", crate::ui::input::Left, None),
-                KeyBinding::new("right", crate::ui::input::Right, None),
-                KeyBinding::new("shift-left", crate::ui::input::SelectLeft, None),
-                KeyBinding::new("shift-right", crate::ui::input::SelectRight, None),
-                KeyBinding::new("ctrl-f", crate::ui::input::Forward, None),
-                KeyBinding::new("ctrl-b", crate::ui::input::Backward, None),
-                KeyBinding::new("cmd-a", crate::ui::input::SelectAll, None),
-                KeyBinding::new("cmd-v", crate::ui::input::Paste, None),
-                KeyBinding::new("cmd-c", crate::ui::input::CopyText, None),
-                KeyBinding::new("cmd-x", crate::ui::input::Cut, None),
-                KeyBinding::new("home", crate::ui::input::Home, None),
-                KeyBinding::new("end", crate::ui::input::End, None),
-                KeyBinding::new("ctrl-a", crate::ui::input::Home, None),
-                KeyBinding::new("ctrl-e", crate::ui::input::End, None),
                 KeyBinding::new(
                     "backspace",
                     crate::ui::text_area::Backspace,
@@ -241,10 +225,10 @@ struct MiniPiApp {
 }
 
 impl MiniPiApp {
-    fn new(_window: &mut Window, cx: &mut gpui::Context<Self>) -> Self {
+    fn new(window: &mut Window, cx: &mut gpui::Context<Self>) -> Self {
         let store = cx.global::<AppStore>().store.clone();
-        let thread_list = cx.new(|cx| ThreadList::new(cx, store));
-        let user_panel = cx.new(|cx| UserPanel::new(cx));
+        let thread_list = cx.new(|cx| ThreadList::new(window, cx, store));
+        let user_panel = cx.new(|cx| UserPanel::new(window, cx));
 
         let _user_panel_subscription =
             cx.subscribe(&user_panel, move |_this, _, event: &UserPanelEvent, cx| {

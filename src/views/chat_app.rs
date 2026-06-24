@@ -21,12 +21,12 @@ pub struct ChatApp {
 
 impl ChatApp {
     pub fn new(
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
         thread: Option<&ThreadMeta>,
         store: Arc<Store>,
     ) -> Self {
-        let chat_window = cx.new(|cx| ChatWindow::new(cx, thread, store));
+        let chat_window = cx.new(|cx| ChatWindow::new(window, cx, thread, store));
         let title = chat_window.read(cx).title.clone();
         let _chat_subscription = cx.observe(&chat_window, |this, chat_window, cx| {
             this.title = chat_window.read(cx).title.clone();

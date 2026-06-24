@@ -1,27 +1,46 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc};
 
 use gpui::{
-    Bounds, ClipboardItem, Context, Entity, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, KeyDownEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
-    PathPromptOptions, Pixels, Render, ScrollHandle, SharedString, Styled, Window, canvas, div,
-    fill, point, prelude::*, px, rgb, svg,
+    AnyWindowHandle, Bounds, ClipboardItem, Context, Entity, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, PathPromptOptions, Pixels, Render, ScrollHandle, SharedString, Styled, Window,
+    canvas, div, fill, point, prelude::*, px, rgb, svg,
 };
 
-use crate::config::model_config::{all_models, model_display_name};
+use crate::config::model_config::all_models;
 use crate::core::actions::{CancelInlineEdit, CloseWindow, ConfirmInlineEdit, SendMessage};
 use crate::core::app::AppStore;
 use crate::core::session_handle::{SessionEvent, SessionHandle, WorkspaceInfo};
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::data::store::{Store, ThreadMeta, WorkspaceMeta};
-use crate::ui::dropdown::{Direction, Dropdown, DropdownEvent, DropdownItem};
+use crate::ui::loader::{loader, text_loader};
 use crate::ui::markdown::MarkdownRenderer;
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
-use gpui_component::{Disableable as _, Icon, Size, Sizable as _, spinner::Spinner};
+use gpui_component::notification::Notification;
+use gpui_component::select::{Select, SelectEvent, SelectItem, SelectState, SearchableVec};
+use gpui_component::{Disableable as _, Icon, IndexPath, Size, Sizable as _, WindowExt as _};
 use crate::ui::text_area::TextArea;
-use crate::ui::toast::Toast;
 use crate::utils::voice::{VoiceRecorder, VoiceState, start_recording, transcribe};
 use crate::views::reasoning::Reasoning;
 use crate::views::workspace_manager::{WorkspaceManager, WorkspaceManagerEvent};
+
+#[derive(Clone)]
+pub struct SelectModelItem {
+    id: String,
+    name: SharedString,
+}
+
+impl SelectItem for SelectModelItem {
+    type Value = String;
+
+    fn title(&self) -> SharedString {
+        self.name.clone()
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.id
+    }
+}
 
 pub struct ChatWindow {
     pub thread_id: Option<String>,
@@ -38,8 +57,8 @@ pub struct ChatWindow {
     pub command_scroll_handle: ScrollHandle,
     pub selected_model: Option<String>,
     pub thinking_level: Option<String>,
-    pub model_dropdown: gpui::Entity<Dropdown>,
-    pub thinking_dropdown: gpui::Entity<Dropdown>,
+    pub model_dropdown: gpui::Entity<SelectState<SearchableVec<SelectModelItem>>>,
+    pub thinking_dropdown: gpui::Entity<SelectState<SearchableVec<SelectModelItem>>>,
     pub reasoning_displays: Vec<Vec<Option<gpui::Entity<Reasoning>>>>,
     pub markdown_displays: Vec<Vec<Option<gpui::Entity<MarkdownRenderer>>>>,
     pub scroll_handle: ScrollHandle,
@@ -51,13 +70,18 @@ pub struct ChatWindow {
     pub workspace_manager: gpui::Entity<WorkspaceManager>,
     pub editing_message_id: Option<String>,
     pub inline_edit_input: Option<gpui::Entity<TextArea>>,
-    pub toast: gpui::Entity<Toast>,
+    pub window_handle: AnyWindowHandle,
     pub voice_state: VoiceState,
     pub voice_recorder: Option<VoiceRecorder>,
 }
 
 impl ChatWindow {
-    pub fn new(cx: &mut Context<Self>, thread: Option<&ThreadMeta>, store: Arc<Store>) -> Self {
+    pub fn new(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        thread: Option<&ThreadMeta>,
+        store: Arc<Store>,
+    ) -> Self {
         let title: SharedString = thread
             .map(|t| {
                 if t.title.is_empty() {
@@ -94,40 +118,44 @@ impl ChatWindow {
 
         // Build model dropdown items
         let models = cx.global::<AppStore>().models.clone();
-        let model_items: Vec<DropdownItem> = all_models(&models)
+        let model_items: Vec<SelectModelItem> = all_models(&models)
             .iter()
-            .map(|m| DropdownItem::new(m.id.clone(), m.name.clone()))
+            .map(|m| SelectModelItem {
+                id: m.id.clone(),
+                name: m.name.clone().into(),
+            })
             .collect();
-
+        let model_selected_index = selected_model
+            .as_ref()
+            .and_then(|id| model_items.iter().position(|m| &m.id == id))
+            .map(|row| IndexPath::default().row(row));
         let model_dropdown = cx.new(|cx| {
-            Dropdown::new(
+            SelectState::new(
+                SearchableVec::new(model_items),
+                model_selected_index,
+                window,
                 cx,
-                model_display_name(&models, selected_model.as_deref()),
-                model_items,
             )
-            .with_selected(selected_model.clone())
-            .with_searchable(true)
-            .with_width(px(280.))
-            .with_max_height(px(400.))
-            .with_direction(Direction::Up)
+            .searchable(true)
         });
 
         // Build thinking level dropdown items based on the selected model's map
         let thinking_items =
             Self::thinking_level_items_for_model(&models, selected_model.as_deref());
+        let thinking_selected_index = selected_thinking_level
+            .as_ref()
+            .and_then(|id| thinking_items.iter().position(|m| &m.id == id))
+            .map(|row| IndexPath::default().row(row));
         let thinking_dropdown = cx.new(|cx| {
-            Dropdown::new(
+            SelectState::new(
+                SearchableVec::new(thinking_items),
+                thinking_selected_index,
+                window,
                 cx,
-                Self::thinking_level_label(selected_thinking_level.as_deref()),
-                thinking_items,
             )
-            .with_selected(selected_thinking_level.clone())
-            .with_width(px(160.))
-            .with_max_height(px(300.))
-            .with_direction(Direction::Up)
         });
         let workspace_manager = cx.new(|_| WorkspaceManager::new(workspaces.clone()));
-        let toast = cx.new(|_| Toast::new(""));
+        let window_handle = window.window_handle();
         let voice_state = VoiceState::Idle;
         let voice_recorder = None;
 
@@ -168,7 +196,7 @@ impl ChatWindow {
             workspace_manager: workspace_manager.clone(),
             editing_message_id: None,
             inline_edit_input: None,
-            toast: toast.clone(),
+            window_handle,
             voice_state,
             voice_recorder,
         };
@@ -199,30 +227,25 @@ impl ChatWindow {
         })
         .detach();
 
-        // Re-render when the toast visibility/message changes
-        cx.observe(&window.toast, |_, _, cx| {
-            cx.notify();
-        })
-        .detach();
-
         // Subscribe to model dropdown selection events
         cx.subscribe(
             &model_dropdown,
-            |this, _dropdown, event: &DropdownEvent, cx| {
-                let DropdownEvent::Selected { id } = event;
-                this.selected_model = Some(id.clone());
-                cx.update_global(|app_store: &mut AppStore, _| {
-                    app_store.config.default_model = Some(id.clone());
-                    if let Err(e) = app_store.config.save() {
-                        eprintln!("[mini-pi] failed to save config: {}", e);
-                    }
-                });
-                if let Some(ref session) = this.session {
-                    session.update(cx, |session, cx| {
-                        session.set_model(Some(id.clone()), cx);
+            |this, _dropdown, event: &SelectEvent<SearchableVec<SelectModelItem>>, cx| {
+                if let SelectEvent::Confirm(Some(id)) = event {
+                    this.selected_model = Some(id.clone());
+                    cx.update_global(|app_store: &mut AppStore, _| {
+                        app_store.config.default_model = Some(id.clone());
+                        if let Err(e) = app_store.config.save() {
+                            eprintln!("[mini-pi] failed to save config: {}", e);
+                        }
                     });
+                    if let Some(ref session) = this.session {
+                        session.update(cx, |session, cx| {
+                            session.set_model(Some(id.clone()), cx);
+                        });
+                    }
+                    this.refresh_thinking_dropdown(cx);
                 }
-                this.refresh_thinking_dropdown(cx);
             },
         )
         .detach();
@@ -230,15 +253,16 @@ impl ChatWindow {
         // Subscribe to thinking dropdown selection events
         cx.subscribe(
             &thinking_dropdown,
-            |this, _dropdown, event: &DropdownEvent, cx| {
-                let DropdownEvent::Selected { id } = event;
-                this.thinking_level = Some(id.clone());
-                if let Some(ref session) = this.session {
-                    session.update(cx, |session, cx| {
-                        session.set_thinking_level(Some(id.clone()), cx);
-                    });
+            |this, _dropdown, event: &SelectEvent<SearchableVec<SelectModelItem>>, cx| {
+                if let SelectEvent::Confirm(Some(id)) = event {
+                    this.thinking_level = Some(id.clone());
+                    if let Some(ref session) = this.session {
+                        session.update(cx, |session, cx| {
+                            session.set_thinking_level(Some(id.clone()), cx);
+                        });
+                    }
+                    cx.notify();
                 }
-                cx.notify();
             },
         )
         .detach();
@@ -270,7 +294,7 @@ impl ChatWindow {
     fn thinking_level_items_for_model(
         models: &[crate::config::model_config::ModelInfo],
         model_id: Option<&str>,
-    ) -> Vec<DropdownItem> {
+    ) -> Vec<SelectModelItem> {
         let map = model_id
             .and_then(|id| models.iter().find(|m| m.id == id))
             .and_then(|m| m.thinking_level_map.as_ref());
@@ -281,22 +305,11 @@ impl ChatWindow {
                 Some(m) => !matches!(m.get(*id), Some(None)),
                 None => true,
             })
-            .map(|(id, label)| DropdownItem::new(*id, *label))
-            .collect()
-    }
-
-    fn thinking_level_label(level: Option<&str>) -> SharedString {
-        level
-            .map(|l| match l {
-                "off" => "Off".into(),
-                "minimal" => "Minimal".into(),
-                "low" => "Low".into(),
-                "medium" => "Medium".into(),
-                "high" => "High".into(),
-                "xhigh" => "Extra High".into(),
-                _ => l.to_string().into(),
+            .map(|(id, label)| SelectModelItem {
+                id: (*id).to_string(),
+                name: (*label).into(),
             })
-            .unwrap_or_else(|| "Default".into())
+            .collect()
     }
 
     fn refresh_thinking_dropdown(&mut self, cx: &mut Context<Self>) {
@@ -323,10 +336,17 @@ impl ChatWindow {
             }
         }
 
-        self.thinking_dropdown.update(cx, |dropdown, _| {
-            dropdown.items = items;
-            dropdown.selected_id = self.thinking_level.clone();
-            dropdown.label = Self::thinking_level_label(self.thinking_level.as_deref());
+        let selected_value = self.thinking_level.clone();
+        let items = SearchableVec::new(items);
+        let _ = cx.update_window(self.window_handle, |_, window, cx| {
+            self.thinking_dropdown.update(cx, |dropdown, cx| {
+                dropdown.set_items(items.clone(), window, cx);
+                if let Some(ref value) = selected_value {
+                    dropdown.set_selected_value(value, window, cx);
+                } else {
+                    dropdown.set_selected_index(None, window, cx);
+                }
+            });
         });
         cx.notify();
     }
@@ -339,10 +359,22 @@ impl ChatWindow {
             |this, _session, event: &SessionEvent, cx| {
                 this.sync_from_session(cx);
                 if let SessionEvent::ExportHtmlSucceeded { path } = event {
-                    this.toast.update(cx, |toast, cx| {
-                        toast.set_message("Session exported to HTML");
-                        toast.set_action("Reveal", path.clone());
-                        toast.show_for(Duration::from_secs(5), cx);
+                    let reveal_path = path.clone();
+                    let _ = this.window_handle.update(cx, |_, window, cx| {
+                        window.push_notification(
+                            Notification::success("Session exported to HTML").action({
+                                let reveal_path = reveal_path.clone();
+                                move |_, _, _| {
+                                    let reveal_path = reveal_path.clone();
+                                    Button::new("reveal").label("Reveal").on_click(
+                                        move |_, _, cx| {
+                                            cx.reveal_path(&reveal_path);
+                                        },
+                                    )
+                                }
+                            }),
+                            cx,
+                        );
                     });
                 }
                 cx.notify();
@@ -381,10 +413,14 @@ impl ChatWindow {
         self.chat_input.update(cx, |ci, cx| {
             ci.set_commands(commands, cx);
         });
-        let models = cx.global::<AppStore>().models.clone();
-        self.model_dropdown.update(cx, |dropdown, _| {
-            dropdown.selected_id = selected_model.clone();
-            dropdown.label = model_display_name(&models, selected_model.as_deref());
+        let _ = cx.update_window(self.window_handle, |_, window, cx| {
+            self.model_dropdown.update(cx, |dropdown, cx| {
+                if let Some(ref value) = selected_model {
+                    dropdown.set_selected_value(value, window, cx);
+                } else {
+                    dropdown.set_selected_index(None, window, cx);
+                }
+            });
         });
         self.refresh_thinking_dropdown(cx);
     }
@@ -744,17 +780,17 @@ impl ChatWindow {
     pub fn toggle_voice_input(
         &mut self,
         _: &gpui::ClickEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match self.voice_state {
-            VoiceState::Idle => self.start_voice_input(cx),
-            VoiceState::Recording => self.stop_voice_input(cx),
+            VoiceState::Idle => self.start_voice_input(window, cx),
+            VoiceState::Recording => self.stop_voice_input(window, cx),
             VoiceState::Transcribing => {}
         }
     }
 
-    fn start_voice_input(&mut self, cx: &mut Context<Self>) {
+    fn start_voice_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match start_recording() {
             Ok(recorder) => {
                 self.voice_recorder = Some(recorder);
@@ -762,16 +798,16 @@ impl ChatWindow {
                 cx.notify();
             }
             Err(err) => {
-                self.toast.update(cx, |toast, cx| {
-                    toast.set_message(&format!("Voice input error: {}", err));
-                    toast.show_for(Duration::from_secs(5), cx);
-                });
+                window.push_notification(
+                    Notification::error(format!("Voice input error: {}", err)),
+                    cx,
+                );
                 cx.notify();
             }
         }
     }
 
-    fn stop_voice_input(&mut self, cx: &mut Context<Self>) {
+    fn stop_voice_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(recorder) = self.voice_recorder.take() else {
             return;
         };
@@ -779,9 +815,9 @@ impl ChatWindow {
         self.voice_state = VoiceState::Transcribing;
         cx.notify();
 
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let result = transcribe(&wav_bytes).await;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(text) if !text.is_empty() => {
                         let current = this.chat_input.read(cx).content().to_string();
@@ -798,10 +834,10 @@ impl ChatWindow {
                     }
                     Ok(_) => {}
                     Err(err) => {
-                        this.toast.update(cx, |toast, cx| {
-                            toast.set_message(&format!("Transcription failed: {}", err));
-                            toast.show_for(Duration::from_secs(5), cx);
-                        });
+                        window.push_notification(
+                            Notification::error(format!("Transcription failed: {}", err)),
+                            cx,
+                        );
                     }
                 }
                 this.voice_state = VoiceState::Idle;
@@ -1166,32 +1202,6 @@ impl Render for ChatWindow {
         let input_empty = self.chat_input.read(cx).content().is_empty();
         let is_disabled = is_streaming || is_loading || input_empty;
 
-        // Sync dropdown labels with current state
-        let models = cx.global::<AppStore>().models.clone();
-        let model_label = model_display_name(&models, self.selected_model.as_deref());
-        self.model_dropdown.update(cx, |dropdown, _cx| {
-            dropdown.label = model_label;
-            dropdown.selected_id = self.selected_model.clone();
-        });
-
-        let thinking_label: SharedString = self
-            .thinking_level
-            .as_ref()
-            .map(|l| match l.as_str() {
-                "off" => "Off".into(),
-                "minimal" => "Minimal".into(),
-                "low" => "Low".into(),
-                "medium" => "Medium".into(),
-                "high" => "High".into(),
-                "xhigh" => "Extra High".into(),
-                _ => l.clone().into(),
-            })
-            .unwrap_or_else(|| "Default".into());
-        self.thinking_dropdown.update(cx, |dropdown, _cx| {
-            dropdown.label = thinking_label;
-            dropdown.selected_id = self.thinking_level.clone();
-        });
-
         // Ensure reasoning displays exist for reasoning parts
         let mut reasoning_entities: Vec<Vec<Option<gpui::Entity<Reasoning>>>> = Vec::new();
         for (msg_idx, msg) in self.messages.iter().enumerate() {
@@ -1298,12 +1308,6 @@ impl Render for ChatWindow {
                         this.chat_input.update(cx, |ci, cx| ci.close_popup(cx));
                     } else if this.show_workspace_manager {
                         this.close_workspace_manager(cx);
-                    } else {
-                        let model_open = this.model_dropdown.read(cx).is_open;
-                        let thinking_open = this.thinking_dropdown.read(cx).is_open;
-                        if model_open || thinking_open {
-                            // Dropdowns handle their own escape; this is a fallback
-                        }
                     }
                 }
             }))
@@ -1429,11 +1433,7 @@ impl Render for ChatWindow {
                                                                             })
                                                                             .text_sm()
                                                                             .when(is_streaming_empty, |this| {
-                                                                                this.child(
-                                                                                    Spinner::new()
-                                                                                        .with_size(Size::XSmall)
-                                                                                        .color(gpui::rgb(0xe5e5e5).into()),
-                                                                                )
+                                                                                this.child(text_loader())
                                                                             })
                                                                             .when(!is_streaming_empty, |this| {
                                                                                 if let Some(md) = markdown_entity {
@@ -1573,11 +1573,7 @@ impl Render for ChatWindow {
                                                 .bg(rgb(0x252525))
                                                 .text_color(rgb(0x888888))
                                                 .text_xs()
-                                                .child(
-                                                    Spinner::new()
-                                                        .with_size(Size::Small)
-                                                        .color(gpui::rgb(0x888888).into()),
-                                                ),
+                                                .child(loader()),
                                         ),
                                 )
                             })
@@ -1590,11 +1586,7 @@ impl Render for ChatWindow {
                                         .py_1()
                                         .text_color(rgb(0x888888))
                                         .text_xs()
-                                        .child(
-                                            Spinner::new()
-                                                .with_size(Size::XSmall)
-                                                .color(gpui::rgb(0x888888).into()),
-                                        ),
+                                        .child(text_loader()),
                                 )
                             })
                             .when(is_error, |el| {
@@ -1780,8 +1772,8 @@ impl Render for ChatWindow {
                                     .flex_row()
                                     .gap_2()
                                     .items_center()
-                                    .child(self.model_dropdown.clone())
-                                    .child(self.thinking_dropdown.clone())
+                                    .child(Select::new(&self.model_dropdown).w(px(280.)))
+                                    .child(Select::new(&self.thinking_dropdown).w(px(160.)))
                                     .child(div().flex_1())
                                     .child({
                                         let is_recording = self.voice_state == VoiceState::Recording;
@@ -1852,20 +1844,6 @@ impl Render for ChatWindow {
             )
             .when(self.show_workspace_manager, |this| {
                 this.child(self.workspace_manager.clone())
-            })
-            .when(self.toast.read(cx).visible, |this| {
-                this.child(
-                    div()
-                        .absolute()
-                        .top(px(48.))
-                        .left(px(0.))
-                        .right(px(0.))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .justify_center()
-                        .child(self.toast.clone()),
-                )
             })
     }
 }
