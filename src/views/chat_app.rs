@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui::prelude::*;
 use gpui::{
     Context, Entity, FocusHandle, Focusable, IntoElement, ParentElement, PathPromptOptions, Render,
     SharedString, Window, div, px,
 };
+use gpui::{MouseButton, prelude::*};
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_component::{ActiveTheme, Icon, Root, Sizable as _, TitleBar};
 
@@ -76,6 +76,7 @@ impl Render for ChatApp {
                             .items_center()
                             .gap_1()
                             .pr_2()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .child(
                                 Button::new("pin")
                                     .with_size(gpui_component::Size::Small)
@@ -124,8 +125,8 @@ impl Render for ChatApp {
                                             .read(cx)
                                             .selected_workspace_id
                                             .clone();
-                                        let workspace_dir: Option<PathBuf> = selected_id
-                                            .and_then(|id| {
+                                        let workspace_dir: Option<PathBuf> =
+                                            selected_id.and_then(|id| {
                                                 open_workspace_chat
                                                     .read(cx)
                                                     .workspaces

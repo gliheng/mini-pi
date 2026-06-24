@@ -43,11 +43,10 @@ pub fn custom_window_options(bounds: Option<Bounds<gpui::Pixels>>) -> WindowOpti
             appears_transparent: true,
             traffic_light_position: Some(point(px(9.0), px(9.0))),
         }),
-        window_decorations: if cfg!(target_os = "macos") {
-            None
-        } else {
-            Some(WindowDecorations::Client)
-        },
+        #[cfg(target_os = "linux")]
+        window_background: gpui::WindowBackgroundAppearance::Transparent,
+        #[cfg(target_os = "linux")]
+        window_decorations: Some(gpui::WindowDecorations::Client),
         window_background: WindowBackgroundAppearance::Transparent,
         ..Default::default()
     }

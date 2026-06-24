@@ -3,11 +3,11 @@ use std::{
     sync::Arc,
 };
 
-use gpui::prelude::*;
 use gpui::{
     App, Application, Bounds, FontWeight, KeyBinding, Menu, MenuItem, Window, WindowBounds,
     WindowDecorations, WindowOptions, px, size,
 };
+use gpui::{MouseButton, prelude::*};
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_component::theme::Theme;
 use gpui_component::{ActiveTheme, Icon, Root, Sizable as _, TitleBar};
@@ -223,13 +223,19 @@ impl MiniPiApp {
                                 let initial_meta = cx.global::<AppStore>().sync_meta.clone();
                                 cx.spawn(async move |_, cx| {
                                     let result = smol::unblock(move || {
-                                        settings_sync::sync_changes(&access_token, &user_id, initial_meta)
+                                        settings_sync::sync_changes(
+                                            &access_token,
+                                            &user_id,
+                                            initial_meta,
+                                        )
                                     })
                                     .await;
                                     let _ =
                                         cx.update_global(|app: &mut AppStore, _| match result {
                                             Ok(meta) => {
-                                                let _ = settings_sync::save_sync_meta(&app.store, &meta);
+                                                let _ = settings_sync::save_sync_meta(
+                                                    &app.store, &meta,
+                                                );
                                                 app.sync_meta = meta;
                                                 app.sync_status = settings_sync::SyncStatus::Synced;
                                             }
@@ -273,15 +279,13 @@ impl gpui::Render for MiniPiApp {
         );
 
         let title_bar = if cfg!(target_os = "macos") {
-            TitleBar::new()
-                .child(title)
-                .child(
-                    gpui::div()
-                        .flex()
-                        .items_center()
-                        .pr_2()
-                        .child(Self::user_menu_button(cx)),
-                )
+            TitleBar::new().child(title).child(
+                gpui::div()
+                    .flex()
+                    .items_center()
+                    .pr_2()
+                    .child(Self::user_menu_button(cx)),
+            )
         } else {
             // On Windows/Linux the TitleBar children container is marked as a
             // window-drag region, so interactive children would not receive
@@ -316,7 +320,16 @@ impl gpui::Render for MiniPiApp {
                         .flex()
                         .items_center()
                         .pr_2()
-                        .child(Self::user_menu_button(cx)),
+                        .child(
+                            gpui::div()
+                                .flex()
+                                .items_center()
+                                .justify_end()
+                                .px_2()
+                                .gap_2()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .child(Self::user_menu_button(cx)),
+                        ),
                 )
             })
     }
