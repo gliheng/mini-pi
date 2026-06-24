@@ -1,18 +1,15 @@
-import { useAsyncData } from '#app'
-import { usePiRemote, type PiModel } from './usePiRemote'
 import { toModelItems, type ModelItem } from '#shared/utils/models'
 
 export function useModels() {
-  const remote = usePiRemote()
+  const init = usePiInit()
   const model = useCookie<string>('model', { default: () => '' })
-  const { data: apiModels, status, error } = useAsyncData<PiModel[]>(
-    'pi-models',
-    () => remote.listModels(),
-    { server: false, default: () => [] }
-  )
 
   const models = computed<ModelItem[]>(() =>
-    toModelItems(apiModels.value ?? [])
+    toModelItems(init.models.value)
+  )
+
+  const status = computed<'pending' | 'success' | 'error'>(() =>
+    init.loading.value ? 'pending' : init.error.value ? 'error' : 'success'
   )
 
   // Fall back to the first available model when the cookie is missing or stale.
@@ -28,9 +25,10 @@ export function useModels() {
 
   return {
     models,
-    rawModels: apiModels,
+    rawModels: init.models,
     model,
     status,
-    error
+    error: init.error,
+    refresh: init.refresh
   }
 }

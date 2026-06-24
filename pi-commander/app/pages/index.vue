@@ -1,57 +1,38 @@
 <script setup lang="ts">
-import type { PiWorkspace } from '~/composables/usePiRemote'
-
 const input = ref('')
-const loading = ref(false)
-const workspaces = ref<PiWorkspace[]>([])
-const loadingWorkspaces = ref(false)
-const workspacesError = ref<Error | undefined>(undefined)
+const creating = ref(false)
 const selectedWorkspaceId = ref<string | null>(null)
 
 const config = usePiRemoteConfig()
 const remote = usePiRemote()
+const init = usePiInit()
 const { model } = useModels()
 const { level: thinkingLevel } = useThinkingLevel()
 const settings = usePiRemoteSettingsModal()
 const toast = useToast()
 
-async function openSettings() {
-  await settings.open()
-}
+const workspaces = init.workspaces
+const loadingWorkspaces = computed(() => init.loading.value && init.workspaces.value.length === 0)
+const workspacesError = init.error
 
-async function loadWorkspaces() {
-  if (!config.isConfigured.value) return
-  loadingWorkspaces.value = true
-  workspacesError.value = undefined
-  try {
-    const list = await remote.listWorkspaces()
-    workspaces.value = list
-    const first = list[0]
-    if (first && !selectedWorkspaceId.value) {
-      selectedWorkspaceId.value = first.id
-    }
-  } catch (err) {
-    workspacesError.value = err instanceof Error ? err : new Error(String(err))
-  } finally {
-    loadingWorkspaces.value = false
+// Auto-select the first workspace when the list loads.
+watchEffect(() => {
+  const list = workspaces.value
+  if (list.length > 0 && !selectedWorkspaceId.value) {
+    selectedWorkspaceId.value = list[0]!.id
   }
-}
-
-onMounted(async () => {
-  if (!config.isConfigured.value) {
-    await openSettings()
-  }
-  await loadWorkspaces()
 })
 
-watch(() => config.isConfigured.value, async (isConfigured) => {
-  if (isConfigured) {
-    await loadWorkspaces()
-  } else {
-    workspaces.value = []
+// Clear selection when the list empties (e.g. disconnecting).
+watchEffect(() => {
+  if (workspaces.value.length === 0) {
     selectedWorkspaceId.value = null
   }
 })
+
+async function openSettings() {
+  await settings.open()
+}
 
 async function createChat(prompt: string) {
   if (!config.isConfigured.value) {
@@ -69,7 +50,7 @@ async function createChat(prompt: string) {
   }
 
   input.value = prompt
-  loading.value = true
+  creating.value = true
 
   try {
     const { thread_id } = await remote.createThread(
@@ -89,7 +70,7 @@ async function createChat(prompt: string) {
       color: 'error'
     })
   } finally {
-    loading.value = false
+    creating.value = false
   }
 }
 
@@ -195,9 +176,9 @@ async function onSubmit() {
 
         <ChatBox
           v-model="input"
-          :status="loading ? 'streaming' : 'ready'"
+          :status="creating ? 'streaming' : 'ready'"
           :disabled="!selectedWorkspaceId || loadingWorkspaces"
-          :submit-disabled="loading || !selectedWorkspaceId"
+          :submit-disabled="creating || !selectedWorkspaceId"
           class="[view-transition-name:chat-prompt]"
           @submit="onSubmit"
         />
