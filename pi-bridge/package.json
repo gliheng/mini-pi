@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "tsx src/index.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "test": "node --test dist/send-file-tool.test.js"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "latest",

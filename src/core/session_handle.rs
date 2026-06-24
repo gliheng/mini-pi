@@ -651,7 +651,7 @@ impl SessionHandle {
                 output,
                 is_error,
                 call_id,
-                ..
+                details,
             } => {
                 if let Some(msg) = self.messages.last_mut()
                     && matches!(msg.role, Role::Assistant)
@@ -667,6 +667,7 @@ impl SessionHandle {
                     }) && let MessagePart::ToolCall { state, .. } = part {
                         *state = Some(PartState::Done);
                     }
+
                     msg.parts.push(MessagePart::ToolResult {
                         tool_call_id: call_id.into(),
                         name: tool_name.into(),
@@ -677,6 +678,7 @@ impl SessionHandle {
                         }
                         .into(),
                         state: Some(PartState::Done),
+                        details: if is_error { None } else { details },
                     });
                 }
             }
@@ -1094,6 +1096,7 @@ impl SessionHandle {
                                     name: name.into(),
                                     output: output.into(),
                                     state: Some(PartState::Done),
+                                    details: None,
                                 });
                             }
                         }
@@ -1118,6 +1121,7 @@ impl SessionHandle {
                                 name: name.into(),
                                 output: output.into(),
                                 state: Some(PartState::Done),
+                                details: None,
                             });
                         }
                     }
@@ -1240,7 +1244,7 @@ impl SessionHandle {
                         }
                     }
                     MessagePart::ToolCall { .. } | MessagePart::ToolResult { .. } => {
-                        // Tool calls/results were already streamed; keep them.
+                        // Already streamed or created inline; keep them.
                     }
                 }
             }
@@ -1272,6 +1276,7 @@ fn loaded_parts_to_message_parts(parts: Vec<LoadedPart>) -> Vec<MessagePart> {
                 name: name.into(),
                 output: output.into(),
                 state: Some(PartState::Done),
+                details: None,
             }),
         })
         .collect()

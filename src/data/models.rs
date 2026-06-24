@@ -35,6 +35,7 @@ pub enum MessagePart {
         name: SharedString,
         output: SharedString,
         state: Option<PartState>,
+        details: Option<serde_json::Value>,
     },
 }
 

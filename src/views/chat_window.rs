@@ -30,6 +30,36 @@ use gpui_component::{
 type ReasoningEntities = Vec<Vec<Option<Entity<Reasoning>>>>;
 type MarkdownEntities = Vec<Vec<Option<Entity<TextViewState>>>>;
 
+fn format_file_size(size: usize) -> String {
+    if size < 1024 {
+        format!("{} B", size)
+    } else if size < 1024 * 1024 {
+        format!("{:.1} KB", size as f64 / 1024.0)
+    } else if size < 1024 * 1024 * 1024 {
+        format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.1} GB", size as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
+fn open_file(path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "", path.to_string_lossy().as_ref()])
+            .spawn()?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open").arg(path).spawn()?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open").arg(path).spawn()?;
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct SelectModelItem {
     id: String,
@@ -1588,22 +1618,114 @@ impl ChatWindow {
                         .child(format!("⚙ {} {}", name, args)),
                 )
                 .into_any_element(),
-            MessagePart::ToolResult { name, output, .. } => div()
-                .flex()
-                .w_full()
-                .justify_start()
-                .child(
+            MessagePart::ToolResult {
+                name,
+                output,
+                details,
+                ..
+            } => {
+                if name == "send_file" {
+                    let file_path = details
+                        .as_ref()
+                        .and_then(|d| d.get("path"))
+                        .and_then(|v| v.as_str())
+                        .map(PathBuf::from)
+                        .unwrap_or_default();
+                    let file_name = file_path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| output.to_string());
+                    let mime_type = details
+                        .as_ref()
+                        .and_then(|d| d.get("mime_type"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("application/octet-stream")
+                        .to_string();
+                    let size = details
+                        .as_ref()
+                        .and_then(|d| d.get("size"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as usize;
+                    let file_path_for_reveal = file_path.clone();
+                    let file_path_for_open = file_path.clone();
                     div()
-                        .px_3()
-                        .py_1()
-                        .rounded_md()
-                        .bg(cx.theme().info)
-                        .text_color(cx.theme().info_foreground)
-                        .text_xs()
+                        .flex()
                         .w_full()
-                        .child(format!("↳ {}: {}", name, output)),
-                )
-                .into_any_element(),
+                        .justify_start()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_2()
+                                .px_3()
+                                .py_2()
+                                .rounded_md()
+                                .bg(cx.theme().secondary)
+                                .text_color(cx.theme().secondary_foreground)
+                                .w_full()
+                                .child(
+                                    Icon::empty()
+                                        .path("file.svg")
+                                        .size(px(20.))
+                                        .text_color(cx.theme().muted_foreground),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(file_name)
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child(format!(
+                                                    "{} • {}",
+                                                    mime_type,
+                                                    format_file_size(size)
+                                                )),
+                                        ),
+                                )
+                                .child(
+                                    Button::new(("open-file", msg_idx as u64))
+                                        .with_size(Size::XSmall)
+                                        .label("Open")
+                                        .on_click(cx.listener(move |_this, _, _window, _cx| {
+                                            let _ = open_file(&file_path_for_open);
+                                        })),
+                                )
+                                .child(
+                                    Button::new(("reveal-file", msg_idx as u64))
+                                        .with_size(Size::XSmall)
+                                        .label("Reveal")
+                                        .on_click(cx.listener(move |_this, _, _window, cx| {
+                                            cx.reveal_path(&file_path_for_reveal);
+                                        })),
+                                ),
+                        )
+                        .into_any_element()
+                } else {
+                    div()
+                        .flex()
+                        .w_full()
+                        .justify_start()
+                        .child(
+                            div()
+                                .px_3()
+                                .py_1()
+                                .rounded_md()
+                                .bg(cx.theme().info)
+                                .text_color(cx.theme().info_foreground)
+                                .text_xs()
+                                .w_full()
+                                .child(format!("↳ {}: {}", name, output)),
+                        )
+                        .into_any_element()
+                }
+            }
         }
     }
 

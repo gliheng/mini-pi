@@ -1464,12 +1464,14 @@ fn part_to_json(p: &MessagePart) -> serde_json::Value {
             name,
             output,
             state,
+            details,
             ..
         } => json!({
             "type": "tool_result",
             "name": name.to_string(),
             "output": output.to_string(),
             "state": state.as_ref().map(|s| format!("{:?}", s)),
+            "details": details,
         }),
     }
 }
@@ -1702,6 +1704,7 @@ mod tests {
                     output: SharedString::from("result"),
                     state: Some(PartState::Done),
                     tool_call_id: SharedString::from("tool-1"),
+                    details: None,
                 },
             ],
         };

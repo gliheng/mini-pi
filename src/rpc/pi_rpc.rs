@@ -71,6 +71,7 @@ pub enum BridgeEvent {
         tool_name: String,
         output: String,
         is_error: bool,
+        details: Option<serde_json::Value>,
     },
     TurnStart,
     TurnEnd,
@@ -1009,6 +1010,7 @@ fn parse_pi_line_value(val: &serde_json::Value) -> Option<BridgeEvent> {
                 .unwrap_or("unknown")
                 .to_string();
             let mut output = String::new();
+            let details = val.get("result").and_then(|r| r.get("details")).cloned();
             if let Some(result) = val.get("result")
                 && let Some(content) = result.get("content")
             {
@@ -1023,6 +1025,7 @@ fn parse_pi_line_value(val: &serde_json::Value) -> Option<BridgeEvent> {
                 tool_name,
                 output: truncate_str(&output, 500),
                 is_error,
+                details,
             })
         }
 
@@ -1375,6 +1378,43 @@ mod tests {
                 );
             }
             other => panic!("expected AgentEnd with messages, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_tool_execution_end_with_details() {
+        let val = serde_json::json!({
+            "type": "tool_execution_end",
+            "toolCallId": "call-1",
+            "toolName": "send_file",
+            "result": {
+                "content": [{ "type": "text", "text": "Sent file: report.txt" }],
+                "details": {
+                    "path": "/workspace/report.txt",
+                    "mime_type": "text/plain",
+                    "size": 42
+                }
+            },
+            "isError": false
+        });
+        match parse_pi_line_value(&val) {
+            Some(BridgeEvent::ToolEnd {
+                call_id,
+                tool_name,
+                output,
+                is_error,
+                details,
+            }) => {
+                assert_eq!(call_id, "call-1");
+                assert_eq!(tool_name, "send_file");
+                assert!(!is_error);
+                assert!(output.contains("Sent file"));
+                let details = details.expect("details should be present");
+                assert_eq!(details["path"], "/workspace/report.txt");
+                assert_eq!(details["mime_type"], "text/plain");
+                assert_eq!(details["size"], 42);
+            }
+            other => panic!("expected ToolEnd with details, got {:?}", other),
         }
     }
 }
