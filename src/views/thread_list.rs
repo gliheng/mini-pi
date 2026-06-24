@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyWindowHandle, BorrowAppContext, Bounds, Context, FocusHandle, IntoElement,
-    ParentElement, Render, ScrollHandle, ScrollWheelEvent, SharedString, Styled, Window, div,
-    prelude::*, px, rgb, size, svg,
+    AnyWindowHandle, BorrowAppContext, Bounds, Context, FocusHandle, IntoElement, ParentElement,
+    Render, ScrollHandle, ScrollWheelEvent, SharedString, Styled, Window, div, prelude::*, px, rgb,
+    size, svg,
 };
 
 use crate::auth::state::{self, AuthState};
@@ -11,15 +11,15 @@ use crate::core::actions::CloseWindow;
 use crate::core::app::{AppStore, custom_window_options};
 use crate::data::store::{PaginatedThreads, Store, ThreadMeta};
 use crate::sync::settings_sync;
-use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
-use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_component::{Icon, Size, Sizable as _};
 use crate::ui::loader::loader;
 use crate::utils::format::format_relative_time;
 use crate::views::chat_app::open_chat_window;
 use crate::views::create_thread_button::{CreateThreadButton, CreateThreadButtonEvent};
 use crate::views::pi_agent_import::{PiAgentImport, PiAgentImportEvent};
 use crate::views::user_panel::{UserPanel, UserPanelEvent};
+use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
+use gpui_component::input::{Input, InputEvent, InputState};
+use gpui_component::{Icon, Sizable as _, Size};
 
 pub struct ThreadItem {
     thread: Arc<ThreadMeta>,
@@ -260,28 +260,28 @@ impl Render for ThreadItem {
                                         "confirm-delete-btn-{}",
                                         thread_id
                                     )))
-                                        .label("Yes")
-                                        .with_size(Size::XSmall)
-                                        .danger()
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            cx.stop_propagation();
-                                            let _ = this.store.delete_thread(&this.thread.id);
-                                            this.confirming = false;
-                                            cx.update_global(|_: &mut AppStore, _| {});
-                                        })),
+                                    .label("Yes")
+                                    .with_size(Size::XSmall)
+                                    .danger()
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        let _ = this.store.delete_thread(&this.thread.id);
+                                        this.confirming = false;
+                                        cx.update_global(|_: &mut AppStore, _| {});
+                                    })),
                                 )
                                 .child(
                                     Button::new(SharedString::from(format!(
                                         "cancel-delete-btn-{}",
                                         thread_id
                                     )))
-                                        .label("No")
-                                        .with_size(Size::XSmall)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            cx.stop_propagation();
-                                            this.confirming = false;
-                                            cx.notify();
-                                        })),
+                                    .label("No")
+                                    .with_size(Size::XSmall)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.confirming = false;
+                                        cx.notify();
+                                    })),
                                 ),
                         )
                     }),
@@ -341,13 +341,19 @@ impl ThreadList {
                                 let initial_meta = cx.global::<AppStore>().sync_meta.clone();
                                 cx.spawn(async move |_, cx| {
                                     let result = smol::unblock(move || {
-                                        settings_sync::sync_changes(&access_token, &user_id, initial_meta)
+                                        settings_sync::sync_changes(
+                                            &access_token,
+                                            &user_id,
+                                            initial_meta,
+                                        )
                                     })
                                     .await;
                                     let _ =
                                         cx.update_global(|app: &mut AppStore, _| match result {
                                             Ok(meta) => {
-                                                let _ = settings_sync::save_sync_meta(&app.store, &meta);
+                                                let _ = settings_sync::save_sync_meta(
+                                                    &app.store, &meta,
+                                                );
                                                 app.sync_meta = meta;
                                                 app.sync_status = settings_sync::SyncStatus::Synced;
                                             }
@@ -390,16 +396,17 @@ impl ThreadList {
             },
         );
 
-        let search_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Search threads...")
-        });
-        let _search_input_subscription =
-            cx.subscribe_in(&search_input, window, |this, _, event: &InputEvent, _window, cx| {
+        let search_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search threads..."));
+        let _search_input_subscription = cx.subscribe_in(
+            &search_input,
+            window,
+            |this, _, event: &InputEvent, _window, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.load_threads(cx);
                 }
-            });
+            },
+        );
 
         let is_first = state::is_first_run();
         let has_pi_settings = import_prompt.read(cx).has_files();
@@ -594,8 +601,11 @@ impl ThreadList {
             }
         }
         // Reorder to match the database sort: pinned first, then updated_at descending
-        let order: std::collections::HashMap<String, usize> =
-            threads.iter().enumerate().map(|(i, t)| (t.id.clone(), i)).collect();
+        let order: std::collections::HashMap<String, usize> = threads
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.id.clone(), i))
+            .collect();
         self.thread_items.sort_by_key(|item| {
             order
                 .get(&item.read(cx).thread.id)
@@ -709,22 +719,25 @@ impl Render for ThreadList {
                                 .child(loader()),
                         )
                     })
-                    .when(self.all_threads_loaded(cx) && !self.thread_items.is_empty(), |el| {
-                        el.child(
-                            div()
-                                .id("thread-list-end")
-                                .py_4()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(rgb(0x666666))
-                                        .child("No more threads"),
-                                ),
-                        )
-                    }),
+                    .when(
+                        self.all_threads_loaded(cx) && !self.thread_items.is_empty(),
+                        |el| {
+                            el.child(
+                                div()
+                                    .id("thread-list-end")
+                                    .py_4()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(rgb(0x666666))
+                                            .child("No more threads"),
+                                    ),
+                            )
+                        },
+                    ),
             )
             .child(
                 div()

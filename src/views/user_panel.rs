@@ -17,7 +17,9 @@ use gpui_component::input::{Input, InputState};
 use gpui_component::notification::Notification;
 use gpui_component::switch::Switch;
 use gpui_component::theme::{Theme, ThemeMode};
-use gpui_component::{ActiveTheme as _, Disableable as _, Icon, Size, Sizable as _, WindowExt as _};
+use gpui_component::{
+    ActiveTheme as _, Disableable as _, Icon, Sizable as _, Size, WindowExt as _,
+};
 
 #[derive(Clone)]
 pub enum UserPanelEvent {
@@ -308,7 +310,12 @@ impl Render for UserPanel {
                                         .text_color(cx.theme().foreground)
                                         .child(title),
                                 )
-                                .child(div().text_sm().text_color(cx.theme().muted_foreground).child(subtitle))
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(subtitle),
+                                )
                                 .child(form_fields)
                                 .child(
                                     Button::new("auth-dialog-close-btn")
@@ -456,7 +463,12 @@ fn render_cloudflared_dialog(
                         .text_color(cx.theme().foreground)
                         .child(title),
                 )
-                .child(div().text_sm().text_color(cx.theme().muted_foreground).child(body))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(body),
+                )
                 .when_some(error_msg, |this, err| {
                     this.child(div().text_xs().text_color(cx.theme().danger).child(err))
                 })
@@ -466,33 +478,29 @@ fn render_cloudflared_dialog(
                         .flex_row()
                         .gap_3()
                         .child(
-                            div()
-                                .flex_1()
-                                .child(
-                                    Button::new("cloudflared-download-btn")
-                                        .label(primary_label)
-                                        .with_size(Size::Small)
-                                        .primary()
-                                        .disabled(is_downloading)
-                                        .w_full()
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.start_cloudflared_download(cx);
-                                        })),
-                                ),
+                            div().flex_1().child(
+                                Button::new("cloudflared-download-btn")
+                                    .label(primary_label)
+                                    .with_size(Size::Small)
+                                    .primary()
+                                    .disabled(is_downloading)
+                                    .w_full()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.start_cloudflared_download(cx);
+                                    })),
+                            ),
                         )
                         .child(
-                            div()
-                                .flex_1()
-                                .child(
-                                    Button::new("cloudflared-cancel-btn")
-                                        .label("Cancel")
-                                        .with_size(Size::Small)
-                                        .w_full()
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.cloudflared_dialog = None;
-                                            cx.notify();
-                                        })),
-                                ),
+                            div().flex_1().child(
+                                Button::new("cloudflared-cancel-btn")
+                                    .label("Cancel")
+                                    .with_size(Size::Small)
+                                    .w_full()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.cloudflared_dialog = None;
+                                        cx.notify();
+                                    })),
+                            ),
                         ),
                 ),
         )
@@ -617,7 +625,12 @@ fn render_remote_control_section(
                 .py_2()
                 .rounded_lg()
                 .bg(cx.theme().secondary)
-                .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Status"))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Status"),
+                )
                 .child(div().flex_1())
                 .child(
                     div()
@@ -867,7 +880,12 @@ fn render_auth_content(
                                     .text_color(cx.theme().foreground)
                                     .child(threads_count.to_string()),
                             )
-                            .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Threads")),
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Threads"),
+                            ),
                     ),
                 )
                 .child(
@@ -965,10 +983,7 @@ fn render_auth_content(
     }
 }
 
-fn render_email_field(
-    panel: &UserPanel,
-    cx: &mut Context<UserPanel>,
-) -> impl IntoElement {
+fn render_email_field(panel: &UserPanel, cx: &mut Context<UserPanel>) -> impl IntoElement {
     div()
         .w_full()
         .flex()
@@ -994,10 +1009,7 @@ fn render_email_field(
         )
 }
 
-fn render_password_field(
-    panel: &UserPanel,
-    cx: &mut Context<UserPanel>,
-) -> impl IntoElement {
+fn render_password_field(panel: &UserPanel, cx: &mut Context<UserPanel>) -> impl IntoElement {
     div()
         .w_full()
         .flex()
@@ -1099,7 +1111,11 @@ fn render_confirm_password_field(
                 .bg(cx.theme().secondary)
                 .border_1()
                 .border_color(cx.theme().border)
-                .child(Input::new(&panel.confirm_password_input).appearance(false).w_full()),
+                .child(
+                    Input::new(&panel.confirm_password_input)
+                        .appearance(false)
+                        .w_full(),
+                ),
         )
 }
 
@@ -1150,7 +1166,8 @@ fn render_signup_submit_button(
                             cx.emit(UserPanelEvent::AuthStateChanged);
                         }
                         Err(e) => {
-                            const CONFIRM_MSG: &str = "Please check your email to confirm your account, then sign in.";
+                            const CONFIRM_MSG: &str =
+                                "Please check your email to confirm your account, then sign in.";
                             if let supabase::SupabaseAuthError::Api { msg, status: 200 } = &e {
                                 if msg.as_str() == CONFIRM_MSG {
                                     this.auth_error = None;
@@ -1281,12 +1298,12 @@ fn sync_row(
         .rounded_lg()
         .bg(cx.theme().secondary)
         .child(
-            div()
-                .flex_1()
-                .flex()
-                .flex_row()
-                .items_center()
-                .child(div().text_sm().text_color(cx.theme().foreground).child(label)),
+            div().flex_1().flex().flex_row().items_center().child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().foreground)
+                    .child(label),
+            ),
         )
         .child(
             div()
@@ -1296,10 +1313,7 @@ fn sync_row(
         )
 }
 
-fn render_appearance_row(
-    _window: &mut Window,
-    cx: &mut Context<UserPanel>,
-) -> impl IntoElement {
+fn render_appearance_row(_window: &mut Window, cx: &mut Context<UserPanel>) -> impl IntoElement {
     let is_dark = cx.theme().mode.is_dark();
     div()
         .id("settings-appearance")

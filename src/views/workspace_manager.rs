@@ -3,7 +3,7 @@ use gpui::{
     SharedString, StatefulInteractiveElement, Styled, Window, div, px, rgb,
 };
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
-use gpui_component::{Icon, Size, Sizable as _, WindowExt as _};
+use gpui_component::{Icon, Sizable as _, Size, WindowExt as _};
 
 use crate::data::store::WorkspaceMeta;
 

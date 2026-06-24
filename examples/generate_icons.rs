@@ -5,8 +5,7 @@ use std::path::PathBuf;
 fn render_png(svg: &str, size: u32) -> Vec<u8> {
     let tree = resvg::usvg::Tree::from_str(svg, &resvg::usvg::Options::default())
         .expect("failed to parse SVG");
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size)
-        .expect("failed to allocate pixmap");
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size).expect("failed to allocate pixmap");
     pixmap.fill(resvg::tiny_skia::Color::TRANSPARENT);
 
     let scale_x = size as f32 / tree.size().width() as f32;
@@ -25,8 +24,7 @@ fn write_ico(sizes: &[u32], svg: &str, out: PathBuf) {
             .expect("failed to decode rendered PNG")
             .to_rgba8();
         let icon_image = ico::IconImage::from_rgba_data(size, size, rgba.into_raw());
-        let entry = ico::IconDirEntry::encode(&icon_image)
-            .expect("failed to encode icon entry");
+        let entry = ico::IconDirEntry::encode(&icon_image).expect("failed to encode icon entry");
         icon_dir.add_entry(entry);
     }
     let file = File::create(&out).expect("failed to create ico file");
@@ -48,7 +46,9 @@ fn write_icns(sizes: &[u32], svg: &str, out: PathBuf) {
     }
     let file = File::create(&out).expect("failed to create icns file");
     let mut writer = BufWriter::new(file);
-    family.write(&mut writer).expect("failed to write icns file");
+    family
+        .write(&mut writer)
+        .expect("failed to write icns file");
     writer.flush().unwrap();
     println!("wrote {}", out.display());
 }

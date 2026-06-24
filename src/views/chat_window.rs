@@ -1,10 +1,10 @@
 use std::{path::PathBuf, sync::Arc};
 
 use gpui::{
-    AnyWindowHandle, Bounds, ClipboardItem, Context, Entity, FocusHandle,
-    InteractiveElement, IntoElement, KeyDownEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, PathPromptOptions, Pixels, Render, ScrollHandle, SharedString, Styled, Window,
-    canvas, div, fill, point, prelude::*, px, rgb, svg,
+    AnyWindowHandle, Bounds, ClipboardItem, Context, Entity, FocusHandle, InteractiveElement,
+    IntoElement, KeyDownEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+    PathPromptOptions, Pixels, Render, ScrollHandle, SharedString, Styled, Window, canvas, div,
+    fill, point, prelude::*, px, rgb, svg,
 };
 
 use crate::config::model_config::all_models;
@@ -13,17 +13,17 @@ use crate::core::app::AppStore;
 use crate::core::session_handle::{SessionEvent, SessionHandle, WorkspaceInfo};
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::data::store::{Store, ThreadMeta, WorkspaceMeta};
-use crate::ui::loader::{loader, text_loader};
-use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
-use gpui_component::text::{TextView, TextViewState};
-use gpui_component::input::Input;
-use gpui_component::notification::Notification;
-use gpui_component::select::{Select, SelectEvent, SelectItem, SelectState, SearchableVec};
-use gpui_component::{Disableable as _, Icon, IndexPath, Size, Sizable as _, WindowExt as _};
 use crate::ui::chat_input::ChatInput;
+use crate::ui::loader::{loader, text_loader};
 use crate::utils::voice::{VoiceRecorder, VoiceState, start_recording, transcribe};
 use crate::views::reasoning::Reasoning;
 use crate::views::workspace_manager::{WorkspaceManager, WorkspaceManagerEvent};
+use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
+use gpui_component::input::Input;
+use gpui_component::notification::Notification;
+use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
+use gpui_component::text::{TextView, TextViewState};
+use gpui_component::{Disableable as _, Icon, IndexPath, Sizable as _, Size, WindowExt as _};
 
 #[derive(Clone)]
 pub struct SelectModelItem {
@@ -450,11 +450,13 @@ impl ChatWindow {
         let manager = self.workspace_manager.clone();
         window.open_dialog(cx, move |dialog, _, _| {
             let manager_for_content = manager.clone();
-            dialog.title("Workspaces").content(move |content, window, cx| {
-                manager_for_content.update(cx, |manager, cx| {
-                    content.child(manager.render_dialog_content(window, cx))
+            dialog
+                .title("Workspaces")
+                .content(move |content, window, cx| {
+                    manager_for_content.update(cx, |manager, cx| {
+                        content.child(manager.render_dialog_content(window, cx))
+                    })
                 })
-            })
         });
     }
 
@@ -1010,9 +1012,9 @@ impl ChatWindow {
                         let content_height = viewport_height + max_scroll;
                         let thumb_height = ((viewport_height / content_height) * track_height)
                             .clamp(px(36.), track_height);
-                        let progress =
-                            (f32::from(-scroll_handle.offset().y) / f32::from(max_scroll))
-                                .clamp(0., 1.);
+                        let progress = (f32::from(-scroll_handle.offset().y)
+                            / f32::from(max_scroll))
+                        .clamp(0., 1.);
                         let thumb_top =
                             track_bounds.top() + (track_height - thumb_height) * progress;
                         let thumb_bounds = Bounds::from_corners(
@@ -1214,6 +1216,7 @@ impl Render for ChatWindow {
         let is_streaming = matches!(self.state, ChatState::Streaming);
         let input_empty = self.chat_input.read(cx).content(cx).is_empty();
         let is_disabled = is_streaming || is_loading || input_empty;
+        let input_focused = self.chat_input.read(cx).focus_handle.is_focused(window);
 
         // Ensure reasoning displays exist for reasoning parts
         let mut reasoning_entities: Vec<Vec<Option<gpui::Entity<Reasoning>>>> = Vec::new();
@@ -1762,15 +1765,20 @@ impl Render for ChatWindow {
                     })
                     .child(
                         div()
-                            .bg(rgb(0x252525))
+                            .bg(rgb(0x1f1f1f))
                             .rounded_xl()
                             .border_1()
-                            .border_color(rgb(0x333333))
+                            .border_color(if input_focused {
+                                rgb(0x6366f1)
+                            } else {
+                                rgb(0x3a3a3a)
+                            })
+                            .shadow_sm()
                             .px_3()
-                            .py_3()
+                            .py_2()
                             .flex()
                             .flex_col()
-                            .gap_2()
+                            .gap_1()
                             .child(
                                 div()
                                     .flex()
@@ -1802,16 +1810,30 @@ impl Render for ChatWindow {
                                             }
                                         }
                                     }))
-                                    .child(Input::new(&self.chat_input.read(cx).input_state).w_full())
+                                    .child(
+                                        Input::new(&self.chat_input.read(cx).input_state)
+                                            .appearance(false)
+                                            .w_full(),
+                                    )
                             )
                             .child(
                                 div()
                                     .flex()
                                     .flex_row()
-                                    .gap_2()
+                                    .gap_1()
                                     .items_center()
-                                    .child(Select::new(&self.model_dropdown).w(px(280.)))
-                                    .child(Select::new(&self.thinking_dropdown).w(px(160.)))
+                                    .child(
+                                        div().max_w_40().child(
+                                            Select::new(&self.model_dropdown)
+                                                .with_size(Size::Small),
+                                        ),
+                                    )
+                                    .child(
+                                        div().max_w_40().child(
+                                            Select::new(&self.thinking_dropdown)
+                                                .with_size(Size::Small),
+                                        ),
+                                    )
                                     .child(div().flex_1())
                                     .child({
                                         let is_recording = self.voice_state == VoiceState::Recording;
@@ -1819,12 +1841,12 @@ impl Render for ChatWindow {
                                         if is_transcribing {
                                             Button::new("voice-btn")
                                                 .with_size(Size::Small)
-                                                .custom(
-                                                    ButtonCustomVariant::new(cx)
-                                                        .color(rgb(0x666666).into())
-                                                        .foreground(rgb(0xffffff).into())
-                                                        .hover(rgb(0x666666).into())
-                                                        .active(rgb(0x666666).into()),
+                                                .ghost()
+                                                .icon(
+                                                    Icon::empty()
+                                                        .path("mic.svg")
+                                                        .size(px(14.))
+                                                        .text_color(rgb(0x9ca3af)),
                                                 )
                                                 .loading(true)
                                                 .disabled(true)
@@ -1850,18 +1872,12 @@ impl Render for ChatWindow {
                                         } else {
                                             Button::new("voice-btn")
                                                 .with_size(Size::Small)
-                                                .custom(
-                                                    ButtonCustomVariant::new(cx)
-                                                        .color(rgb(0x4b5563).into())
-                                                        .foreground(rgb(0xffffff).into())
-                                                        .hover(rgb(0x6b7280).into())
-                                                        .active(rgb(0x374151).into()),
-                                                )
+                                                .ghost()
                                                 .icon(
                                                     Icon::empty()
                                                         .path("mic.svg")
                                                         .size(px(14.))
-                                                        .text_color(rgb(0xffffff)),
+                                                        .text_color(rgb(0x9ca3af)),
                                                 )
                                                 .on_click(cx.listener(Self::toggle_voice_input))
                                                 .into_any_element()

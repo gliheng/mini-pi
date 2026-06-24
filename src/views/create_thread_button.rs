@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use gpui::{
     Animation, AnimationExt, BoxShadow, Context, EventEmitter, FontWeight, Hsla, IntoElement,
-    ParentElement, Render, Styled, Window, div, linear_color_stop, linear_gradient, point, prelude::*,
-    px, rgb, rgba, svg,
+    ParentElement, Render, Styled, Window, div, linear_color_stop, linear_gradient, point,
+    prelude::*, px, rgb, rgba, svg,
 };
 
 #[derive(Clone)]
@@ -81,7 +81,6 @@ impl CreateThreadButton {
                 },
             )
     }
-
 }
 
 impl EventEmitter<CreateThreadButtonEvent> for CreateThreadButton {}

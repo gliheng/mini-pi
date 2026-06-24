@@ -1,7 +1,9 @@
 use std::ops::Range;
 use std::path::PathBuf;
 
-use gpui::{AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Window};
+use gpui::{
+    AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Window,
+};
 
 use gpui_component::input::{InputEvent, InputState, RopeExt as _};
 
@@ -304,11 +306,7 @@ impl ChatInput {
         cx.notify();
     }
 
-    pub fn select_highlighted_mention(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn select_highlighted_mention(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(item) = self.mention_items.get(self.at_mention_highlighted).cloned() {
             let suffix = if item.is_dir { "/" } else { "" };
             let insertion = format!(
@@ -330,24 +328,19 @@ impl ChatInput {
         cx.notify();
     }
 
-    pub fn select_mention_at(
-        &mut self,
-        index: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn select_mention_at(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if index < self.mention_items.len() {
             self.at_mention_highlighted = index;
             self.select_highlighted_mention(window, cx);
         }
     }
 
-    pub fn select_highlighted_command(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(item) = self.slash_command_items.get(self.slash_command_highlighted).cloned() {
+    pub fn select_highlighted_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(item) = self
+            .slash_command_items
+            .get(self.slash_command_highlighted)
+            .cloned()
+        {
             let insertion = format!("/{} ", item.name);
             let range = self.slash_command_replace_range.clone();
             self.replace_range(range, &insertion, window, cx);
@@ -360,12 +353,7 @@ impl ChatInput {
         cx.notify();
     }
 
-    pub fn select_command_at(
-        &mut self,
-        index: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn select_command_at(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if index < self.slash_command_items.len() {
             self.slash_command_highlighted = index;
             self.select_highlighted_command(window, cx);
@@ -390,8 +378,7 @@ impl ChatInput {
         let content = self.input_state.read(cx).value();
         let range_start = range.start.min(content.len());
         let range_end = range.end.min(content.len());
-        let new_content =
-            content[0..range_start].to_string() + replacement + &content[range_end..];
+        let new_content = content[0..range_start].to_string() + replacement + &content[range_end..];
         let new_cursor = range_start + replacement.len();
 
         self.input_state.update(cx, |state, cx| {

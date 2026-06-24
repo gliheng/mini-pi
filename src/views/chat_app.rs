@@ -6,7 +6,7 @@ use gpui::{
     SharedString, Window, div, px,
 };
 use gpui::{MouseButton, prelude::*};
-use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
+use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{ActiveTheme, Icon, Root, Sizable as _, TitleBar};
 
 use crate::data::store::{Store, ThreadMeta};
@@ -43,14 +43,18 @@ impl ChatApp {
 }
 
 impl Render for ChatApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
         let chat_window = self.chat_window.clone();
         let title = self.title.clone();
         let pinned = self.pinned;
 
         let export_chat = chat_window.clone();
         let open_workspace_chat = chat_window.clone();
+
+        let dialog_layer = Root::render_dialog_layer(window, cx);
+        let notification_layer = Root::render_notification_layer(window, cx);
+        let sheet_layer = Root::render_sheet_layer(window, cx);
 
         div()
             .flex()
@@ -80,13 +84,7 @@ impl Render for ChatApp {
                             .child(
                                 Button::new("pin")
                                     .with_size(gpui_component::Size::Small)
-                                    .custom(
-                                        ButtonCustomVariant::new(cx)
-                                            .color(cx.theme().transparent)
-                                            .foreground(gpui::rgb(0x888888).into())
-                                            .hover(gpui::rgb(0x333333).into())
-                                            .active(gpui::rgb(0x444444).into()),
-                                    )
+                                    .ghost()
                                     .icon(
                                         Icon::empty()
                                             .path(if pinned { "unpin.svg" } else { "pin.svg" })
@@ -108,13 +106,7 @@ impl Render for ChatApp {
                             .child(
                                 Button::new("open-workspace")
                                     .with_size(gpui_component::Size::Small)
-                                    .custom(
-                                        ButtonCustomVariant::new(cx)
-                                            .color(cx.theme().transparent)
-                                            .foreground(gpui::rgb(0x888888).into())
-                                            .hover(gpui::rgb(0x333333).into())
-                                            .active(gpui::rgb(0x444444).into()),
-                                    )
+                                    .ghost()
                                     .icon(
                                         Icon::empty()
                                             .path("folder.svg")
@@ -142,13 +134,7 @@ impl Render for ChatApp {
                             .child(
                                 Button::new("export-html")
                                     .with_size(gpui_component::Size::Small)
-                                    .custom(
-                                        ButtonCustomVariant::new(cx)
-                                            .color(cx.theme().transparent)
-                                            .foreground(gpui::rgb(0x888888).into())
-                                            .hover(gpui::rgb(0x333333).into())
-                                            .active(gpui::rgb(0x444444).into()),
-                                    )
+                                    .ghost()
                                     .icon(
                                         Icon::empty()
                                             .path("export.svg")
@@ -190,6 +176,9 @@ impl Render for ChatApp {
                     ),
             )
             .child(self.chat_window.clone())
+            .children(dialog_layer)
+            .children(notification_layer)
+            .children(sheet_layer)
     }
 }
 

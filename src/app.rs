@@ -265,11 +265,15 @@ impl MiniPiApp {
 impl gpui::Render for MiniPiApp {
     fn render(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
         let theme = cx.theme().clone();
         let user_panel_active = cx.global::<AppStore>().user_panel_active;
+
+        let dialog_layer = Root::render_dialog_layer(window, cx);
+        let notification_layer = Root::render_notification_layer(window, cx);
+        let sheet_layer = Root::render_sheet_layer(window, cx);
 
         let title = gpui::div().flex().items_center().gap_2().child(
             gpui::div()
@@ -332,6 +336,9 @@ impl gpui::Render for MiniPiApp {
                         ),
                 )
             })
+            .children(dialog_layer)
+            .children(notification_layer)
+            .children(sheet_layer)
     }
 }
 
@@ -339,13 +346,7 @@ impl MiniPiApp {
     fn user_menu_button(cx: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
         Button::new("user-menu")
             .with_size(gpui_component::Size::Small)
-            .custom(
-                ButtonCustomVariant::new(cx)
-                    .color(cx.theme().transparent)
-                    .foreground(gpui::rgb(0x888888).into())
-                    .hover(gpui::rgb(0x333333).into())
-                    .active(gpui::rgb(0x444444).into()),
-            )
+            .ghost()
             .icon(
                 Icon::empty()
                     .path("account.svg")
