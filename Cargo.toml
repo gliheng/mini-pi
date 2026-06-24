@@ -41,5 +41,20 @@ objc = "0.2"
 tar = "0.4"
 flate2 = "1"
 
+[package.metadata.bundle]
+name = "Mini Pi"
+identifier = "works.earendil.mini-pi"
+icon = ["assets/icon.icns"]
+version = "0.1.0"
+category = "Developer Tool"
+short_description = "A desktop chat interface for the pi coding agent"
+long_description = "Mini Pi is a native chat-window wrapper around the pi coding agent SDK."
+resources = ["assets", "pi-bridge"]
+
+[dev-dependencies]
+resvg = "0.47"
+ico = "0.5"
+icns = { version = "0.4", default-features = false, features = ["pngio"] }
+
 [lints.rust]
 unexpected_cfgs = "allow"

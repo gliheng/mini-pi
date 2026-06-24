@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet},
-    path::PathBuf,
     sync::Arc,
 };
 
@@ -35,7 +34,7 @@ pub fn run() {
     if let Err(e) = config.save() {
         eprintln!("[remote] failed to save startup config: {}", e);
     }
-    let assets_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
+    let assets_dir = crate::utils::paths::app_root().join("assets");
 
     let (auth, session) = match state::load_session(&store) {
         Some(session) => {
@@ -263,54 +262,87 @@ impl gpui::Render for MiniPiApp {
         _window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
-        let theme = cx.theme();
+        let theme = cx.theme().clone();
         let user_panel_active = cx.global::<AppStore>().user_panel_active;
+
+        let title = gpui::div().flex().items_center().gap_2().child(
+            gpui::div()
+                .text_size(px(13.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child("Mini Pi"),
+        );
+
+        let title_bar = if cfg!(target_os = "macos") {
+            TitleBar::new()
+                .child(title)
+                .child(
+                    gpui::div()
+                        .flex()
+                        .items_center()
+                        .pr_2()
+                        .child(Self::user_menu_button(cx)),
+                )
+        } else {
+            // On Windows/Linux the TitleBar children container is marked as a
+            // window-drag region, so interactive children would not receive
+            // clicks. Keep only the non-interactive title inside the TitleBar
+            // and render the user menu as an absolute overlay (see below).
+            TitleBar::new().child(title)
+        };
 
         gpui::div()
             .flex()
             .flex_col()
             .size_full()
+            .relative()
             .bg(theme.background)
             .text_color(theme.foreground)
             .font_family(theme.font_family.clone())
-            .child(
-                TitleBar::new()
-                    .child(
-                        gpui::div().flex().items_center().gap_2().child(
-                            gpui::div()
-                                .text_size(px(13.0))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child("Mini Pi"),
-                        ),
-                    )
-                    .child(
-                        gpui::div().flex().items_center().pr_2().child(
-                            Button::new("user-menu")
-                                .with_size(gpui_component::Size::Small)
-                                .custom(
-                                    ButtonCustomVariant::new(cx)
-                                        .color(cx.theme().transparent)
-                                        .foreground(gpui::rgb(0x888888).into())
-                                        .hover(gpui::rgb(0x333333).into())
-                                        .active(gpui::rgb(0x444444).into()),
-                                )
-                                .icon(
-                                    Icon::empty()
-                                        .path("account.svg")
-                                        .text_color(gpui::rgb(0x888888)),
-                                )
-                                .on_click(move |_, _, cx| {
-                                    cx.update_global(|app: &mut AppStore, _| {
-                                        app.user_panel_active = !app.user_panel_active;
-                                    });
-                                }),
-                        ),
-                    ),
-            )
+            .child(title_bar)
             .child(if user_panel_active {
                 self.user_panel.clone().into_any_element()
             } else {
                 self.thread_list.clone().into_any_element()
             })
+            .when(cfg!(not(target_os = "macos")), |this| {
+                // Position the user menu just to the left of the client-side
+                // window controls (minimize/maximize/close), each 34px wide.
+                this.child(
+                    gpui::div()
+                        .absolute()
+                        .top_0()
+                        .right(px(102.0))
+                        .h(px(34.0))
+                        .flex()
+                        .items_center()
+                        .pr_2()
+                        .child(Self::user_menu_button(cx)),
+                )
+            })
+    }
+}
+
+impl MiniPiApp {
+    fn user_menu_button(cx: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+        Button::new("user-menu")
+            .with_size(gpui_component::Size::Small)
+            .custom(
+                ButtonCustomVariant::new(cx)
+                    .color(cx.theme().transparent)
+                    .foreground(gpui::rgb(0x888888).into())
+                    .hover(gpui::rgb(0x333333).into())
+                    .active(gpui::rgb(0x444444).into()),
+            )
+            .icon(
+                Icon::empty()
+                    .path("account.svg")
+                    .text_color(gpui::rgb(0x888888)),
+            )
+            .on_click(cx.listener(|_this, _, _, cx| {
+                cx.update_global(|app: &mut AppStore, _| {
+                    app.user_panel_active = !app.user_panel_active;
+                });
+                cx.notify();
+            }))
     }
 }

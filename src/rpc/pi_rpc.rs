@@ -160,7 +160,7 @@ impl Drop for PiBridge {
 
 impl PiBridge {
     pub fn spawn() -> Result<Arc<Self>, PiRpcError> {
-        let bridge_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pi-bridge");
+        let bridge_dir = crate::utils::paths::app_root().join("pi-bridge");
         let (program, args) = find_runtime(&bridge_dir)?;
 
         let agent_dir = dirs::home_dir()
@@ -718,6 +718,30 @@ impl PiRpc {
 // ---------------------------------------------------------------------------
 
 fn find_runtime(bridge_dir: &PathBuf) -> Result<(String, Vec<String>), PiRpcError> {
+    // In release builds we ship a bundled Node binary plus compiled bridge JS.
+    let dist_js = bridge_dir.join("dist").join("index.js");
+    if dist_js.exists() {
+        let node_candidates: Vec<PathBuf> = if cfg!(windows) {
+            vec![
+                bridge_dir.join("node.exe"),
+                bridge_dir.parent().map(|p| p.join("node.exe")).unwrap_or_default(),
+            ]
+        } else {
+            vec![
+                bridge_dir.join("node"),
+                bridge_dir.parent().map(|p| p.join("node")).unwrap_or_default(),
+            ]
+        };
+        for node in node_candidates {
+            if node.exists() {
+                return Ok((
+                    node.to_string_lossy().to_string(),
+                    vec!["dist/index.js".to_string()],
+                ));
+            }
+        }
+    }
+
     // Prefer bun because it can run TypeScript directly.
     if Command::new("bun").arg("--version").output().is_ok() {
         return Ok((
@@ -751,7 +775,7 @@ fn find_runtime(bridge_dir: &PathBuf) -> Result<(String, Vec<String>), PiRpcErro
     }
 
     Err(PiRpcError::Spawn(
-        "no JavaScript runtime found (tried bun, tsx, npx).".to_string(),
+        "no JavaScript runtime found (tried bundled node, bun, tsx, npx).".to_string(),
     ))
 }
 

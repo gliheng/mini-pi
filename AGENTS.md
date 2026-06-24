@@ -81,8 +81,8 @@ examples/               # Standalone markdown renderer example and test markdown
 ## Build, Run and Test
 
 ```bash
-# Install the SDK bridge dependencies
-cd pi-bridge && npm install
+# Install the SDK bridge dependencies and compile it to JavaScript
+cd pi-bridge && npm install && npm run build && cd ..
 
 # Standard cargo workflow
 cargo build
@@ -94,6 +94,21 @@ cargo build --release
 # Tests
 cargo test
 ```
+
+### Installers
+
+Self-contained installers are built from the scripts in `scripts/`:
+
+- `scripts/build-windows.ps1` produces `target/mini-pi-<version>-x64.msi`.
+- `scripts/build-macos.sh` produces `target/mini-pi-<version>-x64.dmg`.
+
+Both scripts bundle a private Node.js runtime and the compiled `pi-bridge` SDK, so end users do not need Node.js or bun installed. They are also driven by `.github/workflows/release.yml` on version tags.
+
+### Packaging layout
+
+- Release binaries resolve `assets/` and `pi-bridge/` relative to the executable (`src/utils/paths.rs`), falling back to `CARGO_MANIFEST_DIR` during `cargo run`.
+- macOS: `cargo-bundle` reads `[package.metadata.bundle]` in `Cargo.toml` and builds `Mini Pi.app` with resources under `Contents/Resources`.
+- Windows: a hand-written WiX source (`wix/main.wxs`) plus a `heat`-generated file list produces a per-machine `.msi`.
 
 ### Prerequisites
 
@@ -207,7 +222,7 @@ This application is a thin GUI wrapper around the `@earendil-works/pi-coding-age
 
 - `cargo test` runs the remote-control tests in `src/remote/` and the markdown example doc-tests.
 - The current codebase has **40 unit tests** plus doc-tests, including tunnel URL extraction, bearer-token validation, SSE framing, and HTTP-server integration (status, auth, `since_id`, SSE CORS headers, SSE heartbeat, and SSE query-token auth); all pass.
-- There are no integration tests and no CI workflows configured for this repository.
+- `.github/workflows/release.yml` builds Windows (`.msi`) and macOS (`.dmg`) installers on version tags.
 
 ## Documentation
 
@@ -222,9 +237,10 @@ This application is a thin GUI wrapper around the `@earendil-works/pi-coding-age
 - `docs/` contains internal reference material, not project user documentation.
 - The model list is loaded dynamically at startup from the SDK bridge via `ModelRegistry.getAvailable()` and stored in `AppStore.models`. `src/config/model_config.rs` exposes the helpers (`all_models`, `get_model_name`, `model_display_name`, `parse_model_id`) that take a `&[ModelInfo]` slice. Model IDs use a `<provider>:<model>` format parsed by `parse_model_id`.
 - When adding database changes, append a new migration tuple to `MIGRATIONS` in `src/data/store.rs`.
-- Assets are loaded from the source tree at runtime via `core::assets::Assets`. Running the binary outside the repository requires the `assets/` directory to be present at the expected path.
+- Assets are loaded at runtime via `core::assets::Assets`. The asset root is resolved from the executable path (`src/utils/paths::app_root`), so packaged releases keep `assets/` next to the binary (Windows) or inside `Mini Pi.app/Contents/Resources` (macOS). During development the helper falls back to `CARGO_MANIFEST_DIR`.
+- The `pi-bridge/` directory is resolved the same way. Release builds ship a bundled Node binary and `pi-bridge/dist/index.js` (produced by `npm run build`); during development the bridge can still be run with bun/tsx/npx.
 - The app is primarily developed and tested on macOS. Windows-specific and Linux-specific code exists (e.g. `CREATE_NO_WINDOW`, client-side titlebar controls, `wmctrl`) but may need verification.
-- The `pi-bridge/` directory must have its dependencies installed (`npm install` or `bun install`) before running the app. The Rust binary spawns the bridge from the repository root.
+- The `pi-bridge/` directory must have its dependencies installed (`npm install` or `bun install`) and compiled (`npm run build`) before running the app outside an installer.
 - The wire protocol between Rust and the bridge uses a single WebSocket connection; every message includes a `sessionId` so multiple chat sessions can share one connection.
 - Model IDs in `src/config/model_config.rs` must resolve through the SDK's `ModelRegistry`/`getModel`. Provider names like `cloudflare-ai-gateway` may not be recognized by the SDK and may need to be mapped to SDK-supported providers (`anthropic`, `openai`, etc.).
 - Several known issues are documented in `docs/design-review.md`; review it before making large changes to process management, sync, or window lifecycle.

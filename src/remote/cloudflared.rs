@@ -129,6 +129,7 @@ mod tests {
     fn app_data_cloudflared_path_uses_mini_pi_bin() {
         let path = app_data_cloudflared_path();
         let parent = path.parent().expect("path has parent");
-        assert!(parent.to_string_lossy().contains(".mini-pi/bin"));
+        assert!(path.to_string_lossy().contains(".mini-pi"));
+        assert_eq!(parent.file_name().expect("parent has file name"), "bin");
     }
 }
