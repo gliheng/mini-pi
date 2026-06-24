@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gpui::{
     AppContext, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
@@ -885,6 +885,9 @@ impl RemoteController {
                 thread_id,
                 workspace_id,
             } => self.set_workspace(thread_id, workspace_id, cx),
+            RemoteCommand::DownloadFile { path, mime_type } => {
+                self.download_file(path, mime_type, cx)
+            }
         }
     }
 
@@ -1235,6 +1238,59 @@ impl RemoteController {
         json!({ "error": "thread not found" })
     }
 
+    fn download_file(
+        &self,
+        path: String,
+        mime_type: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> RemoteResponse {
+        let path = PathBuf::from(path);
+        if !path.is_absolute() {
+            return json!({ "error": "path must be absolute" });
+        }
+
+        let store = cx.global::<AppStore>().store.clone();
+        let workspaces = match store.list_workspaces() {
+            Ok(ws) => ws,
+            Err(e) => return json!({ "error": e.to_string() }),
+        };
+
+        let canonical_path = match std::fs::canonicalize(&path) {
+            Ok(p) => p,
+            Err(e) => return json!({ "error": format!("invalid path: {}", e) }),
+        };
+
+        let allowed = workspaces.iter().any(|ws| {
+            let ws_path = PathBuf::from(&ws.path);
+            let canonical_ws = std::fs::canonicalize(&ws_path).unwrap_or(ws_path);
+            canonical_path.starts_with(&canonical_ws)
+        });
+
+        if !allowed {
+            return json!({ "error": "path outside workspace" });
+        }
+
+        match std::fs::read(&canonical_path) {
+            Ok(bytes) => {
+                let name = canonical_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("download")
+                    .to_string();
+                let mime_type = mime_type.unwrap_or_else(|| guess_mime_type(&canonical_path));
+                use base64::Engine;
+                let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                json!({
+                    "name": name,
+                    "mime_type": mime_type,
+                    "size": bytes.len(),
+                    "data": data,
+                })
+            }
+            Err(e) => json!({ "error": format!("failed to read file: {}", e) }),
+        }
+    }
+
     fn persist_workspace_id(
         &self,
         thread_id: &str,
@@ -1438,6 +1494,39 @@ fn message_to_json(m: &Message) -> serde_json::Value {
         },
         "parts": m.parts.iter().map(part_to_json).collect::<Vec<_>>(),
     })
+}
+
+fn guess_mime_type(path: &Path) -> String {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match ext.as_str() {
+        "txt" => "text/plain",
+        "md" => "text/markdown",
+        "html" | "htm" => "text/html",
+        "css" => "text/css",
+        "js" | "mjs" => "application/javascript",
+        "json" => "application/json",
+        "ts" => "application/typescript",
+        "py" => "text/x-python",
+        "rs" => "text/x-rust",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "pdf" => "application/pdf",
+        "zip" => "application/zip",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        _ => "application/octet-stream",
+    }
+    .to_string()
 }
 
 fn part_to_json(p: &MessagePart) -> serde_json::Value {

@@ -16,7 +16,7 @@ use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::notification::Notification;
 use gpui_component::switch::Switch;
-use gpui_component::theme::{Theme, ThemeMode};
+use gpui_component::theme::{Theme, ThemeRegistry};
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, Sizable as _, Size, WindowExt as _,
 };
@@ -1349,19 +1349,29 @@ fn render_appearance_row(_window: &mut Window, cx: &mut Context<UserPanel>) -> i
             Switch::new("dark-mode-switch")
                 .checked(is_dark)
                 .on_click(cx.listener(move |_this, checked: &bool, window, cx| {
-                    let mode = if *checked {
-                        ThemeMode::Dark
+                    let theme_name = if *checked {
+                        SharedString::from("Ayu Dark")
                     } else {
-                        ThemeMode::Light
+                        SharedString::from("Ayu Light")
                     };
-                    cx.update_global(|app: &mut AppStore, _| {
-                        app.config.theme = mode;
-                        if let Err(e) = app.config.save() {
-                            eprintln!("[theme] failed to save config: {}", e);
+                    let registry = ThemeRegistry::global(cx);
+                    if let Some(theme) = registry.themes().get(&theme_name).cloned() {
+                        let mode = theme.mode;
+                        let name = theme.name.to_string();
+                        cx.update_global(|app: &mut AppStore, _| {
+                            if let Err(e) = app.store.set_theme_name(&name) {
+                                eprintln!("[theme] failed to save theme: {}", e);
+                            }
+                        });
+                        let global_theme = Theme::global_mut(cx);
+                        if mode.is_dark() {
+                            global_theme.dark_theme = theme;
+                        } else {
+                            global_theme.light_theme = theme;
                         }
-                    });
-                    Theme::change(mode, Some(window), cx);
-                    cx.refresh_windows();
+                        Theme::change(mode, Some(window), cx);
+                        cx.refresh_windows();
+                    }
                 })),
         )
 }

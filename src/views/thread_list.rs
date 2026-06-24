@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use gpui::{
     AnyWindowHandle, BorrowAppContext, Bounds, Context, FocusHandle, IntoElement, ParentElement,
-    Render, ScrollHandle, ScrollWheelEvent, SharedString, Styled, Window, div, prelude::*, px, rgb,
+    Render, ScrollHandle, ScrollWheelEvent, SharedString, Styled, Window, div, prelude::*, px,
     size, svg,
 };
 
@@ -19,7 +19,7 @@ use crate::views::pi_agent_import::{PiAgentImport, PiAgentImportEvent};
 use crate::views::user_panel::{UserPanel, UserPanelEvent};
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_component::{Icon, Sizable as _, Size};
+use gpui_component::{ActiveTheme, Icon, Sizable as _, Size};
 
 pub struct ThreadItem {
     thread: Arc<ThreadMeta>,
@@ -41,6 +41,7 @@ impl ThreadItem {
 
 impl Render for ThreadItem {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
         let thread_id = self.thread.id.clone();
         let title: SharedString = if self.thread.title.is_empty() {
             "New Thread".into()
@@ -76,8 +77,8 @@ impl Render for ThreadItem {
             .px_3()
             .py_2()
             .border_b_1()
-            .border_color(rgb(0x252525))
-            .hover(|style| style.bg(rgb(0x252525)))
+            .border_color(theme.border)
+            .hover(|style| style.bg(theme.secondary_hover))
             .cursor_pointer()
             .w_full()
             .flex()
@@ -143,7 +144,7 @@ impl Render for ThreadItem {
                                     .flex_1()
                                     .min_w_0()
                                     .text_sm()
-                                    .text_color(rgb(0xe0e0e0))
+                                    .text_color(theme.foreground)
                                     .overflow_x_hidden()
                                     .whitespace_nowrap()
                                     .text_ellipsis()
@@ -156,7 +157,7 @@ impl Render for ThreadItem {
                                 .flex_1()
                                 .min_w_0()
                                 .text_xs()
-                                .text_color(rgb(0x666666))
+                                .text_color(theme.muted_foreground)
                                 .overflow_x_hidden()
                                 .whitespace_nowrap()
                                 .text_ellipsis()
@@ -179,11 +180,11 @@ impl Render for ThreadItem {
                                     .flex_row()
                                     .items_center()
                                     .gap_1()
-                                    .child(div().size(px(6.)).rounded_full().bg(rgb(0x22c55e)))
+                                    .child(div().size(px(6.)).rounded_full().bg(theme.green))
                                     .child(
                                         div()
                                             .text_xs()
-                                            .text_color(rgb(0x22c55e))
+                                            .text_color(theme.green)
                                             .child("Thinking..."),
                                     ),
                             )
@@ -195,11 +196,11 @@ impl Render for ThreadItem {
                                     .flex_row()
                                     .items_center()
                                     .gap_1()
-                                    .child(div().size(px(6.)).rounded_full().bg(rgb(0x6366f1)))
-                                    .child(div().text_xs().text_color(rgb(0x6366f1)).child("New")),
+                                    .child(div().size(px(6.)).rounded_full().bg(theme.blue))
+                                    .child(div().text_xs().text_color(theme.blue).child("New")),
                             )
                         })
-                        .child(div().text_xs().text_color(rgb(0x666666)).child(time_label))
+                        .child(div().text_xs().text_color(theme.muted_foreground).child(time_label))
                     })
                     .when(!confirming && hovered, |el| {
                         el.child(
@@ -208,15 +209,15 @@ impl Render for ThreadItem {
                                 .custom(
                                     ButtonCustomVariant::new(cx)
                                         .color(gpui::rgba(0x00000000).into())
-                                        .foreground(rgb(0x666666).into())
-                                        .hover(rgb(0x333333).into())
-                                        .active(rgb(0x444444).into()),
+                                        .foreground(theme.muted_foreground.into())
+                                        .hover(theme.secondary_hover.into())
+                                        .active(theme.secondary_active.into()),
                                 )
                                 .icon(
                                     Icon::empty()
                                         .path(if pinned { "unpin.svg" } else { "pin.svg" })
                                         .size(px(14.))
-                                        .text_color(rgb(0x666666)),
+                                        .text_color(theme.muted_foreground),
                                 )
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     cx.stop_propagation();
@@ -230,15 +231,15 @@ impl Render for ThreadItem {
                                 .custom(
                                     ButtonCustomVariant::new(cx)
                                         .color(gpui::rgba(0x00000000).into())
-                                        .foreground(rgb(0x666666).into())
-                                        .hover(rgb(0x7f1d1d).into())
-                                        .active(rgb(0x991b1b).into()),
+                                        .foreground(theme.muted_foreground.into())
+                                        .hover(theme.danger_hover.into())
+                                        .active(theme.danger_active.into()),
                                 )
                                 .icon(
                                     Icon::empty()
                                         .path("close.svg")
                                         .size(px(14.))
-                                        .text_color(rgb(0x666666)),
+                                        .text_color(theme.muted_foreground),
                                 )
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     cx.stop_propagation();
@@ -254,7 +255,7 @@ impl Render for ThreadItem {
                                 .flex_row()
                                 .items_center()
                                 .gap_1()
-                                .child(div().text_xs().text_color(rgb(0xfca5a5)).child("Delete?"))
+                                .child(div().text_xs().text_color(theme.danger).child("Delete?"))
                                 .child(
                                     Button::new(SharedString::from(format!(
                                         "confirm-delete-btn-{}",
@@ -617,6 +618,7 @@ impl ThreadList {
 
 impl Render for ThreadList {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
         if cx.global::<AppStore>().user_panel_active {
             return div()
                 .track_focus(&self.focus_handle)
@@ -627,7 +629,7 @@ impl Render for ThreadList {
                 .flex_col()
                 .flex_1()
                 .min_h(px(0.))
-                .bg(rgb(0x1a1a1a))
+                .bg(theme.background)
                 .child(self.user_panel.clone());
         }
 
@@ -646,15 +648,15 @@ impl Render for ThreadList {
             .flex_col()
             .flex_1()
             .min_h(px(0.))
-            .bg(rgb(0x1a1a1a))
+            .bg(theme.background)
             .child(
                 div()
                     .id("thread-search-bar")
                     .px_3()
                     .py_2()
                     .border_b_1()
-                    .border_color(rgb(0x333333))
-                    .bg(rgb(0x1f1f1f))
+                    .border_color(theme.border)
+                    .bg(theme.muted)
                     .flex()
                     .flex_row()
                     .items_center()
@@ -663,7 +665,7 @@ impl Render for ThreadList {
                         svg()
                             .path("search.svg")
                             .size(px(16.))
-                            .text_color(rgb(0x666666)),
+                            .text_color(theme.muted_foreground),
                     )
                     .child(Input::new(&self.search_input).appearance(false).w_full()),
             )
@@ -681,10 +683,10 @@ impl Render for ThreadList {
                     .flex_col()
                     .when(!pinned.is_empty(), |el| {
                         el.child(
-                            div().px_3().py_1().bg(rgb(0x1f1f1f)).child(
+                            div().px_3().py_1().bg(theme.muted).child(
                                 div()
                                     .text_xs()
-                                    .text_color(rgb(0x888888))
+                                    .text_color(theme.muted_foreground)
                                     .child("Pinned threads"),
                             ),
                         )
@@ -695,8 +697,8 @@ impl Render for ThreadList {
                             div()
                                 .px_3()
                                 .py_1()
-                                .bg(rgb(0x1f1f1f))
-                                .child(div().text_xs().text_color(rgb(0x888888)).child("Threads")),
+                                .bg(theme.muted)
+                                .child(div().text_xs().text_color(theme.muted_foreground).child("Threads")),
                         )
                         .children(unpinned.iter().cloned())
                     })
@@ -704,7 +706,7 @@ impl Render for ThreadList {
                         el.items_center().justify_center().child(
                             svg()
                                 .path("logo.svg")
-                                .text_color(rgb(0x252525))
+                                .text_color(theme.border)
                                 .size(px(180.)),
                         )
                     })
@@ -732,7 +734,7 @@ impl Render for ThreadList {
                                     .child(
                                         div()
                                             .text_xs()
-                                            .text_color(rgb(0x666666))
+                                            .text_color(theme.muted_foreground)
                                             .child("No more threads"),
                                     ),
                             )
@@ -744,7 +746,7 @@ impl Render for ThreadList {
                     .px_3()
                     .py_3()
                     .border_t_1()
-                    .border_color(rgb(0x333333))
+                    .border_color(theme.border)
                     .child(self.create_thread_button.clone()),
             )
             .when(self.show_import_prompt, |el| {

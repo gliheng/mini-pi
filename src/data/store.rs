@@ -163,6 +163,14 @@ impl Store {
         Ok(())
     }
 
+    pub fn theme_name(&self) -> Option<String> {
+        self.get_user_setting("theme").ok().flatten()
+    }
+
+    pub fn set_theme_name(&self, name: &str) -> Result<(), StoreError> {
+        self.set_user_setting("theme", name)
+    }
+
     pub fn create_thread(&self, title: &str, preview: &str) -> Result<ThreadMeta, StoreError> {
         let id = nanoid::nanoid!();
         self.conn

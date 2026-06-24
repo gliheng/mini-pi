@@ -328,6 +328,38 @@ Changes the workspace for the thread.
 
 ---
 
+### `POST /files/download`
+
+Downloads a file that was referenced by a `send_file` tool result. The desktop app validates that the requested path is inside a known workspace before returning it.
+
+**Request body**
+
+```json
+{
+  "path": "/home/user/workspace/report.txt",
+  "mime_type": "text/plain"
+}
+```
+
+`mime_type` is optional; if omitted, the server guesses from the file extension.
+
+**Response `200 OK`**
+
+```http
+Content-Type: text/plain
+Content-Disposition: attachment; filename="report.txt"
+```
+
+The response body is the raw file bytes.
+
+If the file is not found, is outside a workspace, or the path is not absolute, the response is a `400`/`404`/`500` JSON error:
+
+```json
+{ "error": "path outside workspace" }
+```
+
+---
+
 ## Message Streaming
 
 Use `POST /threads/:id/message` as the streaming request. The stream emits AI SDK `UIMessageChunk` objects, including text, reasoning, tool input/output, error, and finish chunks.

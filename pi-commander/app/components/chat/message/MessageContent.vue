@@ -32,6 +32,10 @@ defineProps<{
         v-else-if="getToolName(part) === 'weather'"
         :invocation="{ ...(part as WeatherUIToolInvocation) }"
       />
+      <ChatToolSendFile
+        v-else-if="getToolName(part) === 'send_file'"
+        :invocation="part as DynamicToolUIPart"
+      />
       <UChatTool
         v-else-if="getToolName(part) === 'web_search' || getToolName(part) === 'google_search'"
         :text="isToolStreaming(part) ? 'Searching the web...' : 'Searched the web'"

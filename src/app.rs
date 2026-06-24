@@ -4,12 +4,12 @@ use std::{
 };
 
 use gpui::{
-    App, Application, Bounds, FontWeight, KeyBinding, Menu, MenuItem, Window, WindowBounds,
-    WindowDecorations, WindowOptions, px, size,
+    App, Application, Bounds, FontWeight, KeyBinding, Menu, MenuItem, SharedString, Window,
+    WindowBounds, WindowDecorations, WindowOptions, px, size,
 };
 use gpui::{MouseButton, prelude::*};
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
-use gpui_component::theme::Theme;
+use gpui_component::theme::{Theme, ThemeRegistry};
 use gpui_component::{ActiveTheme, Icon, Root, Sizable as _, TitleBar};
 
 use crate::auth::state::{self, AuthState};
@@ -81,7 +81,30 @@ pub fn run() {
         .with_assets(Assets { base: assets_dir })
         .run(move |cx: &mut App| {
             gpui_component::init(cx);
-            Theme::change(config.theme, None, cx);
+
+            let themes_dir = crate::utils::paths::app_root()
+                .join("assets")
+                .join("themes");
+            let theme_store = store.clone();
+            if let Err(err) = ThemeRegistry::watch_dir(themes_dir, cx, move |cx| {
+                let theme_name = theme_store
+                    .theme_name()
+                    .unwrap_or_else(|| "Ayu Dark".to_string());
+                let theme_name = SharedString::from(theme_name);
+                if let Some(theme) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
+                    let mode = theme.mode;
+                    let global_theme = Theme::global_mut(cx);
+                    if mode.is_dark() {
+                        global_theme.dark_theme = theme;
+                    } else {
+                        global_theme.light_theme = theme;
+                    }
+                    Theme::change(mode, None, cx);
+                    cx.refresh_windows();
+                }
+            }) {
+                eprintln!("[theme] failed to watch themes directory: {}", err);
+            }
 
             let models = pi_bridge
                 .as_ref()

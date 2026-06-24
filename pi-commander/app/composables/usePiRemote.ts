@@ -9,6 +9,7 @@ export interface PiPart {
   name?: string
   args?: string
   output?: string
+  details?: Record<string, unknown>
 }
 
 export interface PiMessage {
@@ -226,6 +227,22 @@ export function usePiRemote() {
     return (data.workspaces ?? []) as PiWorkspace[]
   }
 
+  async function downloadFile(path: string, mimeType?: string): Promise<Blob> {
+    const body: Record<string, unknown> = { path }
+    if (mimeType) body.mime_type = mimeType
+
+    const res = await fetch(url('/files/download'), {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify(body)
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => undefined)
+      throw toPiError(data)
+    }
+    return res.blob()
+  }
+
   return {
     status,
     listThreads,
@@ -237,6 +254,7 @@ export function usePiRemote() {
     setModel,
     setThinkingLevel,
     listModels,
-    listWorkspaces
+    listWorkspaces,
+    downloadFile
   }
 }

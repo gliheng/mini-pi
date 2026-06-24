@@ -171,7 +171,7 @@ When enabled in the user settings panel (`remote_control.enabled` in `~/.config/
 - It auto-spawns `cloudflared` to expose that port through a Cloudflare Tunnel (quick tunnel by default, or a named tunnel via `cloudflared.tunnel_token`; named tunnels also require `cloudflared.hostname`).
 - If no bundled `cloudflared` binary exists in `~/.mini-pi/bin/`, `UserPanel` shows a modal that downloads the platform-specific official release into `~/.mini-pi/bin/`, updates `remote_control.cloudflared.command`, and starts the tunnel.
 - The user panel displays the public tunnel URL and a QR code for easy phone scanning.
-- The phone sends REST commands (`GET /threads`, `POST /threads/:id/message`, etc.) and receives live assistant replies from the streaming message POST response.
+- The phone sends REST commands (`GET /threads`, `POST /threads/:id/message`, `POST /files/download`, etc.) and receives live assistant replies from the streaming message POST response.
 - Message responses stream AI SDK UI message chunks over data-only Server-Sent Events.
 - Cloudflare Access is the recommended authentication layer at the tunnel edge; an optional local `bearer_token` can be configured for quick-tunnel mode.
 
