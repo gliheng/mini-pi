@@ -1246,6 +1246,22 @@ fn render_signup_submit_button(
                             cx.emit(UserPanelEvent::AuthStateChanged);
                         }
                         Err(e) => {
+                            const CONFIRM_MSG: &str = "Please check your email to confirm your account, then sign in.";
+                            if let supabase::SupabaseAuthError::Api { msg, status: 200 } = &e {
+                                if msg.as_str() == CONFIRM_MSG {
+                                    this.auth_error = None;
+                                    this.auth_dialog = Some(AuthDialog::Login);
+                                    this.toast.update(cx, |toast, cx| {
+                                        toast.set_message("Confirmation email sent. Please sign in.");
+                                        toast.show_for(Duration::from_secs(5), cx);
+                                    });
+                                    cx.update_global(|app: &mut AppStore, _| {
+                                        app.auth = AuthState::LoggedOut;
+                                    });
+                                    cx.notify();
+                                    return;
+                                }
+                            }
                             this.auth_error = Some(e.to_string());
                             cx.update_global(|app: &mut AppStore, _| {
                                 app.auth = AuthState::LoggedOut;
