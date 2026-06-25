@@ -375,20 +375,16 @@ async fn download_file(State(state): State<Arc<AppState>>, body: Bytes) -> Respo
         .get("mime_type")
         .and_then(|v| v.as_str())
         .unwrap_or("application/octet-stream");
-    let data = match value
-        .get("data")
-        .and_then(|v| v.as_str())
-        .and_then(|s| {
-            use base64::Engine;
-            base64::engine::general_purpose::STANDARD.decode(s).ok()
-        })
-    {
+    let data = match value.get("data").and_then(|v| v.as_str()).and_then(|s| {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.decode(s).ok()
+    }) {
         Some(bytes) => bytes,
         None => {
             return json_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 json!({ "error": "invalid file data" }),
-            )
+            );
         }
     };
 
@@ -848,12 +844,14 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some("text/plain")
         );
-        assert!(response
-            .headers()
-            .get("content-disposition")
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or("")
-            .contains("report.txt"));
+        assert!(
+            response
+                .headers()
+                .get("content-disposition")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("")
+                .contains("report.txt")
+        );
         assert_eq!(response.text().expect("body should be text"), "hello file");
     }
 }

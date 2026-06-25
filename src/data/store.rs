@@ -80,8 +80,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ),
 ];
 
-const THREAD_SELECT_COLUMNS: &str =
-    "id, title, preview, session_file, model, thinking_level, pinned, metadata, \
+const THREAD_SELECT_COLUMNS: &str = "id, title, preview, session_file, model, thinking_level, pinned, metadata, \
      created_at, updated_at";
 
 fn row_to_thread(row: &Row) -> rusqlite::Result<ThreadMeta> {
@@ -158,11 +157,8 @@ impl Store {
                 // cannot run inside a multi-statement transaction in SQLite, so
                 // `execute_batch` is the only option here.
                 conn.execute_batch(sql).map_err(StoreError::Rusqlite)?;
-                conn.execute(
-                    "INSERT INTO _migrations (name) VALUES (?1)",
-                    params![name],
-                )
-                .map_err(StoreError::Rusqlite)?;
+                conn.execute("INSERT INTO _migrations (name) VALUES (?1)", params![name])
+                    .map_err(StoreError::Rusqlite)?;
             }
         }
 
@@ -214,7 +210,9 @@ impl Store {
     /// inside a transaction without re-locking the mutex).
     fn get_thread_by_conn(conn: &Connection, id: &str) -> Result<Option<ThreadMeta>, StoreError> {
         let mut stmt = conn
-            .prepare(&format!("SELECT {THREAD_SELECT_COLUMNS} FROM threads WHERE id = ?1"))
+            .prepare(&format!(
+                "SELECT {THREAD_SELECT_COLUMNS} FROM threads WHERE id = ?1"
+            ))
             .map_err(StoreError::Rusqlite)?;
         stmt.query_row(params![id], row_to_thread)
             .optional()
@@ -242,8 +240,10 @@ impl Store {
             params![id, title, preview, Option::<&str>::None, Option::<String>::None],
         )
         .map_err(StoreError::Rusqlite)?;
-        let thread = Self::get_thread_by_conn(&tx, &id)?
-            .ok_or(StoreError::MissingRow(format!("thread {} after create", id)))?;
+        let thread = Self::get_thread_by_conn(&tx, &id)?.ok_or(StoreError::MissingRow(format!(
+            "thread {} after create",
+            id
+        )))?;
         tx.commit().map_err(StoreError::Rusqlite)?;
         Ok(thread)
     }
@@ -409,8 +409,9 @@ impl Store {
             params![id, unique_name, path],
         )
         .map_err(StoreError::Rusqlite)?;
-        let workspace = Self::get_workspace_by_conn(&tx, &id)?
-            .ok_or(StoreError::MissingRow(format!("workspace {} after create", id)))?;
+        let workspace = Self::get_workspace_by_conn(&tx, &id)?.ok_or(StoreError::MissingRow(
+            format!("workspace {} after create", id),
+        ))?;
         tx.commit().map_err(StoreError::Rusqlite)?;
         Ok(workspace)
     }

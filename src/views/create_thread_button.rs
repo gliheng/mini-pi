@@ -170,7 +170,9 @@ impl Render for CreateThreadButton {
             .text_base()
             .shadow(current_shadows)
             .gap(px(8.))
-            .child(Self::breath_overlay(hovered, primary))
+            .when(hovered, |this| {
+                this.child(Self::breath_overlay(hovered, primary))
+            })
             .child(
                 div()
                     .relative()

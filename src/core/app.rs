@@ -5,7 +5,7 @@ use std::{
 
 use gpui::{
     AnyWindowHandle, Bounds, Entity, Global, TitlebarOptions, WindowBackgroundAppearance,
-    WindowBounds, WindowDecorations, WindowOptions, point, px,
+    WindowBounds, WindowOptions, point, px,
 };
 
 use crate::auth::state::{AuthState, SupabaseSession};

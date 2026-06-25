@@ -4,13 +4,13 @@ use std::{
 };
 
 use gpui::{
-    App, Application, Bounds, FontWeight, KeyBinding, Menu, MenuItem, SharedString, Window,
-    WindowBounds, WindowDecorations, WindowOptions, px, size,
+    App, Application, Bounds, KeyBinding, Menu, MenuItem, MouseButton, SharedString, Window,
+    WindowBounds, WindowDecorations, WindowOptions, prelude::*, px, size,
 };
-use gpui::{MouseButton, prelude::*};
-use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
+use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::tab::{Tab, TabBar};
 use gpui_component::theme::{Theme, ThemeRegistry};
-use gpui_component::{ActiveTheme, Icon, Root, Sizable as _, TitleBar};
+use gpui_component::{ActiveTheme, Icon, Root, Sizable, TitleBar};
 
 use crate::auth::state::{self, AuthState};
 use crate::config::app_config::AppConfig;
@@ -23,6 +23,7 @@ use crate::data::store::Store;
 use crate::remote::RemoteController;
 use crate::rpc::pi_rpc::PiBridge;
 use crate::sync::settings_sync;
+use crate::views::mini_app::MiniApp;
 use crate::views::thread_list::ThreadList;
 use crate::views::user_panel::{UserPanel, UserPanelEvent};
 
@@ -235,9 +236,28 @@ pub(crate) fn trigger_sync<C>(
         .detach();
 }
 
+/// Tabs in the main Mini Pi window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum MiniPiTab {
+    #[default]
+    Threads,
+    MiniApp,
+}
+
+impl MiniPiTab {
+    fn from_index(index: usize) -> Self {
+        match index {
+            1 => MiniPiTab::MiniApp,
+            _ => MiniPiTab::Threads,
+        }
+    }
+}
+
 struct MiniPiApp {
     thread_list: gpui::Entity<ThreadList>,
     user_panel: gpui::Entity<UserPanel>,
+    mini_app: gpui::Entity<MiniApp>,
+    active_tab_index: usize,
     _user_panel_subscription: gpui::Subscription,
 }
 
@@ -246,9 +266,11 @@ impl MiniPiApp {
         let store = cx.global::<AppStore>().store.clone();
         let thread_list = cx.new(|cx| ThreadList::new(window, cx, store));
         let user_panel = cx.new(|cx| UserPanel::new(window, cx));
+        let mini_app = cx.new(|cx| MiniApp::new(window, cx));
 
         let _user_panel_subscription =
-            cx.subscribe(&user_panel, move |_this, _, event: &UserPanelEvent, cx| {
+            cx.subscribe(&user_panel, move |this, _, event: &UserPanelEvent, cx| {
+                this.active_tab_index = 0;
                 cx.update_global(|app: &mut AppStore, _| {
                     app.user_panel_active = false;
                 });
@@ -276,6 +298,8 @@ impl MiniPiApp {
         Self {
             thread_list,
             user_panel,
+            mini_app,
+            active_tab_index: 0,
             _user_panel_subscription,
         }
     }
@@ -288,34 +312,12 @@ impl gpui::Render for MiniPiApp {
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
         let theme = cx.theme().clone();
+        let active_tab_index = self.active_tab_index;
         let user_panel_active = cx.global::<AppStore>().user_panel_active;
 
         let dialog_layer = Root::render_dialog_layer(window, cx);
         let notification_layer = Root::render_notification_layer(window, cx);
         let sheet_layer = Root::render_sheet_layer(window, cx);
-
-        let title = gpui::div().flex().items_center().gap_2().child(
-            gpui::div()
-                .text_size(px(13.0))
-                .font_weight(FontWeight::SEMIBOLD)
-                .child("Mini Pi"),
-        );
-
-        let title_bar = if cfg!(target_os = "macos") {
-            TitleBar::new().child(title).child(
-                gpui::div()
-                    .flex()
-                    .items_center()
-                    .pr_2()
-                    .child(Self::user_menu_button(cx)),
-            )
-        } else {
-            // On Windows/Linux the TitleBar children container is marked as a
-            // window-drag region, so interactive children would not receive
-            // clicks. Keep only the non-interactive title inside the TitleBar
-            // and render the user menu as an absolute overlay (see below).
-            TitleBar::new().child(title)
-        };
 
         gpui::div()
             .flex()
@@ -325,36 +327,49 @@ impl gpui::Render for MiniPiApp {
             .bg(theme.background)
             .text_color(theme.foreground)
             .font_family(theme.font_family.clone())
-            .child(title_bar)
-            .child(if user_panel_active {
-                self.user_panel.clone().into_any_element()
-            } else {
-                self.thread_list.clone().into_any_element()
-            })
-            .when(cfg!(not(target_os = "macos")), |this| {
-                // Position the user menu just to the left of the client-side
-                // window controls (minimize/maximize/close), each 34px wide.
-                this.child(
-                    gpui::div()
-                        .absolute()
-                        .top_0()
-                        .right(px(102.0))
-                        .h(px(34.0))
-                        .flex()
-                        .items_center()
-                        .pr_2()
-                        .child(
-                            gpui::div()
-                                .flex()
-                                .items_center()
-                                .justify_end()
-                                .px_2()
-                                .gap_2()
-                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                                .child(Self::user_menu_button(cx)),
-                        ),
-                )
-            })
+            .child(
+                TitleBar::new()
+                    .child(
+                        TabBar::new("app-tabs")
+                            .segmented()
+                            .px_2()
+                            .py(px(2.))
+                            .selected_index(active_tab_index)
+                            .on_click(cx.listener(|this, ix: &usize, window, cx| {
+                                this.set_active_tab(*ix, window, cx);
+                            }))
+                            .child(Tab::new().label("Threads"))
+                            .child(Tab::new().label("Mini app")),
+                    )
+                    .child(
+                        gpui::div()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .px_2()
+                            .gap_2()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .child(Self::user_menu_button(cx)),
+                    ),
+            )
+            .child(
+                gpui::div()
+                    .id("tab-content")
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .overflow_hidden()
+                    .map(|this| {
+                        if user_panel_active {
+                            this.child(self.user_panel.clone())
+                        } else {
+                            match MiniPiTab::from_index(active_tab_index) {
+                                MiniPiTab::Threads => this.child(self.thread_list.clone()),
+                                MiniPiTab::MiniApp => this.child(self.mini_app.clone()),
+                            }
+                        }
+                    }),
+            )
             .children(dialog_layer)
             .children(notification_layer)
             .children(sheet_layer)
@@ -377,5 +392,13 @@ impl MiniPiApp {
                 });
                 cx.notify();
             }))
+    }
+
+    fn set_active_tab(&mut self, index: usize, _window: &mut Window, cx: &mut gpui::Context<Self>) {
+        self.active_tab_index = index;
+        cx.update_global(|app: &mut AppStore, _| {
+            app.user_panel_active = false;
+        });
+        cx.notify();
     }
 }

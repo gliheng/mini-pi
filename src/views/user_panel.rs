@@ -1203,7 +1203,7 @@ fn render_signup_submit_button(
 fn render_logout_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
     Button::new("logout-button")
         .label("Sign Out")
-        .with_size(Size::Small)
+        .with_size(Size::Large)
         .danger()
         .w_full()
         .on_click(cx.listener(|this, _, _, cx| {
@@ -1234,7 +1234,7 @@ fn render_sync_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
 
     Button::new("sync-button")
         .label(label)
-        .with_size(Size::Small)
+        .with_size(Size::Large)
         .primary()
         .disabled(is_syncing)
         .w_full()

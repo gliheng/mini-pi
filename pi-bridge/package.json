@@ -18,5 +18,6 @@
     "@types/ws": "^8.5.0",
     "tsx": "^4.0.0",
     "typescript": "^5.0.0"
-  }
+  },
+  "packageManager": "yarn@4.17.0"
 }

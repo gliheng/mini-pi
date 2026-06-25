@@ -26,7 +26,9 @@ fn client() -> &'static Client {
 }
 
 /// Read the body as text and turn non-2xx responses into a typed error.
-fn ensure_success(resp: reqwest::blocking::Response) -> Result<reqwest::blocking::Response, SupabaseAuthError> {
+fn ensure_success(
+    resp: reqwest::blocking::Response,
+) -> Result<reqwest::blocking::Response, SupabaseAuthError> {
     let status = resp.status();
     if status.is_success() {
         return Ok(resp);

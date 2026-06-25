@@ -6,7 +6,7 @@ use gpui::{
     size, svg,
 };
 
-use crate::auth::state::{self, AuthState};
+use crate::auth::state;
 use crate::core::actions::CloseWindow;
 use crate::core::app::{AppStore, custom_window_options};
 use crate::data::store::{PaginatedThreads, Store, ThreadMeta};
@@ -15,7 +15,6 @@ use crate::utils::format::format_relative_time;
 use crate::views::chat_app::open_chat_window;
 use crate::views::create_thread_button::{CreateThreadButton, CreateThreadButtonEvent};
 use crate::views::pi_agent_import::{PiAgentImport, PiAgentImportEvent};
-use crate::views::user_panel::{UserPanel, UserPanelEvent};
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{ActiveTheme, Icon, Sizable as _, Size};
@@ -199,7 +198,12 @@ impl Render for ThreadItem {
                                     .child(div().text_xs().text_color(theme.blue).child("New")),
                             )
                         })
-                        .child(div().text_xs().text_color(theme.muted_foreground).child(time_label))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(time_label),
+                        )
                     })
                     .when(!confirming && hovered, |el| {
                         el.child(
@@ -290,7 +294,6 @@ impl Render for ThreadItem {
 }
 
 pub struct ThreadList {
-    pub user_panel: gpui::Entity<UserPanel>,
     pub import_prompt: gpui::Entity<PiAgentImport>,
     pub create_thread_button: gpui::Entity<CreateThreadButton>,
     pub focus_handle: FocusHandle,
@@ -305,7 +308,6 @@ pub struct ThreadList {
     pub loading_more: bool,
     pub search_input: gpui::Entity<InputState>,
     pub _subscription: gpui::Subscription,
-    pub _user_panel_subscription: gpui::Subscription,
     pub _import_prompt_subscription: gpui::Subscription,
     pub _create_thread_subscription: gpui::Subscription,
     pub _search_input_subscription: gpui::Subscription,
@@ -317,35 +319,8 @@ impl ThreadList {
             this.load_threads(cx);
         });
 
-        let user_panel = cx.new(|cx| UserPanel::new(window, cx));
         let import_prompt = cx.new(|_| PiAgentImport::new());
         let create_thread_button = cx.new(|_| CreateThreadButton::new());
-
-        let user_panel_subscription =
-            cx.subscribe(&user_panel, move |_this, _, _event: &UserPanelEvent, cx| {
-                cx.update_global(|app: &mut AppStore, _| {
-                    app.user_panel_active = false;
-                });
-                match _event {
-                    UserPanelEvent::AuthStateChanged => {
-                        let auth = cx.global::<AppStore>().auth.clone();
-                        if let AuthState::LoggedIn(_) = &auth {
-                            let session = cx.global::<AppStore>().session.clone();
-                            if let Some(s) = session {
-                                let initial_meta = cx.global::<AppStore>().sync_meta.clone();
-                                crate::app::trigger_sync(
-                                    s.access_token.clone(),
-                                    s.user.id.clone(),
-                                    initial_meta,
-                                    cx,
-                                );
-                            }
-                        }
-                    }
-                    UserPanelEvent::BackPressed => {}
-                }
-                cx.notify();
-            });
 
         let import_prompt_subscription = cx.subscribe(
             &import_prompt,
@@ -388,7 +363,6 @@ impl ThreadList {
         let show_import_prompt = is_first && has_pi_settings;
 
         let mut thread_list = Self {
-            user_panel,
             import_prompt,
             create_thread_button,
             focus_handle: cx.focus_handle(),
@@ -403,7 +377,6 @@ impl ThreadList {
             loading_more: false,
             search_input,
             _subscription: subscription,
-            _user_panel_subscription: user_panel_subscription,
             _import_prompt_subscription: import_prompt_subscription,
             _create_thread_subscription: create_thread_subscription,
             _search_input_subscription,
@@ -593,20 +566,6 @@ impl ThreadList {
 impl Render for ThreadList {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        if cx.global::<AppStore>().user_panel_active {
-            return div()
-                .track_focus(&self.focus_handle)
-                .on_action(|_: &CloseWindow, window, _| {
-                    window.remove_window();
-                })
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_h(px(0.))
-                .bg(theme.background)
-                .child(self.user_panel.clone());
-        }
-
         let (pinned, unpinned): (Vec<_>, Vec<_>) = self
             .thread_items
             .iter()
@@ -668,11 +627,12 @@ impl Render for ThreadList {
                     })
                     .when(!unpinned.is_empty(), |el| {
                         el.child(
-                            div()
-                                .px_3()
-                                .py_1()
-                                .bg(theme.muted)
-                                .child(div().text_xs().text_color(theme.muted_foreground).child("Threads")),
+                            div().px_3().py_1().bg(theme.muted).child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child("Threads"),
+                            ),
                         )
                         .children(unpinned.iter().cloned())
                     })

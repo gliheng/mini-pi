@@ -1,6 +1,7 @@
 pub mod chat_app;
 pub mod chat_window;
 pub mod create_thread_button;
+pub mod mini_app;
 pub mod pi_agent_import;
 pub mod reasoning;
 pub mod thread_list;
