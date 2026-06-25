@@ -56,7 +56,11 @@ if (-not (Test-Path $wixZip)) {
     Write-Host "Downloading WiX v3.11.2 binaries ..."
     Invoke-WebRequest -Uri "https://github.com/wixtoolset/wix3/releases/download/wix3112rtm/wix311-binaries.zip" -OutFile $wixZip
 }
-if (-not (Test-Path $wixDir)) {
+$heatExe = Join-Path $wixDir "heat.exe"
+$candleExe = Join-Path $wixDir "candle.exe"
+$lightExe = Join-Path $wixDir "light.exe"
+if (-not (Test-Path $heatExe) -or -not (Test-Path $candleExe) -or -not (Test-Path $lightExe)) {
+    New-Item -ItemType Directory -Force -Path $wixDir | Out-Null
     Expand-Archive -Path $wixZip -DestinationPath $wixDir -Force
 }
 $env:PATH = "$wixDir;$env:PATH"
@@ -70,7 +74,7 @@ Write-Host "Compiling MSI..."
 & candle -arch x64 -out "$wixOut\" (Join-Path $root "wix\main.wxs") "$filesWxs"
 if ($LASTEXITCODE -ne 0) { throw "candle failed" }
 
-& light -out "$msiOut" "$wixOut\main.wixobj" "$wixOut\files.wixobj"
+& light -b "$package" -out "$msiOut" "$wixOut\main.wixobj" "$wixOut\files.wixobj"
 if ($LASTEXITCODE -ne 0) { throw "light failed" }
 
 Write-Host "Installer created: $msiOut"

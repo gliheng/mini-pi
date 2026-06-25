@@ -318,6 +318,7 @@ pub fn upload_file(
         .header("apikey", anon_key())
         .header("Authorization", format!("Bearer {}", access_token))
         .header("Content-Type", content_type)
+        .header("x-upsert", "true")
         .body(body)
         .send()?;
     ensure_success(resp)?;
@@ -339,6 +340,7 @@ pub fn list_files(
         }))
         .send()?;
 
+    let resp = ensure_success(resp)?;
     let body = resp.text().map_err(SupabaseAuthError::Http)?;
     let files: Vec<StorageFile> = serde_json::from_str(&body)?;
     Ok(files)
