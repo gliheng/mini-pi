@@ -13,7 +13,7 @@ use gpui_component::theme::{Theme, ThemeRegistry};
 use gpui_component::{ActiveTheme, Icon, Root, Sizable, TitleBar};
 
 use crate::auth::state::{self, AuthState};
-use crate::config::app_config::AppConfig;
+use crate::config::app_config::{AppConfig, DEFAULT_DARK_THEME};
 use crate::config::model_config;
 use crate::core::actions::Quit;
 use crate::core::app::AppStore;
@@ -90,7 +90,7 @@ pub fn run() {
             if let Err(err) = ThemeRegistry::watch_dir(themes_dir, cx, move |cx| {
                 let theme_name = theme_store
                     .theme_name()
-                    .unwrap_or_else(|| "Kibble".to_string());
+                    .unwrap_or_else(|| DEFAULT_DARK_THEME.to_string());
                 let theme_name = SharedString::from(theme_name);
                 if let Some(theme) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
                     let mode = theme.mode;

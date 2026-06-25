@@ -1,6 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Default dark theme name.
+pub const DEFAULT_DARK_THEME: &str = "Kibble Dark";
+/// Default light theme name.
+pub const DEFAULT_LIGHT_THEME: &str = "Kibble Light";
+
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default)]

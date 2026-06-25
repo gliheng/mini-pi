@@ -1,7 +1,8 @@
 use gpui::{
     Context, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, px, rgb, svg,
+    StatefulInteractiveElement, Styled, Window, div, px, svg,
 };
+use gpui_component::ActiveTheme as _;
 use gpui_component::collapsible::Collapsible;
 
 /// A self-contained reasoning/thinking display component.
@@ -38,12 +39,12 @@ impl Render for Reasoning {
 
         Collapsible::new()
             .open(!collapsed)
-            .bg(rgb(0x2a2a2a))
+            .bg(cx.theme().secondary)
             .rounded_md()
             .child(
                 div()
                     .id("reasoning-toggle")
-                    .px_3()
+                    .px_2()
                     .py_1()
                     .flex()
                     .flex_row()
@@ -54,12 +55,12 @@ impl Render for Reasoning {
                         svg()
                             .path("thinking.svg")
                             .size(px(12.))
-                            .text_color(rgb(0x888888)),
+                            .text_color(cx.theme().muted_foreground),
                     )
                     .child(
                         div()
                             .text_xs()
-                            .text_color(rgb(0x888888))
+                            .text_color(cx.theme().muted_foreground)
                             .child(format!("Thinking {}", if collapsed { "▶" } else { "▼" })),
                     )
                     .on_click(cx.listener(|this, _, _window, cx| {
@@ -69,10 +70,10 @@ impl Render for Reasoning {
             )
             .content(
                 div()
-                    .px_3()
+                    .px_2()
                     .pb_2()
                     .text_xs()
-                    .text_color(rgb(0x888888))
+                    .text_color(cx.theme().secondary_foreground)
                     .child(content),
             )
     }

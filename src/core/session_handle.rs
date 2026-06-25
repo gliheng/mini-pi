@@ -192,6 +192,14 @@ impl SessionHandle {
                     let sf = self.session_file.clone();
                     let model_opt = self.selected_model.as_deref();
                     let thinking_opt = self.thinking_level.as_deref();
+                    // Persist the selected workspace on the thread so that
+                    // reopening it later restores the same cwd used for the
+                    // bridge's create_session.
+                    let metadata = self
+                        .workspace
+                        .as_ref()
+                        .map(|ws| serde_json::json!({ "workspace_id": ws.id }));
+                    let metadata_ref = metadata.as_ref();
                     let _ = self.store.update_thread(
                         &thread.id,
                         Some(&self.title),
@@ -200,7 +208,7 @@ impl SessionHandle {
                         Some(model_opt),
                         Some(thinking_opt),
                         None,
-                        None,
+                        Some(metadata_ref),
                     );
                 }
                 Err(_) => {
@@ -565,16 +573,16 @@ impl SessionHandle {
                                 ..
                             }
                         )
-                    })
-                        && let MessagePart::Text { text, .. } = part {
-                            let new_text = format!("{}{}", text, content);
-                            *text = new_text.into();
-                        } else {
-                            msg.parts.push(MessagePart::Text {
-                                text: content.into(),
-                                state: Some(PartState::Streaming),
-                            });
-                        }
+                    }) && let MessagePart::Text { text, .. } = part
+                    {
+                        let new_text = format!("{}{}", text, content);
+                        *text = new_text.into();
+                    } else {
+                        msg.parts.push(MessagePart::Text {
+                            text: content.into(),
+                            state: Some(PartState::Streaming),
+                        });
+                    }
                 }
             }
             BridgeEvent::ThinkingDelta { content } => {
@@ -589,59 +597,15 @@ impl SessionHandle {
                                 ..
                             }
                         )
-                    })
-                        && let MessagePart::Reasoning { text, .. } = part {
-                            let new_text = format!("{}{}", text, content);
-                            *text = new_text.into();
-                        } else {
-                            msg.parts.push(MessagePart::Reasoning {
-                                text: content.into(),
-                                state: Some(PartState::Streaming),
-                                provider_metadata: None,
-                            });
-                        }
-                }
-            }
-            BridgeEvent::ToolStart { name, args, call_id } => {
-                if let Some(msg) = self.messages.last_mut()
-                    && matches!(msg.role, Role::Assistant)
-                {
-                    let args_str = args
-                        .as_ref()
-                        .map(|v| serde_json::to_string(v).unwrap_or_default())
-                        .unwrap_or_default();
-                    // If a matching streaming tool call already exists, update it
-                    // instead of creating a duplicate. This can happen when the SDK
-                    // emits a placeholder toolcall_start before tool_execution_start.
-                    if let Some(part) = msg.parts.iter_mut().rev().find(|p| {
-                        matches!(
-                            p,
-                            MessagePart::ToolCall {
-                                state: Some(PartState::Streaming),
-                                ..
-                            }
-                        )
-                    }) && let MessagePart::ToolCall {
-                        tool_call_id,
-                        name: part_name,
-                        args: part_args,
-                        ..
-                    } = part {
-                        if tool_call_id.is_empty() {
-                            *tool_call_id = call_id.into();
-                        }
-                        if part_name.is_empty() {
-                            *part_name = name.into();
-                        }
-                        if part_args.is_empty() {
-                            *part_args = args_str.into();
-                        }
+                    }) && let MessagePart::Reasoning { text, .. } = part
+                    {
+                        let new_text = format!("{}{}", text, content);
+                        *text = new_text.into();
                     } else {
-                        msg.parts.push(MessagePart::ToolCall {
-                            tool_call_id: call_id.into(),
-                            name: name.into(),
-                            args: args_str.into(),
+                        msg.parts.push(MessagePart::Reasoning {
+                            text: content.into(),
                             state: Some(PartState::Streaming),
+                            provider_metadata: None,
                         });
                     }
                 }
@@ -656,15 +620,16 @@ impl SessionHandle {
                 if let Some(msg) = self.messages.last_mut()
                     && matches!(msg.role, Role::Assistant)
                 {
-                    if let Some(part) = msg.parts.iter_mut().rev().find(|p| {
+                    if let Some(part) = msg.parts.iter_mut().find(|p| {
                         matches!(
                             p,
                             MessagePart::ToolCall {
-                                state: Some(PartState::Streaming),
+                                tool_call_id: id,
                                 ..
-                            }
+                            } if id == &SharedString::from(call_id.clone())
                         )
-                    }) && let MessagePart::ToolCall { state, .. } = part {
+                    }) && let MessagePart::ToolCall { state, .. } = part
+                    {
                         *state = Some(PartState::Done);
                     }
 
@@ -687,98 +652,109 @@ impl SessionHandle {
             }
             BridgeEvent::TextStart => {
                 if let Some(msg) = self.messages.last_mut()
-                    && matches!(msg.role, Role::Assistant) {
-                        msg.parts.push(MessagePart::Text {
-                            text: SharedString::from(""),
-                            state: Some(PartState::Streaming),
-                        });
-                    }
+                    && matches!(msg.role, Role::Assistant)
+                {
+                    msg.parts.push(MessagePart::Text {
+                        text: SharedString::from(""),
+                        state: Some(PartState::Streaming),
+                    });
+                }
             }
             BridgeEvent::TextEnd { .. } => {
                 if let Some(msg) = self.messages.last_mut()
                     && matches!(msg.role, Role::Assistant)
-                        && let Some(part) = msg.parts.iter_mut().rev().find(|p| {
-                            matches!(
-                                p,
-                                MessagePart::Text {
-                                    state: Some(PartState::Streaming),
-                                    ..
-                                }
-                            )
-                        })
-                            && let MessagePart::Text { state, .. } = part {
-                                *state = Some(PartState::Done);
-                            }
-            }
-            BridgeEvent::ThinkingStart => {
-                if let Some(msg) = self.messages.last_mut()
-                    && matches!(msg.role, Role::Assistant) {
-                        msg.parts.push(MessagePart::Reasoning {
-                            text: SharedString::from(""),
-                            state: Some(PartState::Streaming),
-                            provider_metadata: None,
-                        });
-                    }
-            }
-            BridgeEvent::ThinkingEnd { .. } => {
-                if let Some(msg) = self.messages.last_mut()
-                    && matches!(msg.role, Role::Assistant)
-                        && let Some(part) = msg.parts.iter_mut().rev().find(|p| {
-                            matches!(
-                                p,
-                                MessagePart::Reasoning {
-                                    state: Some(PartState::Streaming),
-                                    ..
-                                }
-                            )
-                        })
-                            && let MessagePart::Reasoning { state, .. } = part {
-                                *state = Some(PartState::Done);
-                            }
-            }
-            BridgeEvent::ToolCallStart { name, call_id } => {
-                if let Some(msg) = self.messages.last_mut()
-                    && matches!(msg.role, Role::Assistant)
-                {
-                    // Prefer updating a placeholder streaming tool call rather than
-                    // creating a duplicate when the SDK sends multiple start events.
-                    if let Some(part) = msg.parts.iter_mut().rev().find(|p| {
+                    && let Some(part) = msg.parts.iter_mut().rev().find(|p| {
                         matches!(
                             p,
-                            MessagePart::ToolCall {
+                            MessagePart::Text {
                                 state: Some(PartState::Streaming),
                                 ..
                             }
                         )
+                    })
+                    && let MessagePart::Text { state, .. } = part
+                {
+                    *state = Some(PartState::Done);
+                }
+            }
+            BridgeEvent::ThinkingStart => {
+                if let Some(msg) = self.messages.last_mut()
+                    && matches!(msg.role, Role::Assistant)
+                {
+                    msg.parts.push(MessagePart::Reasoning {
+                        text: SharedString::from(""),
+                        state: Some(PartState::Streaming),
+                        provider_metadata: None,
+                    });
+                }
+            }
+            BridgeEvent::ThinkingEnd { .. } => {
+                if let Some(msg) = self.messages.last_mut()
+                    && matches!(msg.role, Role::Assistant)
+                    && let Some(part) = msg.parts.iter_mut().rev().find(|p| {
+                        matches!(
+                            p,
+                            MessagePart::Reasoning {
+                                state: Some(PartState::Streaming),
+                                ..
+                            }
+                        )
+                    })
+                    && let MessagePart::Reasoning { state, .. } = part
+                {
+                    *state = Some(PartState::Done);
+                }
+            }
+            // ToolCallStart/ToolCallDelta use placeholder ids ("unknown"), so we
+            // ignore them and only create/update ToolCalls once the real id/name
+            // arrive in ToolStart or ToolCallEnd.
+            BridgeEvent::ToolCallStart { .. } => {}
+            BridgeEvent::ToolCallDelta { .. } => {}
+            BridgeEvent::ToolStart {
+                name,
+                args,
+                call_id,
+            } => {
+                if let Some(msg) = self.messages.last_mut()
+                    && matches!(msg.role, Role::Assistant)
+                {
+                    let args_str = args
+                        .as_ref()
+                        .map(|v| serde_json::to_string(v).unwrap_or_default())
+                        .unwrap_or_default();
+                    if let Some(part) = msg.parts.iter_mut().find(|p| {
+                        matches!(
+                            p,
+                            MessagePart::ToolCall {
+                                tool_call_id: id,
+                                ..
+                            } if id == &SharedString::from(call_id.clone())
+                        )
                     }) && let MessagePart::ToolCall {
-                        tool_call_id,
                         name: part_name,
+                        args: part_args,
+                        state,
                         ..
-                    } = part {
-                        if tool_call_id.is_empty() || *tool_call_id == call_id.as_str() {
-                            *tool_call_id = call_id.into();
-                        }
-                        if part_name.is_empty() {
+                    } = part
+                    {
+                        if !name.is_empty() && name != "unknown" {
                             *part_name = name.into();
+                        }
+                        if !args_str.is_empty() {
+                            *part_args = args_str.into();
+                        }
+                        if !matches!(state, Some(PartState::Done)) {
+                            *state = Some(PartState::Streaming);
                         }
                     } else {
                         msg.parts.push(MessagePart::ToolCall {
                             tool_call_id: call_id.into(),
                             name: name.into(),
-                            args: SharedString::from(""),
+                            args: args_str.into(),
                             state: Some(PartState::Streaming),
                         });
                     }
                 }
-            }
-            BridgeEvent::ToolCallDelta { call_id, delta } => {
-                if let Some(msg) = self.messages.last_mut()
-                    && matches!(msg.role, Role::Assistant)
-                        && let Some(part) = msg.parts.iter_mut().rev().find(|p| matches!(p, MessagePart::ToolCall { tool_call_id: id, state: Some(PartState::Streaming), .. } if id == &SharedString::from(call_id.clone())))
-                            && let MessagePart::ToolCall { args, .. } = part {
-                                let new_args = format!("{}{}", args, delta);
-                                *args = new_args.into();
-                            }
             }
             BridgeEvent::ToolCallEnd {
                 call_id,
@@ -788,44 +764,34 @@ impl SessionHandle {
                 if let Some(msg) = self.messages.last_mut()
                     && matches!(msg.role, Role::Assistant)
                 {
-                    // Try exact match first, then fall back to the latest streaming
-                    // tool call. The SDK sometimes sends an initial placeholder
-                    // toolcall_start with id="unknown" and later provides the real id
-                    // in toolcall_end.
-                    let target_idx = msg
-                        .parts
-                        .iter()
-                        .enumerate()
-                        .rev()
-                        .find(|(_, p)| matches!(p, MessagePart::ToolCall { tool_call_id: id, .. } if id == &SharedString::from(call_id.clone())))
-                        .map(|(i, _)| i)
-                        .or_else(|| {
-                            msg.parts.iter().enumerate().rev().find(|(_, p)| {
-                                matches!(
-                                    p,
-                                    MessagePart::ToolCall {
-                                        state: Some(PartState::Streaming),
-                                        ..
-                                    }
-                                )
-                            }).map(|(i, _)| i)
-                        });
-                    if let Some(idx) = target_idx
-                        && let Some(MessagePart::ToolCall {
-                            tool_call_id,
-                            name: part_name,
-                            args: part_args,
-                            state,
-                            ..
-                        }) = msg.parts.get_mut(idx)
+                    let args_str = serde_json::to_string(&args).unwrap_or_default();
+                    if let Some(part) = msg.parts.iter_mut().find(|p| {
+                        matches!(
+                            p,
+                            MessagePart::ToolCall {
+                                tool_call_id: id,
+                                ..
+                            } if id == &SharedString::from(call_id.clone())
+                        )
+                    }) && let MessagePart::ToolCall {
+                        name: part_name,
+                        args: part_args,
+                        state,
+                        ..
+                    } = part
                     {
-                        *tool_call_id = call_id.into();
-                        if part_name.is_empty() || *part_name == name.as_str() {
+                        if !name.is_empty() && name != "unknown" {
                             *part_name = name.into();
                         }
-                        let args_str = serde_json::to_string(&args).unwrap_or_default();
                         *part_args = args_str.into();
                         *state = Some(PartState::Done);
+                    } else {
+                        msg.parts.push(MessagePart::ToolCall {
+                            tool_call_id: call_id.into(),
+                            name: name.into(),
+                            args: args_str.into(),
+                            state: Some(PartState::Done),
+                        });
                     }
                 }
             }
@@ -833,20 +799,21 @@ impl SessionHandle {
             BridgeEvent::TurnStart | BridgeEvent::TurnEnd => {}
             BridgeEvent::MessageEnd => {
                 if let Some(msg) = self.messages.last_mut()
-                    && matches!(msg.role, Role::Assistant) {
-                        for part in msg.parts.iter_mut() {
-                            match part {
-                                MessagePart::Text { state, .. }
-                                | MessagePart::Reasoning { state, .. }
-                                | MessagePart::ToolCall { state, .. }
-                                | MessagePart::ToolResult { state, .. } => {
-                                    if let Some(s) = state {
-                                        *s = PartState::Done;
-                                    }
+                    && matches!(msg.role, Role::Assistant)
+                {
+                    for part in msg.parts.iter_mut() {
+                        match part {
+                            MessagePart::Text { state, .. }
+                            | MessagePart::Reasoning { state, .. }
+                            | MessagePart::ToolCall { state, .. }
+                            | MessagePart::ToolResult { state, .. } => {
+                                if let Some(s) = state {
+                                    *s = PartState::Done;
                                 }
                             }
                         }
                     }
+                }
             }
             BridgeEvent::ExtensionUiRequest { id, method, .. } => {
                 eprintln!(
@@ -895,33 +862,33 @@ impl SessionHandle {
                 error,
                 ..
             } => {
-                if command == "create_session" && success
+                if command == "create_session"
+                    && success
                     && let Some(ref data_val) = data
-                        && let Some(session_file) =
-                            data_val.get("sessionFile").and_then(|s| s.as_str())
-                        {
-                            let file_name = std::path::Path::new(session_file)
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or(session_file)
-                                .to_string();
-                            if self.session_file != file_name {
-                                eprintln!("[mini-pi] SDK session file: {}", file_name);
-                                self.session_file = file_name.clone();
-                                if let Some(ref tid) = self.thread_id {
-                                    let _ = self.store.update_thread(
-                                        tid,
-                                        None,
-                                        None,
-                                        Some(Some(&file_name)),
-                                        None,
-                                        None,
-                                        None,
-                                        None,
-                                    );
-                                }
-                            }
+                    && let Some(session_file) = data_val.get("sessionFile").and_then(|s| s.as_str())
+                {
+                    let file_name = std::path::Path::new(session_file)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(session_file)
+                        .to_string();
+                    if self.session_file != file_name {
+                        eprintln!("[mini-pi] SDK session file: {}", file_name);
+                        self.session_file = file_name.clone();
+                        if let Some(ref tid) = self.thread_id {
+                            let _ = self.store.update_thread(
+                                tid,
+                                None,
+                                None,
+                                Some(Some(&file_name)),
+                                None,
+                                None,
+                                None,
+                                None,
+                            );
                         }
+                    }
+                }
                 if command == "fork" && !success {
                     let err = error.as_deref().unwrap_or("fork failed");
                     eprintln!("[mini-pi] fork failed: {}", err);
@@ -946,11 +913,7 @@ impl SessionHandle {
                                             self.messages.iter().find(|m| m.id == msg_id)
                                         {
                                             if msg.entry_id.is_some() {
-                                                self.send_edited_prompt(
-                                                    msg_id,
-                                                    content.into(),
-                                                    cx,
-                                                );
+                                                self.send_edited_prompt(msg_id, content.into(), cx);
                                             } else {
                                                 eprintln!(
                                                     "[mini-pi] could not resolve entry id for edited message"
@@ -986,44 +949,47 @@ impl SessionHandle {
                 if command == "export_html" {
                     if success {
                         if let Some(ref data_val) = data
-                            && let Some(path) = data_val.get("path").and_then(|p| p.as_str()) {
-                                eprintln!("[mini-pi] session exported to: {}", path);
-                                cx.emit(SessionEvent::ExportHtmlSucceeded {
-                                    path: PathBuf::from(path),
-                                });
-                            }
+                            && let Some(path) = data_val.get("path").and_then(|p| p.as_str())
+                        {
+                            eprintln!("[mini-pi] session exported to: {}", path);
+                            cx.emit(SessionEvent::ExportHtmlSucceeded {
+                                path: PathBuf::from(path),
+                            });
+                        }
                     } else {
                         let err = error.as_deref().unwrap_or("export failed");
                         eprintln!("[mini-pi] export_html failed: {}", err);
                         self.state = ChatState::Error(format!("Export failed: {}", err).into());
                     }
                 }
-                if command == "get_commands" && success
+                if command == "get_commands"
+                    && success
                     && let Some(ref data_val) = data
-                        && let Some(commands) = data_val.get("commands")
-                            && let Some(arr) = commands.as_array() {
-                                let items: Vec<CommandItem> = arr
-                                    .iter()
-                                    .filter_map(|cmd| {
-                                        let name = cmd.get("name")?.as_str()?.to_string();
-                                        let description = cmd
-                                            .get("description")
-                                            .and_then(|d| d.as_str())
-                                            .map(|s| s.to_string());
-                                        let source = cmd
-                                            .get("source")
-                                            .and_then(|s| s.as_str())
-                                            .unwrap_or("unknown")
-                                            .to_string();
-                                        Some(CommandItem {
-                                            name,
-                                            description,
-                                            source,
-                                        })
-                                    })
-                                    .collect();
-                                self.commands = items;
-                            }
+                    && let Some(commands) = data_val.get("commands")
+                    && let Some(arr) = commands.as_array()
+                {
+                    let items: Vec<CommandItem> = arr
+                        .iter()
+                        .filter_map(|cmd| {
+                            let name = cmd.get("name")?.as_str()?.to_string();
+                            let description = cmd
+                                .get("description")
+                                .and_then(|d| d.as_str())
+                                .map(|s| s.to_string());
+                            let source = cmd
+                                .get("source")
+                                .and_then(|s| s.as_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+                            Some(CommandItem {
+                                name,
+                                description,
+                                source,
+                            })
+                        })
+                        .collect();
+                    self.commands = items;
+                }
             }
         }
 

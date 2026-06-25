@@ -18,7 +18,7 @@ use crate::ui::loader::{loader, text_loader};
 use crate::utils::voice::{VoiceRecorder, VoiceState, start_recording, transcribe};
 use crate::views::reasoning::Reasoning;
 use crate::views::workspace_manager::{WorkspaceManager, WorkspaceManagerEvent};
-use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
+use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_component::input::Input;
 use gpui_component::notification::Notification;
 use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
@@ -144,10 +144,30 @@ impl ChatWindow {
             }
         }
         Self::sort_workspaces(&mut workspaces);
-        let selected_workspace_id = workspaces
-            .iter()
-            .find(|ws| ws.name == "Default")
-            .map(|ws| ws.id.clone())
+        // Prefer the workspace saved on this thread's metadata (e.g. set by the
+        // remote controller) when reopening it, so the bridged session runs in
+        // the originalcwd instead of the always-default workspace.
+        let saved_workspace_id = thread.and_then(|t| {
+            t.metadata
+                .as_ref()
+                .and_then(|md| md.get("workspace_id"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        });
+        let selected_workspace_id = saved_workspace_id
+            .as_ref()
+            .and_then(|id| {
+                workspaces
+                    .iter()
+                    .find(|ws| ws.id == *id)
+                    .map(|ws| ws.id.clone())
+            })
+            .or_else(|| {
+                workspaces
+                    .iter()
+                    .find(|ws| ws.name == "Default")
+                    .map(|ws| ws.id.clone())
+            })
             .or_else(|| workspaces.first().map(|ws| ws.id.clone()));
 
         // Build model dropdown items
@@ -1353,14 +1373,7 @@ impl ChatWindow {
                 Button::new("manage-workspace-btn")
                     .with_size(Size::XSmall)
                     .compact()
-                    .outline()
-                    .custom(
-                        ButtonCustomVariant::new(cx)
-                            .color(gpui::rgba(0x00000000).into())
-                            .foreground(cx.theme().muted_foreground.into())
-                            .hover(cx.theme().foreground.into())
-                            .active(cx.theme().foreground.into()),
-                    )
+                    .secondary()
                     .icon(
                         Icon::empty()
                             .path("manage.svg")
@@ -1377,38 +1390,28 @@ impl ChatWindow {
                 let ws_id = ws.id.clone();
                 let ws_name = ws.name.clone();
                 let name: SharedString = ws_name.clone().into();
-                let (fg_color, bg_color, hover_color, active_color) = if is_selected {
-                    (
-                        cx.theme().primary_foreground,
-                        cx.theme().primary,
-                        cx.theme().primary_hover,
-                        cx.theme().primary_active,
-                    )
-                } else {
-                    (
-                        cx.theme().muted_foreground,
-                        cx.theme().secondary,
-                        cx.theme().secondary_hover,
-                        cx.theme().secondary_active,
-                    )
-                };
-                Button::new(SharedString::from(format!("ws-{}", ws_id)))
+                let button = Button::new(SharedString::from(format!("ws-{}", ws_id)))
                     .with_size(Size::XSmall)
-                    .compact()
-                    .custom(
-                        ButtonCustomVariant::new(cx)
-                            .color(bg_color.into())
-                            .foreground(fg_color.into())
-                            .hover(hover_color.into())
-                            .active(active_color.into()),
-                    )
+                    .compact();
+                let button = if is_selected {
+                    let variant = ButtonCustomVariant::new(cx)
+                        .color(cx.theme().primary.into())
+                        .foreground(cx.theme().primary_foreground.into())
+                        .hover(cx.theme().primary_hover.into())
+                        .active(cx.theme().primary_active.into());
+                    button.custom(variant)
+                } else {
+                    button.outline()
+                };
+                button
                     .when(ws.name == "Default", |this| {
-                        this.icon(
-                            Icon::empty()
-                                .path("folder.svg")
-                                .size(px(10.))
-                                .text_color(active_color),
-                        )
+                        this.icon(Icon::empty().path("folder.svg").size(px(10.)).text_color(
+                            if is_selected {
+                                cx.theme().primary_active
+                            } else {
+                                cx.theme().muted_foreground
+                            },
+                        ))
                     })
                     .label(name)
                     .on_click(cx.listener(move |this, _, _window, cx| {
@@ -1552,22 +1555,259 @@ impl ChatWindow {
                     .min_w_0()
                     .when(is_user, |this| this.items_end())
                     .gap_1()
-                    .children(msg.parts.iter().enumerate().map(|(part_idx, part)| {
-                        let markdown_entity = msg_markdown.get(part_idx).and_then(|e| e.clone());
-                        let reasoning_entity = msg_reasoning.get(part_idx).and_then(|e| e.clone());
-                        self.render_message_part(
-                            cx,
-                            msg_idx,
-                            part_idx,
-                            part,
-                            markdown_entity,
-                            reasoning_entity,
-                            assistant_text_width,
-                            is_user,
-                            msg_id.clone(),
-                        )
-                    })),
+                    .children({
+                        let n = msg.parts.len();
+                        let mut paired: Vec<bool> = vec![false; n];
+                        let mut pairs: Vec<(usize, usize)> = Vec::new();
+
+                        // First pass: pair each ToolCall with the earliest unpaired
+                        // ToolResult that follows it. Loaded sessions often place all
+                        // tool calls before all tool results in the same message.
+                        for i in 0..n {
+                            if matches!(msg.parts[i], MessagePart::ToolCall { .. }) && !paired[i] {
+                                if let Some(j) = (i + 1..n).find(|&k| {
+                                    matches!(msg.parts[k], MessagePart::ToolResult { .. })
+                                        && !paired[k]
+                                }) {
+                                    paired[i] = true;
+                                    paired[j] = true;
+                                    pairs.push((i, j));
+                                }
+                            }
+                        }
+
+                        // Second pass: also pair any remaining ToolCall with the
+                        // immediately following Text part (some tools emit results as
+                        // regular assistant text).
+                        for i in 0..n {
+                            if matches!(msg.parts[i], MessagePart::ToolCall { .. }) && !paired[i] {
+                                if let Some(j) = (i + 1..n).find(|&k| {
+                                    matches!(msg.parts[k], MessagePart::Text { .. }) && !paired[k]
+                                }) {
+                                    // Only pair if there is no unpaired ToolResult in between.
+                                    let has_result_between = (i + 1..j).any(|k| {
+                                        matches!(msg.parts[k], MessagePart::ToolResult { .. })
+                                            && !paired[k]
+                                    });
+                                    if !has_result_between {
+                                        paired[i] = true;
+                                        paired[j] = true;
+                                        pairs.push((i, j));
+                                    }
+                                }
+                            }
+                        }
+
+                        let mut children: Vec<AnyElement> = Vec::new();
+                        let mut i = 0;
+                        while i < n {
+                            if paired[i] {
+                                if let Some(&(call_idx, result_idx)) =
+                                    pairs.iter().find(|(call_idx, _)| *call_idx == i)
+                                {
+                                    if let (
+                                        MessagePart::ToolCall { name, args, .. },
+                                        MessagePart::ToolResult {
+                                            output, details, ..
+                                        },
+                                    ) = (&msg.parts[call_idx], &msg.parts[result_idx])
+                                    {
+                                        children.push(self.render_tool_pair(
+                                            cx,
+                                            msg_idx,
+                                            name.clone(),
+                                            args.clone(),
+                                            Some(output.clone()),
+                                            details.clone(),
+                                            None,
+                                            assistant_text_width,
+                                        ));
+                                    } else if let (
+                                        MessagePart::ToolCall { name, args, .. },
+                                        MessagePart::Text { text, .. },
+                                    ) = (&msg.parts[call_idx], &msg.parts[result_idx])
+                                    {
+                                        let markdown_entity =
+                                            msg_markdown.get(result_idx).and_then(|e| e.clone());
+                                        children.push(self.render_tool_pair(
+                                            cx,
+                                            msg_idx,
+                                            name.clone(),
+                                            args.clone(),
+                                            Some(text.clone()),
+                                            None,
+                                            markdown_entity,
+                                            assistant_text_width,
+                                        ));
+                                    }
+                                    i = result_idx + 1;
+                                    continue;
+                                }
+                                // This index is a paired result; skip it.
+                                i += 1;
+                                continue;
+                            }
+
+                            let markdown_entity = msg_markdown.get(i).and_then(|e| e.clone());
+                            let reasoning_entity = msg_reasoning.get(i).and_then(|e| e.clone());
+                            children.push(self.render_message_part(
+                                cx,
+                                msg_idx,
+                                i,
+                                &msg.parts[i],
+                                markdown_entity,
+                                reasoning_entity,
+                                assistant_text_width,
+                                is_user,
+                                msg_id.clone(),
+                            ));
+                            i += 1;
+                        }
+                        children
+                    }),
             )
+    }
+
+    fn render_tool_pair(
+        &self,
+        cx: &mut Context<Self>,
+        msg_idx: usize,
+        name: SharedString,
+        args: SharedString,
+        output: Option<SharedString>,
+        details: Option<serde_json::Value>,
+        markdown_entity: Option<Entity<TextViewState>>,
+        assistant_text_width: Pixels,
+    ) -> AnyElement {
+        if name == "send_file" {
+            let file_path = details
+                .as_ref()
+                .and_then(|d| d.get("path"))
+                .and_then(|v| v.as_str())
+                .map(PathBuf::from)
+                .unwrap_or_default();
+            let file_name = file_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| output.clone().unwrap_or_default().to_string());
+            let mime_type = details
+                .as_ref()
+                .and_then(|d| d.get("mime_type"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("application/octet-stream")
+                .to_string();
+            let size = details
+                .as_ref()
+                .and_then(|d| d.get("size"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as usize;
+            let file_path_for_reveal = file_path.clone();
+            let file_path_for_open = file_path.clone();
+            return div()
+                .flex()
+                .w_full()
+                .justify_start()
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .px_2()
+                        .py_2()
+                        .rounded_md()
+                        .bg(cx.theme().secondary)
+                        .text_color(cx.theme().secondary_foreground)
+                        .w_full()
+                        .child(
+                            Icon::empty()
+                                .path("file.svg")
+                                .size(px(20.))
+                                .text_color(cx.theme().muted_foreground),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .min_w_0()
+                                .child(file_name)
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(format!(
+                                            "{} • {}",
+                                            mime_type,
+                                            format_file_size(size)
+                                        )),
+                                ),
+                        )
+                        .child(
+                            Button::new(("open-file", msg_idx as u64))
+                                .with_size(Size::XSmall)
+                                .label("Open")
+                                .on_click(cx.listener(move |_this, _, _window, _cx| {
+                                    let _ = open_file(&file_path_for_open);
+                                })),
+                        )
+                        .child(
+                            Button::new(("reveal-file", msg_idx as u64))
+                                .with_size(Size::XSmall)
+                                .label("Reveal")
+                                .on_click(cx.listener(move |_this, _, _window, cx| {
+                                    cx.reveal_path(&file_path_for_reveal);
+                                })),
+                        ),
+                )
+                .into_any_element();
+        }
+
+        let result_element: AnyElement = if let Some(ref md) = markdown_entity {
+            div()
+                .flex()
+                .w(assistant_text_width)
+                .min_w_0()
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(TextView::new(md).selectable(true).w_full()),
+                )
+                .into_any_element()
+        } else if let Some(output) = output {
+            div().child(output.to_string()).into_any_element()
+        } else {
+            div().into_any_element()
+        };
+
+        div()
+            .flex()
+            .w_full()
+            .justify_start()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(cx.theme().secondary)
+                    .text_color(cx.theme().secondary_foreground)
+                    .text_xs()
+                    .w_full()
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(format!("⚙ {}", name)),
+                    )
+                    .child(div().child(args.to_string()))
+                    .child(div().h_px().bg(cx.theme().border))
+                    .child(result_element),
+            )
+            .into_any_element()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1602,22 +1842,29 @@ impl ChatWindow {
                     this.child(reasoning_entity.unwrap())
                 })
                 .into_any_element(),
-            MessagePart::ToolCall { name, args, .. } => div()
-                .flex()
-                .w_full()
-                .justify_start()
-                .child(
-                    div()
-                        .px_3()
-                        .py_1()
-                        .rounded_md()
-                        .bg(cx.theme().warning)
-                        .text_color(cx.theme().warning_foreground)
-                        .text_xs()
-                        .w_full()
-                        .child(format!("⚙ {} {}", name, args)),
-                )
-                .into_any_element(),
+            MessagePart::ToolCall { name, args, .. } => {
+                let header = format!("⚙ {}", name);
+                div()
+                    .flex()
+                    .w_full()
+                    .justify_start()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .bg(cx.theme().muted)
+                            .text_color(cx.theme().muted_foreground)
+                            .text_xs()
+                            .w_full()
+                            .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(header))
+                            .child(div().child(args.to_string())),
+                    )
+                    .into_any_element()
+            }
             MessagePart::ToolResult {
                 name,
                 output,
@@ -1714,14 +1961,14 @@ impl ChatWindow {
                         .justify_start()
                         .child(
                             div()
-                                .px_3()
+                                .px_2()
                                 .py_1()
                                 .rounded_md()
-                                .bg(cx.theme().info)
-                                .text_color(cx.theme().info_foreground)
+                                .bg(cx.theme().secondary)
+                                .text_color(cx.theme().secondary_foreground)
                                 .text_xs()
                                 .w_full()
-                                .child(format!("↳ {}: {}", name, output)),
+                                .child(output.to_string()),
                         )
                         .into_any_element()
                 }
@@ -1756,8 +2003,6 @@ impl ChatWindow {
                 .w_full()
                 .child(
                     div()
-                        .px_3()
-                        .py_2()
                         .rounded_md()
                         .bg(cx.theme().background)
                         .text_color(cx.theme().foreground)
@@ -1994,12 +2239,12 @@ impl ChatWindow {
             .items_center()
             .child(
                 div()
-                    .max_w_40()
+                    .max_w_full()
                     .child(Select::new(&self.model_dropdown).with_size(Size::Small)),
             )
             .child(
                 div()
-                    .max_w_40()
+                    .max_w_full()
                     .child(Select::new(&self.thinking_dropdown).with_size(Size::Small)),
             )
             .child(div().flex_1())

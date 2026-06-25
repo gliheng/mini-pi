@@ -6,6 +6,7 @@ use gpui::{
 
 use crate::auth::state::{self, AuthState};
 use crate::auth::supabase;
+use crate::config::app_config::{DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME};
 use crate::core::app::AppStore;
 use crate::remote::RemoteStatus;
 use crate::remote::cloudflared;
@@ -922,8 +923,6 @@ fn render_auth_content(
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .child("SETTINGS"),
                         )
-                        .child(settings_row("Account", "account.svg", cx))
-                        .child(settings_row("Notifications", "notifications.svg", cx))
                         .child(render_appearance_row(window, cx))
                         .child(settings_row("Keyboard Shortcuts", "keyboard.svg", cx))
                         .child(settings_row("About", "about.svg", cx)),
@@ -975,7 +974,6 @@ fn render_auth_content(
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child("SETTINGS"),
                     )
-                    .child(settings_row("Notifications", "notifications.svg", cx))
                     .child(render_appearance_row(window, cx))
                     .child(settings_row("Keyboard Shortcuts", "keyboard.svg", cx))
                     .child(settings_row("About", "about.svg", cx)),
@@ -1350,9 +1348,9 @@ fn render_appearance_row(_window: &mut Window, cx: &mut Context<UserPanel>) -> i
                 .checked(is_dark)
                 .on_click(cx.listener(move |_this, checked: &bool, window, cx| {
                     let theme_name = if *checked {
-                        SharedString::from("Kibble")
+                        SharedString::from(DEFAULT_DARK_THEME)
                     } else {
-                        SharedString::from("Ayu Light")
+                        SharedString::from(DEFAULT_LIGHT_THEME)
                     };
                     let registry = ThemeRegistry::global(cx);
                     if let Some(theme) = registry.themes().get(&theme_name).cloned() {
