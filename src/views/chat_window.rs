@@ -410,6 +410,9 @@ impl ChatWindow {
     fn attach_session(&mut self, session: Entity<SessionHandle>, cx: &mut Context<Self>) {
         self.session = Some(session.clone());
         self.sync_from_session(cx);
+        if self.scroll_locked {
+            self.scroll_handle.scroll_to_bottom();
+        }
         self.session_subscription = Some(cx.subscribe(
             &session,
             |this, _session, event: &SessionEvent, cx| {
@@ -461,6 +464,9 @@ impl ChatWindow {
 
         self.messages = messages;
         self.state = state;
+        if matches!(self.state, ChatState::Streaming) && self.scroll_locked {
+            self.scroll_handle.scroll_to_bottom();
+        }
         self.session_file = session_file;
         self.title = title;
         self.selected_model = selected_model.clone();
