@@ -1,8 +1,10 @@
 import { WebSocketServer, WebSocket } from "ws";
 import * as fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import {
   type CreateAgentSessionRuntimeFactory,
   type ToolDefinition,
+  type ExtensionUIContext,
   createAgentSessionFromServices,
   createAgentSessionRuntime,
   createAgentSessionServices,
@@ -28,6 +30,10 @@ interface SessionState {
 }
 
 const sessions = new Map<string, SessionState>();
+const pendingExtensionRequests = new Map<
+  string,
+  { resolve: (response: any) => void; reject: (error: any) => void }
+>();
 let wss: WebSocketServer | null = null;
 let clientSocket: WebSocket | null = null;
 
@@ -100,6 +106,169 @@ function subscribeToSession(ws: WebSocket, sessionId: string, runtime: any): () 
     forwardEvent(ws, sessionId, event);
   });
   return unsubscribe;
+}
+
+// ---------------------------------------------------------------------------
+// Extension UI Context — bridges ctx.ui.* calls to the Rust GUI over WebSocket
+// ---------------------------------------------------------------------------
+
+function createBridgeUIContext(
+  sessionId: string,
+  ws: WebSocket
+): ExtensionUIContext {
+  function emitFireAndForget(
+    method: string,
+    fields: Record<string, any>
+  ): void {
+    const id = randomUUID();
+    send(ws, { type: "extension_ui_request", sessionId, id, method, ...fields });
+  }
+
+  function createDialog<T>(
+    method: string,
+    defaultValue: T,
+    fields: Record<string, any>,
+    opts: { signal?: AbortSignal; timeout?: number } | undefined,
+    extractResult: (response: any) => T
+  ): Promise<T> {
+    if (opts?.signal?.aborted) return Promise.resolve(defaultValue);
+
+    const id = randomUUID();
+    return new Promise<T>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+
+      const done = (value: T) => {
+        if (timer) clearTimeout(timer);
+        pendingExtensionRequests.delete(id);
+        resolve(value);
+      };
+
+      if (opts?.timeout) {
+        timer = setTimeout(() => done(defaultValue), opts.timeout);
+      }
+
+      if (opts?.signal) {
+        opts.signal.addEventListener("abort", () => done(defaultValue), {
+          once: true,
+        });
+      }
+
+      pendingExtensionRequests.set(id, {
+        resolve: (response: any) => done(extractResult(response)),
+        reject: (err: any) => {
+          if (timer) clearTimeout(timer);
+          pendingExtensionRequests.delete(id);
+          reject(err);
+        },
+      });
+
+      const wireFields: Record<string, any> = { ...fields };
+      if (opts?.timeout) wireFields.timeout = opts.timeout;
+      send(ws, {
+        type: "extension_ui_request",
+        sessionId,
+        id,
+        method,
+        ...wireFields,
+      });
+    });
+  }
+
+  return {
+    select: (title, options, opts) =>
+      createDialog("select", undefined, { title, options }, opts, (r) =>
+        r.cancelled ? undefined : r.value
+      ),
+    confirm: (title, message, opts) =>
+      createDialog("confirm", false, { title, message }, opts, (r) =>
+        r.cancelled ? false : r.confirmed === true
+      ),
+    input: (title, placeholder, opts) =>
+      createDialog("input", undefined, { title, placeholder }, opts, (r) =>
+        r.cancelled ? undefined : r.value
+      ),
+    editor: (title, prefill) =>
+      createDialog("editor", undefined, { title, prefill }, undefined, (r) =>
+        r.cancelled ? undefined : r.value
+      ),
+
+    notify(message, type) {
+      emitFireAndForget("notify", { message, notifyType: type });
+    },
+    setStatus(key, text) {
+      emitFireAndForget("setStatus", { statusKey: key, statusText: text });
+    },
+    setWidget(key, content, options) {
+      if (content === undefined || Array.isArray(content)) {
+        emitFireAndForget("setWidget", {
+          widgetKey: key,
+          widgetLines: content,
+          widgetPlacement: options?.placement,
+        });
+      }
+    },
+    setTitle(title) {
+      emitFireAndForget("setTitle", { title });
+    },
+    setEditorText(text) {
+      emitFireAndForget("set_editor_text", { text });
+    },
+
+    // TUI-only / unsupported — no-ops matching the SDK's noOpUIContext
+    onTerminalInput: () => () => {},
+    setWorkingMessage: () => {},
+    setWorkingVisible: () => {},
+    setWorkingIndicator: () => {},
+    setHiddenThinkingLabel: () => {},
+    setFooter: () => {},
+    setHeader: () => {},
+    custom: async () => undefined as any,
+    pasteToEditor: (text) => emitFireAndForget("set_editor_text", { text }),
+    getEditorText: () => "",
+    addAutocompleteProvider: () => {},
+    setEditorComponent: () => {},
+    getEditorComponent: () => undefined,
+    get theme() {
+      return {} as any;
+    },
+    getAllThemes: () => [],
+    getTheme: () => undefined,
+    setTheme: () => ({
+      success: false,
+      error: "Theme switching not supported in bridge mode",
+    }),
+    getToolsExpanded: () => false,
+    setToolsExpanded: () => {},
+  };
+}
+
+async function rebindExtensions(
+  ws: WebSocket,
+  sessionId: string,
+  state: SessionState
+): Promise<void> {
+  await state.runtime.session.bindExtensions({
+    uiContext: createBridgeUIContext(sessionId, ws),
+    mode: "rpc",
+    abortHandler: () => {
+      try {
+        state.runtime.session.abort();
+      } catch (e) {
+        log("extension abortHandler failed:", e);
+      }
+    },
+    shutdownHandler: () => {
+      log("extension requested shutdown for", sessionId);
+    },
+    onError: (err: any) => {
+      forwardEvent(ws, sessionId, {
+        type: "extension_error",
+        extensionPath: err.extensionPath,
+        event: err.event,
+        error: err.error,
+      });
+    },
+  });
 }
 
 async function handleCreateSession(
@@ -186,7 +355,17 @@ async function handleCreateSession(
   }
 
   const unsubscribe = subscribeToSession(ws, sessionId, runtime);
-  sessions.set(sessionId, { runtime, sessionManager, unsubscribe, cwd, agentDir });
+  const state: SessionState = {
+    runtime,
+    sessionManager,
+    unsubscribe,
+    cwd,
+    agentDir,
+  };
+  sessions.set(sessionId, state);
+
+  log("binding extensions for", sessionId);
+  await rebindExtensions(ws, sessionId, state);
 
   sendResponse(ws, sessionId, "create_session", msg.id, true, {
     sessionId,
@@ -586,6 +765,7 @@ async function dispatch(ws: WebSocket, msg: any): Promise<void> {
         await state.runtime.newSession();
         state.unsubscribe();
         state.unsubscribe = subscribeToSession(ws, sessionId, state.runtime);
+        await rebindExtensions(ws, sessionId, state);
         sendResponse(ws, sessionId, "new_session", msg.id, true);
         break;
       }
@@ -600,6 +780,7 @@ async function dispatch(ws: WebSocket, msg: any): Promise<void> {
         await state.runtime.fork(String(msg.entryId));
         state.unsubscribe();
         state.unsubscribe = subscribeToSession(ws, sessionId, state.runtime);
+        await rebindExtensions(ws, sessionId, state);
         sendResponse(ws, sessionId, "fork", msg.id, true);
         break;
       }
@@ -609,6 +790,7 @@ async function dispatch(ws: WebSocket, msg: any): Promise<void> {
         });
         state.unsubscribe();
         state.unsubscribe = subscribeToSession(ws, sessionId, state.runtime);
+        await rebindExtensions(ws, sessionId, state);
         sendResponse(ws, sessionId, "clone", msg.id, true);
         break;
       }
@@ -648,9 +830,13 @@ async function dispatch(ws: WebSocket, msg: any): Promise<void> {
         break;
       }
       case "extension_ui_response": {
-        // SDK mode does not expose extension UI requests over this bridge.
-        // Silently acknowledge to keep the client from retrying.
-        sendResponse(ws, sessionId, "extension_ui_response", msg.id, true);
+        const pending = pendingExtensionRequests.get(msg.id);
+        if (pending) {
+          pendingExtensionRequests.delete(msg.id);
+          pending.resolve(msg);
+        } else {
+          log("extension_ui_response with unknown id:", msg.id);
+        }
         break;
       }
       default: {
@@ -724,6 +910,11 @@ function startServer(port: number) {
         }
       }
       sessions.clear();
+      // Reject any pending extension UI dialog requests so extensions don't hang.
+      for (const [, pending] of pendingExtensionRequests) {
+        pending.reject(new Error("WebSocket closed"));
+      }
+      pendingExtensionRequests.clear();
       // Exit the bridge when the GUI disconnects so we do not leak processes.
       setTimeout(() => {
         log("exiting after disconnect");

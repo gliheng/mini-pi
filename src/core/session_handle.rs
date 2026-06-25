@@ -25,6 +25,11 @@ pub struct WorkspaceInfo {
 pub enum SessionEvent {
     Changed,
     ExportHtmlSucceeded { path: PathBuf },
+    ExtensionUiRequest {
+        id: String,
+        method: String,
+        payload: serde_json::Value,
+    },
 }
 
 pub struct SessionHandle {
@@ -385,6 +390,19 @@ impl SessionHandle {
             && let Err(e) = rpc.send_export_html(Some(output_path), None)
         {
             eprintln!("[mini-pi] send_export_html failed: {}", e);
+        }
+    }
+
+    pub fn respond_extension_ui(
+        &mut self,
+        id: &str,
+        response: &serde_json::Value,
+        _cx: &mut Context<Self>,
+    ) {
+        if let Some(ref mut rpc) = self.rpc {
+            if let Err(e) = rpc.send_extension_ui_response(id, response) {
+                eprintln!("[mini-pi] extension_ui_response failed: {}", e);
+            }
         }
     }
 
@@ -815,15 +833,12 @@ impl SessionHandle {
                     }
                 }
             }
-            BridgeEvent::ExtensionUiRequest { id, method, .. } => {
-                eprintln!(
-                    "[mini-pi] extension_ui_request method={}, id={}, auto-cancelling",
-                    method, id
-                );
-                if let Some(ref mut rpc) = self.rpc {
-                    let _ = rpc
-                        .send_extension_ui_response(&id, &serde_json::json!({ "cancelled": true }));
-                }
+            BridgeEvent::ExtensionUiRequest { id, method, payload } => {
+                cx.emit(SessionEvent::ExtensionUiRequest {
+                    id,
+                    method,
+                    payload,
+                });
             }
             BridgeEvent::ExtensionError {
                 extension_path,

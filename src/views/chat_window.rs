@@ -19,7 +19,7 @@ use crate::utils::voice::{VoiceRecorder, VoiceState, start_recording, transcribe
 use crate::views::reasoning::Reasoning;
 use crate::views::workspace_manager::{WorkspaceManager, WorkspaceManagerEvent};
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants};
-use gpui_component::input::Input;
+use gpui_component::input::{Input, InputState};
 use gpui_component::notification::Notification;
 use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
 use gpui_component::text::{TextView, TextViewState};
@@ -78,6 +78,41 @@ impl SelectItem for SelectModelItem {
     }
 }
 
+pub enum ExtensionDialog {
+    Select {
+        id: String,
+        title: SharedString,
+        options: Vec<SharedString>,
+        selected: usize,
+    },
+    Confirm {
+        id: String,
+        title: SharedString,
+        message: SharedString,
+    },
+    Input {
+        id: String,
+        title: SharedString,
+        input: gpui::Entity<InputState>,
+    },
+    Editor {
+        id: String,
+        title: SharedString,
+        input: gpui::Entity<InputState>,
+    },
+}
+
+impl ExtensionDialog {
+    pub fn id(&self) -> &str {
+        match self {
+            ExtensionDialog::Select { id, .. }
+            | ExtensionDialog::Confirm { id, .. }
+            | ExtensionDialog::Input { id, .. }
+            | ExtensionDialog::Editor { id, .. } => id,
+        }
+    }
+}
+
 pub struct ChatWindow {
     pub thread_id: Option<String>,
     pub session_file: String,
@@ -108,6 +143,11 @@ pub struct ChatWindow {
     pub window_handle: AnyWindowHandle,
     pub voice_state: VoiceState,
     pub voice_recorder: Option<VoiceRecorder>,
+    pub extension_dialog: Option<ExtensionDialog>,
+    pub pending_extension_request: Option<(String, String, serde_json::Value)>,
+    pub extension_status: std::collections::HashMap<String, SharedString>,
+    pub extension_widgets: std::collections::HashMap<String, (Vec<SharedString>, String)>,
+    pub extension_dialog_focus: FocusHandle,
 }
 
 impl ChatWindow {
@@ -252,6 +292,11 @@ impl ChatWindow {
             window_handle,
             voice_state,
             voice_recorder,
+            extension_dialog: None,
+            pending_extension_request: None,
+            extension_status: std::collections::HashMap::new(),
+            extension_widgets: std::collections::HashMap::new(),
+            extension_dialog_focus: cx.focus_handle(),
         };
 
         // Attach to an existing session for restored threads.
@@ -417,24 +462,31 @@ impl ChatWindow {
             &session,
             |this, _session, event: &SessionEvent, cx| {
                 this.sync_from_session(cx);
-                if let SessionEvent::ExportHtmlSucceeded { path } = event {
-                    let reveal_path = path.clone();
-                    let _ = this.window_handle.update(cx, |_, window, cx| {
-                        window.push_notification(
-                            Notification::success("Session exported to HTML").action({
-                                let reveal_path = reveal_path.clone();
-                                move |_, _, _| {
+                match event {
+                    SessionEvent::ExportHtmlSucceeded { path } => {
+                        let reveal_path = path.clone();
+                        let _ = this.window_handle.update(cx, |_, window, cx| {
+                            window.push_notification(
+                                Notification::success("Session exported to HTML").action({
                                     let reveal_path = reveal_path.clone();
-                                    Button::new("reveal").label("Reveal").on_click(
-                                        move |_, _, cx| {
-                                            cx.reveal_path(&reveal_path);
-                                        },
-                                    )
-                                }
-                            }),
-                            cx,
-                        );
-                    });
+                                    move |_, _, _| {
+                                        let reveal_path = reveal_path.clone();
+                                        Button::new("reveal").label("Reveal").on_click(
+                                            move |_, _, cx| {
+                                                cx.reveal_path(&reveal_path);
+                                            },
+                                        )
+                                    }
+                                }),
+                                cx,
+                            );
+                        });
+                    }
+                    SessionEvent::ExtensionUiRequest { id, method, payload } => {
+                        this.pending_extension_request =
+                            Some((id.clone(), method.clone(), payload.clone()));
+                    }
+                    SessionEvent::Changed => {}
                 }
                 cx.notify();
             },
@@ -827,6 +879,284 @@ impl ChatWindow {
         self.editing_message_id = None;
         self.inline_edit_input = None;
         cx.notify();
+    }
+
+    // ------------------------------------------------------------------
+    // Extension UI
+    // ------------------------------------------------------------------
+
+    fn handle_extension_ui_request(
+        &mut self,
+        id: String,
+        method: String,
+        payload: serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Cancel any existing dialog first.
+        if let Some(old) = self.extension_dialog.take() {
+            let old_id = old.id().to_string();
+            if let Some(ref session) = self.session {
+                session.update(cx, |s, cx| {
+                    s.respond_extension_ui(&old_id, &serde_json::json!({ "cancelled": true }), cx);
+                });
+            }
+        }
+
+        match method.as_str() {
+            "select" => {
+                let title = payload
+                    .get("title")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("Select")
+                    .to_string();
+                let options: Vec<SharedString> = payload
+                    .get("options")
+                    .and_then(|o| o.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|o| o.as_str().map(SharedString::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if options.is_empty() {
+                    if let Some(ref session) = self.session {
+                        session.update(cx, |s, cx| {
+                            s.respond_extension_ui(&id, &serde_json::json!({ "cancelled": true }), cx);
+                        });
+                    }
+                } else {
+                    self.extension_dialog = Some(ExtensionDialog::Select {
+                        id,
+                        title: title.into(),
+                        options,
+                        selected: 0,
+                    });
+                    self.extension_dialog_focus.focus(window, cx);
+                }
+            }
+            "confirm" => {
+                let title = payload
+                    .get("title")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("Confirm")
+                    .to_string();
+                let message = payload
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                self.extension_dialog = Some(ExtensionDialog::Confirm {
+                    id,
+                    title: title.into(),
+                    message: message.into(),
+                });
+                self.extension_dialog_focus.focus(window, cx);
+            }
+            "input" => {
+                let title = payload
+                    .get("title")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("Input")
+                    .to_string();
+                let placeholder = payload
+                    .get("placeholder")
+                    .and_then(|p| p.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let input = cx.new(|cx| {
+                    let mut state = InputState::new(window, cx);
+                    if !placeholder.is_empty() {
+                        state = state.placeholder(placeholder);
+                    }
+                    state
+                });
+                input.update(cx, |state, cx| {
+                    state.focus(window, cx);
+                });
+                self.extension_dialog = Some(ExtensionDialog::Input {
+                    id,
+                    title: title.into(),
+                    input,
+                });
+            }
+            "editor" => {
+                let title = payload
+                    .get("title")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("Editor")
+                    .to_string();
+                let prefill = payload
+                    .get("prefill")
+                    .and_then(|p| p.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let input = cx.new(|cx| {
+                    let mut state = InputState::new(window, cx).auto_grow(3, 20);
+                    if !prefill.is_empty() {
+                        state.set_value(prefill, window, cx);
+                    }
+                    state
+                });
+                input.update(cx, |state, cx| {
+                    state.focus(window, cx);
+                });
+                self.extension_dialog = Some(ExtensionDialog::Editor {
+                    id,
+                    title: title.into(),
+                    input,
+                });
+            }
+            "notify" => {
+                let message = payload
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let notify_type = payload
+                    .get("notifyType")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("info");
+                let notification = match notify_type {
+                    "warning" => Notification::warning(message),
+                    "error" => Notification::error(message),
+                    _ => Notification::info(message),
+                };
+                window.push_notification(notification, cx);
+            }
+            "set_editor_text" => {
+                let text = payload
+                    .get("text")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                self.chat_input
+                    .update(cx, |ci, cx| ci.set_content(text, window, cx));
+            }
+            "setStatus" => {
+                let key = payload
+                    .get("statusKey")
+                    .and_then(|k| k.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if let Some(text) = payload.get("statusText").and_then(|t| t.as_str()) {
+                    self.extension_status
+                        .insert(key, SharedString::from(text));
+                } else {
+                    self.extension_status.remove(&key);
+                }
+            }
+            "setWidget" => {
+                let key = payload
+                    .get("widgetKey")
+                    .and_then(|k| k.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if let Some(lines_arr) = payload.get("widgetLines").and_then(|w| w.as_array()) {
+                    let lines: Vec<SharedString> = lines_arr
+                        .iter()
+                        .filter_map(|l| l.as_str().map(SharedString::from))
+                        .collect();
+                    let placement = payload
+                        .get("widgetPlacement")
+                        .and_then(|p| p.as_str())
+                        .unwrap_or("aboveEditor")
+                        .to_string();
+                    self.extension_widgets.insert(key, (lines, placement));
+                } else {
+                    self.extension_widgets.remove(&key);
+                }
+            }
+            "setTitle" => {
+                let title = payload
+                    .get("title")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if !title.is_empty() {
+                    self.title = SharedString::from(title);
+                }
+            }
+            _ => {
+                eprintln!(
+                    "[mini-pi] unknown extension UI method: {}, cancelling",
+                    method
+                );
+                if let Some(ref session) = self.session {
+                    session.update(cx, |s, cx| {
+                        s.respond_extension_ui(&id, &serde_json::json!({ "cancelled": true }), cx);
+                    });
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn cancel_extension_dialog(&mut self, cx: &mut Context<Self>) {
+        if let Some(dialog) = self.extension_dialog.take() {
+            let id = dialog.id().to_string();
+            if let Some(ref session) = self.session {
+                session.update(cx, |s, cx| {
+                    s.respond_extension_ui(&id, &serde_json::json!({ "cancelled": true }), cx);
+                });
+            }
+            cx.notify();
+        }
+    }
+
+    fn confirm_extension_dialog(&mut self, cx: &mut Context<Self>) {
+        let Some(dialog) = self.extension_dialog.take() else {
+            return;
+        };
+        let (id, response) = match dialog {
+            ExtensionDialog::Select {
+                id,
+                selected,
+                options,
+                ..
+            } => {
+                let response = options
+                    .get(selected)
+                    .map(|v| serde_json::json!({ "value": v }))
+                    .unwrap_or_else(|| serde_json::json!({ "cancelled": true }));
+                (id, response)
+            }
+            ExtensionDialog::Confirm { id, .. } => {
+                (id, serde_json::json!({ "confirmed": true }))
+            }
+            ExtensionDialog::Input { id, input, .. } => {
+                let value = input.read(cx).value();
+                (id, serde_json::json!({ "value": value }))
+            }
+            ExtensionDialog::Editor { id, input, .. } => {
+                let value = input.read(cx).value();
+                (id, serde_json::json!({ "value": value }))
+            }
+        };
+        if let Some(ref session) = self.session {
+            session.update(cx, |s, cx| {
+                s.respond_extension_ui(&id, &response, cx);
+            });
+        }
+        cx.notify();
+    }
+
+    fn select_extension_option(&mut self, idx: usize, cx: &mut Context<Self>) {
+        let Some(dialog) = self.extension_dialog.take() else {
+            return;
+        };
+        if let ExtensionDialog::Select { id, options, .. } = dialog {
+            let response = options
+                .get(idx)
+                .map(|v| serde_json::json!({ "value": v }))
+                .unwrap_or_else(|| serde_json::json!({ "cancelled": true }));
+            if let Some(ref session) = self.session {
+                session.update(cx, |s, cx| {
+                    s.respond_extension_ui(&id, &response, cx);
+                });
+            }
+            cx.notify();
+        }
     }
 
     fn start_edit_message(&mut self, msg_id: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -2369,10 +2699,287 @@ impl ChatWindow {
                     })),
             )
     }
+
+    fn render_extension_dialog(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let dialog = self.extension_dialog.as_ref().unwrap();
+
+        // Build the inner content based on dialog type.
+        let title: SharedString = match dialog {
+            ExtensionDialog::Select { title, .. }
+            | ExtensionDialog::Confirm { title, .. }
+            | ExtensionDialog::Input { title, .. }
+            | ExtensionDialog::Editor { title, .. } => title.clone(),
+        };
+
+        let content = match dialog {
+            ExtensionDialog::Select {
+                options, selected, ..
+            } => {
+                let selected = *selected;
+                let options = options.clone();
+                div()
+                    .id("ext-select-list")
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .max_h(px(300.))
+                    .overflow_y_scroll()
+                    .children(options.iter().enumerate().map(|(idx, opt)| {
+                        let is_selected = idx == selected;
+                        let opt_idx = idx;
+                        div()
+                            .id(SharedString::from(format!("ext-opt-{}", idx)))
+                            .px_3()
+                            .py_2()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .when(is_selected, |s| {
+                                s.bg(cx.theme().accent).text_color(cx.theme().foreground)
+                            })
+                            .when(!is_selected, |s| {
+                                s.hover(|h| h.bg(cx.theme().accent))
+                            })
+                            .text_sm()
+                            .child(opt.clone())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.select_extension_option(opt_idx, cx);
+                            }))
+                    }))
+                    .into_any_element()
+            }
+            ExtensionDialog::Confirm { message, .. } => {
+                let msg = message.clone();
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(msg),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .justify_end()
+                            .child(
+                                Button::new("ext-confirm-cancel")
+                                    .with_size(Size::Small)
+                                    .outline()
+                                    .label("Cancel")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.cancel_extension_dialog(cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("ext-confirm-ok")
+                                    .with_size(Size::Small)
+                                    .primary()
+                                    .label("Confirm")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.confirm_extension_dialog(cx);
+                                    })),
+                            ),
+                    )
+                    .into_any_element()
+            }
+            ExtensionDialog::Input { input, .. } => {
+                let input = input.clone();
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(
+                        div()
+                            .px_3()
+                            .py_2()
+                            .rounded_md()
+                            .bg(cx.theme().background)
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .child(Input::new(&input).appearance(false).w_full()),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .justify_end()
+                            .child(
+                                Button::new("ext-input-cancel")
+                                    .with_size(Size::Small)
+                                    .outline()
+                                    .label("Cancel")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.cancel_extension_dialog(cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("ext-input-ok")
+                                    .with_size(Size::Small)
+                                    .primary()
+                                    .label("OK")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.confirm_extension_dialog(cx);
+                                    })),
+                            ),
+                    )
+                    .into_any_element()
+            }
+            ExtensionDialog::Editor { input, .. } => {
+                let input = input.clone();
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(
+                        div()
+                            .id("ext-editor-input")
+                            .px_3()
+                            .py_2()
+                            .rounded_md()
+                            .bg(cx.theme().background)
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .min_h(px(120.))
+                            .max_h(px(400.))
+                            .overflow_y_scroll()
+                            .child(Input::new(&input).appearance(false).w_full()),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .justify_end()
+                            .child(
+                                Button::new("ext-editor-cancel")
+                                    .with_size(Size::Small)
+                                    .outline()
+                                    .label("Cancel")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.cancel_extension_dialog(cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("ext-editor-ok")
+                                    .with_size(Size::Small)
+                                    .primary()
+                                    .label("OK")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.confirm_extension_dialog(cx);
+                                    })),
+                            ),
+                    )
+                    .into_any_element()
+            }
+        };
+
+        div()
+            .id("extension-dialog-overlay")
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .bg(gpui::rgba(0x00000099))
+            .flex()
+            .items_center()
+            .justify_center()
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.cancel_extension_dialog(cx);
+                }),
+            )
+            .child(
+                div()
+                    .id("extension-dialog-card")
+                    .track_focus(&self.extension_dialog_focus)
+                    .mx_8()
+                    .w(px(440.))
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .px_6()
+                    .py_6()
+                    .rounded_xl()
+                    .bg(cx.theme().secondary)
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .shadow(vec![gpui::BoxShadow {
+                        color: cx.theme().overlay,
+                        offset: gpui::point(px(0.), px(4.)),
+                        blur_radius: px(12.),
+                        spread_radius: px(0.),
+                        inset: false,
+                    }])
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
+                        match event.keystroke.key.as_str() {
+                            "escape" => {
+                                this.cancel_extension_dialog(cx);
+                            }
+                            "enter" => {
+                                let ctrl = event.keystroke.modifiers.control;
+                                if let Some(ref dialog) = this.extension_dialog {
+                                    match dialog {
+                                        ExtensionDialog::Editor { .. } if !ctrl => {
+                                            // Let Enter insert a newline in editor.
+                                        }
+                                        _ => {
+                                            this.confirm_extension_dialog(cx);
+                                        }
+                                    }
+                                }
+                            }
+                            "up" => {
+                                if let Some(ExtensionDialog::Select { selected, .. }) =
+                                    &mut this.extension_dialog
+                                {
+                                    if *selected > 0 {
+                                        *selected -= 1;
+                                        cx.notify();
+                                    }
+                                }
+                            }
+                            "down" => {
+                                if let Some(ExtensionDialog::Select { selected, options, .. }) =
+                                    &mut this.extension_dialog
+                                {
+                                    if *selected + 1 < options.len() {
+                                        *selected += 1;
+                                        cx.notify();
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }))
+                    .child(
+                        div()
+                            .text_base()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(cx.theme().foreground)
+                            .child(title),
+                    )
+                    .child(content),
+            )
+    }
 }
 
 impl Render for ChatWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Process any pending extension UI request (deferred from the session
+        // subscription callback where Window is not available).
+        if let Some((id, method, payload)) = self.pending_extension_request.take() {
+            self.handle_extension_ui_request(id, method, payload, window, cx);
+        }
+
         let status = match &self.state {
             ChatState::Idle => None,
             ChatState::Loading => Some(SharedString::from("Loading...")),
@@ -2398,7 +3005,9 @@ impl Render for ChatWindow {
             .on_action(cx.listener(Self::send_message))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
                 if event.keystroke.key == "escape" {
-                    if this.chat_input.read(cx).is_popup_visible() {
+                    if this.extension_dialog.is_some() {
+                        this.cancel_extension_dialog(cx);
+                    } else if this.chat_input.read(cx).is_popup_visible() {
                         this.chat_input.update(cx, |ci, cx| ci.close_popup(cx));
                     }
                 }
@@ -2429,5 +3038,8 @@ impl Render for ChatWindow {
                 el.child(self.render_workspace_selector(cx))
             })
             .child(self.render_input_area(cx, is_disabled, input_focused))
+            .when(self.extension_dialog.is_some(), |el| {
+                el.child(self.render_extension_dialog(cx))
+            })
     }
 }
