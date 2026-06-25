@@ -4117,6 +4117,7 @@ dependencies = [
  "linkify",
  "nanoid",
  "objc",
+ "parking_lot",
  "percent-encoding",
  "qrcode",
  "raw-window-handle",

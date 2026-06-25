@@ -1350,7 +1350,7 @@ fn render_appearance_row(_window: &mut Window, cx: &mut Context<UserPanel>) -> i
                 .checked(is_dark)
                 .on_click(cx.listener(move |_this, checked: &bool, window, cx| {
                     let theme_name = if *checked {
-                        SharedString::from("Ayu Dark")
+                        SharedString::from("Kibble")
                     } else {
                         SharedString::from("Ayu Light")
                     };

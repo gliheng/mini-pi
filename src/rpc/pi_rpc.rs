@@ -793,7 +793,9 @@ fn read_bridge_port(stdout: std::process::ChildStdout) -> Result<u16, PiRpcError
         if text.trim().is_empty() {
             continue;
         }
-        log!("bridge stdout: {}", &text[..text.len().min(200)]);
+        let preview_end = text.len().min(200);
+        let preview_end = text.floor_char_boundary(preview_end);
+        log!("bridge stdout: {}", &text[..preview_end]);
         if let Some(prefix) = text.strip_prefix("BRIDGE_PORT ") {
             return prefix
                 .trim()
@@ -841,7 +843,7 @@ fn parse_bridge_message(text: &str) -> Option<(String, BridgeEvent)> {
             log!(
                 "failed to parse JSON: {} (line: {})",
                 e,
-                &text[..text.len().min(100)]
+                truncate_str(text, 100)
             );
             return None;
         }

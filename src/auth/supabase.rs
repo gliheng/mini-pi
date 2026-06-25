@@ -1,6 +1,7 @@
 use crate::auth::state::{SupabaseSession, SupabaseUser};
 use reqwest::blocking::Client;
 use serde::Deserialize;
+use std::sync::OnceLock;
 
 const SUPABASE_URL: &str = "https://xgazvyjwnjwablelrrsc.supabase.co";
 
@@ -10,8 +11,43 @@ fn anon_key() -> &'static str {
     SUPABASE_ANON_KEY
 }
 
-fn client() -> Client {
-    Client::new()
+/// Reuse a single process-wide `reqwest::blocking::Client` so the connection
+/// pool and TLS state are shared across calls. Building a fresh client per
+/// request is expensive and was the previous behavior.
+fn client() -> &'static Client {
+    static CLIENT: OnceLock<Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        Client::builder()
+            .pool_idle_timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .unwrap_or_else(|_| Client::new())
+    })
+}
+
+/// Read the body as text and turn non-2xx responses into a typed error.
+fn ensure_success(resp: reqwest::blocking::Response) -> Result<reqwest::blocking::Response, SupabaseAuthError> {
+    let status = resp.status();
+    if status.is_success() {
+        return Ok(resp);
+    }
+    let status_code = status.as_u16();
+    let body = resp.text().unwrap_or_default();
+    let msg = serde_json::from_str::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|v| {
+            v.get("error_description")
+                .or(v.get("msg"))
+                .or(v.get("error"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| v.as_str().map(|s| s.to_string()))
+        })
+        .unwrap_or_else(|| format!("request failed (status {})", status_code));
+    Err(SupabaseAuthError::Api {
+        msg,
+        status: status_code,
+    })
 }
 
 #[derive(Debug)]
@@ -248,11 +284,12 @@ pub fn get_user(access_token: &str) -> Result<SupabaseUser, SupabaseAuthError> {
 }
 
 pub fn logout(access_token: &str) -> Result<(), SupabaseAuthError> {
-    let _ = client()
+    let resp = client()
         .post(format!("{}/auth/v1/logout", SUPABASE_URL))
         .header("apikey", anon_key())
         .header("Authorization", format!("Bearer {}", access_token))
         .send()?;
+    ensure_success(resp)?;
     Ok(())
 }
 
@@ -271,7 +308,7 @@ pub fn upload_file(
 
     let body = data.to_vec();
 
-    client()
+    let resp = client()
         .post(format!(
             "{}/storage/v1/object/pi-sync/{}",
             SUPABASE_URL, encoded
@@ -281,7 +318,7 @@ pub fn upload_file(
         .header("Content-Type", content_type)
         .body(body)
         .send()?;
-
+    ensure_success(resp)?;
     Ok(())
 }
 
@@ -325,6 +362,7 @@ pub fn download_file(
         .header("Authorization", format!("Bearer {}", access_token))
         .send()?;
 
+    let resp = ensure_success(resp)?;
     let data = resp.bytes().map_err(SupabaseAuthError::Http)?;
     Ok(data.to_vec())
 }
@@ -340,7 +378,7 @@ pub fn delete_file(
         percent_encoding::NON_ALPHANUMERIC,
     );
 
-    let _ = client()
+    let resp = client()
         .delete(format!(
             "{}/storage/v1/object/pi-sync/{}",
             SUPABASE_URL, encoded
@@ -348,7 +386,7 @@ pub fn delete_file(
         .header("apikey", anon_key())
         .header("Authorization", format!("Bearer {}", access_token))
         .send()?;
-
+    ensure_success(resp)?;
     Ok(())
 }
 

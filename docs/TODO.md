@@ -1,3 +1,4 @@
+# Common
 - [ ] Models and cf gateway
 - [ ] Support extension UI protocol
 - [ ] Set model both on gpui and worker
@@ -8,6 +9,7 @@
 - [ ] Display session stats
 - [ ] Pet
 - [ ] Packaging
+- [ ] Bearer Token设置
 
 # UI
 - [ ] Modal can click through
@@ -15,3 +17,8 @@
 
 # Pi-Commander
 - [ ] Refresh workspace, model on settings change
+
+# Bug
+- [ ] Option请求没有带Bearer Token会被401
+- [ ] Cannot be stopped when stuck
+- [ ] Why stuck sometimes

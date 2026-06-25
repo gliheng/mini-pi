@@ -89,7 +89,7 @@ pub fn run() {
             if let Err(err) = ThemeRegistry::watch_dir(themes_dir, cx, move |cx| {
                 let theme_name = theme_store
                     .theme_name()
-                    .unwrap_or_else(|| "Ayu Dark".to_string());
+                    .unwrap_or_else(|| "Kibble".to_string());
                 let theme_name = SharedString::from(theme_name);
                 if let Some(theme) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
                     let mode = theme.mode;
@@ -146,26 +146,12 @@ pub fn run() {
             if auth.is_logged_in() {
                 if let Some(ref sess) = session {
                     let _ = state::agent_dir();
-                    let access_token = sess.access_token.clone();
-                    let user_id = sess.user.id.clone();
-                    let initial_meta = initial_sync_meta.clone();
-                    cx.spawn(async move |cx| {
-                        let result = smol::unblock(move || {
-                            settings_sync::sync_changes(&access_token, &user_id, initial_meta)
-                        })
-                        .await;
-                        let _ = cx.update_global(|app: &mut AppStore, _| {
-                            app.sync_status = match result {
-                                Ok(meta) => {
-                                    let _ = settings_sync::save_sync_meta(&app.store, &meta);
-                                    app.sync_meta = meta;
-                                    settings_sync::SyncStatus::Synced
-                                }
-                                Err(e) => settings_sync::SyncStatus::Error(e),
-                            };
-                        });
-                    })
-                    .detach();
+                    trigger_sync(
+                        sess.access_token.clone(),
+                        sess.user.id.clone(),
+                        initial_sync_meta.clone(),
+                        cx,
+                    );
                 }
             }
 
@@ -214,6 +200,41 @@ pub fn run() {
         });
 }
 
+/// Trigger a background agent-config sync against Supabase Storage and
+/// reflect the result in `AppStore::sync_status`. Used both at startup
+/// (when a valid session is restored) and reactively when the user logs in
+/// via the `UserPanel`. Both codepaths previously inlined this logic.
+pub(crate) fn trigger_sync<C>(
+    access_token: String,
+    user_id: String,
+    initial_meta: settings_sync::SyncMeta,
+    cx: &mut C,
+) where
+    C: std::borrow::BorrowMut<gpui::App>,
+{
+    cx.update_global(|app: &mut AppStore, _| {
+        app.sync_status = settings_sync::SyncStatus::Syncing;
+    });
+    cx.borrow_mut()
+        .spawn(async move |cx: &mut gpui::AsyncApp| {
+            let result = smol::unblock(move || {
+                settings_sync::sync_changes(&access_token, &user_id, initial_meta)
+            })
+            .await;
+            let _ = cx.update_global(|app: &mut AppStore, _| {
+                app.sync_status = match result {
+                    Ok(meta) => {
+                        let _ = settings_sync::save_sync_meta(&app.store, &meta);
+                        app.sync_meta = meta;
+                        settings_sync::SyncStatus::Synced
+                    }
+                    Err(e) => settings_sync::SyncStatus::Error(e),
+                };
+            });
+        })
+        .detach();
+}
+
 struct MiniPiApp {
     thread_list: gpui::Entity<ThreadList>,
     user_panel: gpui::Entity<UserPanel>,
@@ -237,38 +258,13 @@ impl MiniPiApp {
                         if let AuthState::LoggedIn(_) = &auth {
                             let session = cx.global::<AppStore>().session.clone();
                             if let Some(s) = session {
-                                cx.update_global(|app: &mut AppStore, _| {
-                                    app.sync_status = settings_sync::SyncStatus::Syncing;
-                                });
-                                cx.notify();
-                                let access_token = s.access_token.clone();
-                                let user_id = s.user.id.clone();
                                 let initial_meta = cx.global::<AppStore>().sync_meta.clone();
-                                cx.spawn(async move |_, cx| {
-                                    let result = smol::unblock(move || {
-                                        settings_sync::sync_changes(
-                                            &access_token,
-                                            &user_id,
-                                            initial_meta,
-                                        )
-                                    })
-                                    .await;
-                                    let _ =
-                                        cx.update_global(|app: &mut AppStore, _| match result {
-                                            Ok(meta) => {
-                                                let _ = settings_sync::save_sync_meta(
-                                                    &app.store, &meta,
-                                                );
-                                                app.sync_meta = meta;
-                                                app.sync_status = settings_sync::SyncStatus::Synced;
-                                            }
-                                            Err(e) => {
-                                                app.sync_status =
-                                                    settings_sync::SyncStatus::Error(e);
-                                            }
-                                        });
-                                })
-                                .detach();
+                                trigger_sync(
+                                    s.access_token.clone(),
+                                    s.user.id.clone(),
+                                    initial_meta,
+                                    cx,
+                                );
                             }
                         }
                     }

@@ -10,7 +10,6 @@ use crate::auth::state::{self, AuthState};
 use crate::core::actions::CloseWindow;
 use crate::core::app::{AppStore, custom_window_options};
 use crate::data::store::{PaginatedThreads, Store, ThreadMeta};
-use crate::sync::settings_sync;
 use crate::ui::loader::loader;
 use crate::utils::format::format_relative_time;
 use crate::views::chat_app::open_chat_window;
@@ -333,38 +332,13 @@ impl ThreadList {
                         if let AuthState::LoggedIn(_) = &auth {
                             let session = cx.global::<AppStore>().session.clone();
                             if let Some(s) = session {
-                                cx.update_global(|app: &mut AppStore, _| {
-                                    app.sync_status = settings_sync::SyncStatus::Syncing;
-                                });
-                                cx.notify();
-                                let access_token = s.access_token.clone();
-                                let user_id = s.user.id.clone();
                                 let initial_meta = cx.global::<AppStore>().sync_meta.clone();
-                                cx.spawn(async move |_, cx| {
-                                    let result = smol::unblock(move || {
-                                        settings_sync::sync_changes(
-                                            &access_token,
-                                            &user_id,
-                                            initial_meta,
-                                        )
-                                    })
-                                    .await;
-                                    let _ =
-                                        cx.update_global(|app: &mut AppStore, _| match result {
-                                            Ok(meta) => {
-                                                let _ = settings_sync::save_sync_meta(
-                                                    &app.store, &meta,
-                                                );
-                                                app.sync_meta = meta;
-                                                app.sync_status = settings_sync::SyncStatus::Synced;
-                                            }
-                                            Err(e) => {
-                                                app.sync_status =
-                                                    settings_sync::SyncStatus::Error(e);
-                                            }
-                                        });
-                                })
-                                .detach();
+                                crate::app::trigger_sync(
+                                    s.access_token.clone(),
+                                    s.user.id.clone(),
+                                    initial_meta,
+                                    cx,
+                                );
                             }
                         }
                     }
