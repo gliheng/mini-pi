@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const QrScanner = defineAsyncComponent(() => import('~/components/QrScanner.vue'))
+
 const props = defineProps<{
   blocking?: boolean
 }>()

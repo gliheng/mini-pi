@@ -36,6 +36,7 @@
   "devDependencies": {
     "@nuxt/eslint": "^1.16.0",
     "@types/node": "^24.13.2",
+    "@vite-pwa/nuxt": "^1.1.1",
     "eslint": "^10.5.0",
     "nitro-cloudflare-dev": "^0.2.2",
     "nitropack": "^2.13.4",

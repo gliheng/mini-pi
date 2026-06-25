@@ -4,6 +4,8 @@ import type { DynamicToolUIPart, UIMessage } from 'ai'
 import { isPartStreaming, isToolStreaming } from '@nuxt/ui/utils/ai'
 import { getMergedParts } from '~/utils/ai'
 
+const ChatToolChart = defineAsyncComponent(() => import('~/components/chat/tool/Chart.vue'))
+
 defineProps<{
   message: UIMessage
 }>()

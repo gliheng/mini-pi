@@ -212,7 +212,7 @@ watch(thinkingLevel, async (newLevel) => {
             v-model="input"
             :status="status"
             :error="chatError"
-            class="sticky bottom-0 [view-transition-name:chat-prompt] rounded-b-none z-10"
+            class="sticky bottom-0 [view-transition-name:chat-prompt] rounded-b-none z-10 pb-safe"
             @submit="handleSubmit"
             @stop="handleAbort"
           />

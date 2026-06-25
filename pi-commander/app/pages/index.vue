@@ -179,7 +179,7 @@ async function onSubmit() {
           :status="creating ? 'streaming' : 'ready'"
           :disabled="!selectedWorkspaceId || loadingWorkspaces"
           :submit-disabled="creating || !selectedWorkspaceId"
-          class="[view-transition-name:chat-prompt]"
+          class="[view-transition-name:chat-prompt] pb-safe"
           @submit="onSubmit"
         />
 
