@@ -1668,6 +1668,124 @@ impl ChatWindow {
             )
     }
 
+    fn render_send_file_tool(
+        &self,
+        cx: &mut Context<Self>,
+        msg_idx: usize,
+        args: SharedString,
+        output: Option<SharedString>,
+        details: Option<serde_json::Value>,
+    ) -> AnyElement {
+        let workspace_dir = self
+            .selected_workspace_id
+            .as_ref()
+            .and_then(|id| self.workspaces.iter().find(|ws| ws.id == *id))
+            .map(|ws| PathBuf::from(&ws.path));
+        let mut file_path = details
+            .as_ref()
+            .and_then(|d| d.get("path"))
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+            .unwrap_or_default();
+        if file_path.as_os_str().is_empty() {
+            if let Ok(args_json) = serde_json::from_str::<serde_json::Value>(args.as_ref()) {
+                if let Some(path) = args_json.get("path").and_then(|v| v.as_str()) {
+                    file_path = PathBuf::from(path);
+                }
+            }
+        }
+        if !file_path.is_absolute() {
+            if let Some(ws) = workspace_dir {
+                file_path = ws.join(file_path);
+            }
+        }
+        let (file_name, mime_type, size) = if file_path.as_os_str().is_empty() {
+            (
+                output
+                    .as_ref()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Sent file".to_string()),
+                "application/octet-stream".to_string(),
+                0,
+            )
+        } else {
+            (
+                file_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_default(),
+                details
+                    .as_ref()
+                    .and_then(|d| d.get("mime_type"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("application/octet-stream")
+                    .to_string(),
+                details
+                    .as_ref()
+                    .and_then(|d| d.get("size"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as usize,
+            )
+        };
+        let file_path_for_reveal = file_path.clone();
+        let file_path_for_open = file_path.clone();
+        div()
+            .flex()
+            .w_full()
+            .justify_start()
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_2()
+                    .rounded_md()
+                    .bg(cx.theme().secondary)
+                    .text_color(cx.theme().secondary_foreground)
+                    .w_full()
+                    .child(
+                        Icon::empty()
+                            .path("file.svg")
+                            .size(px(20.))
+                            .text_color(cx.theme().muted_foreground),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .child(file_name)
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(format!("{} • {}", mime_type, format_file_size(size))),
+                            ),
+                    )
+                    .child(
+                        Button::new(("open-file", msg_idx as u64))
+                            .with_size(Size::XSmall)
+                            .label("Open")
+                            .on_click(cx.listener(move |_this, _, _window, _cx| {
+                                let _ = open_file(&file_path_for_open);
+                            })),
+                    )
+                    .child(
+                        Button::new(("reveal-file", msg_idx as u64))
+                            .with_size(Size::XSmall)
+                            .label("Reveal")
+                            .on_click(cx.listener(move |_this, _, _window, cx| {
+                                cx.reveal_path(&file_path_for_reveal);
+                            })),
+                    ),
+            )
+            .into_any_element()
+    }
+
     fn render_tool_pair(
         &self,
         cx: &mut Context<Self>,
@@ -1680,88 +1798,7 @@ impl ChatWindow {
         assistant_text_width: Pixels,
     ) -> AnyElement {
         if name == "send_file" {
-            let file_path = details
-                .as_ref()
-                .and_then(|d| d.get("path"))
-                .and_then(|v| v.as_str())
-                .map(PathBuf::from)
-                .unwrap_or_default();
-            let file_name = file_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| output.clone().unwrap_or_default().to_string());
-            let mime_type = details
-                .as_ref()
-                .and_then(|d| d.get("mime_type"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("application/octet-stream")
-                .to_string();
-            let size = details
-                .as_ref()
-                .and_then(|d| d.get("size"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as usize;
-            let file_path_for_reveal = file_path.clone();
-            let file_path_for_open = file_path.clone();
-            return div()
-                .flex()
-                .w_full()
-                .justify_start()
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_2()
-                        .px_2()
-                        .py_2()
-                        .rounded_md()
-                        .bg(cx.theme().secondary)
-                        .text_color(cx.theme().secondary_foreground)
-                        .w_full()
-                        .child(
-                            Icon::empty()
-                                .path("file.svg")
-                                .size(px(20.))
-                                .text_color(cx.theme().muted_foreground),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .flex_1()
-                                .min_w_0()
-                                .child(file_name)
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(format!(
-                                            "{} • {}",
-                                            mime_type,
-                                            format_file_size(size)
-                                        )),
-                                ),
-                        )
-                        .child(
-                            Button::new(("open-file", msg_idx as u64))
-                                .with_size(Size::XSmall)
-                                .label("Open")
-                                .on_click(cx.listener(move |_this, _, _window, _cx| {
-                                    let _ = open_file(&file_path_for_open);
-                                })),
-                        )
-                        .child(
-                            Button::new(("reveal-file", msg_idx as u64))
-                                .with_size(Size::XSmall)
-                                .label("Reveal")
-                                .on_click(cx.listener(move |_this, _, _window, cx| {
-                                    cx.reveal_path(&file_path_for_reveal);
-                                })),
-                        ),
-                )
-                .into_any_element();
+            return self.render_send_file_tool(cx, msg_idx, args, output, details);
         }
 
         let result_element: AnyElement = if let Some(ref md) = markdown_entity {
@@ -1878,22 +1915,36 @@ impl ChatWindow {
                         .and_then(|v| v.as_str())
                         .map(PathBuf::from)
                         .unwrap_or_default();
-                    let file_name = file_path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| output.to_string());
-                    let mime_type = details
-                        .as_ref()
-                        .and_then(|d| d.get("mime_type"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("application/octet-stream")
-                        .to_string();
-                    let size = details
-                        .as_ref()
-                        .and_then(|d| d.get("size"))
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0) as usize;
+                    let (file_name, mime_type, size) = if file_path.as_os_str().is_empty() {
+                        (
+                            if output.is_empty() {
+                                "Sent file".to_string()
+                            } else {
+                                output.to_string()
+                            },
+                            "application/octet-stream".to_string(),
+                            0,
+                        )
+                    } else {
+                        (
+                            file_path
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .map(|s| s.to_string())
+                                .unwrap_or_default(),
+                            details
+                                .as_ref()
+                                .and_then(|d| d.get("mime_type"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("application/octet-stream")
+                                .to_string(),
+                            details
+                                .as_ref()
+                                .and_then(|d| d.get("size"))
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0) as usize,
+                        )
+                    };
                     let file_path_for_reveal = file_path.clone();
                     let file_path_for_open = file_path.clone();
                     div()

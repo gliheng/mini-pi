@@ -81,7 +81,7 @@ export function createSendFileTool(): ToolDefinition {
         content: [
           {
             type: "text",
-            text: `Sent file: ${path.basename(requestedPath)} (${mimeType}, ${size} bytes)`,
+            text: `Sent file: ${path.basename(requestedPath)}`,
           },
         ],
         details: {
