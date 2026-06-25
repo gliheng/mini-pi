@@ -978,9 +978,9 @@ impl ChatWindow {
                     .children(items.iter().enumerate().map(|(idx, item)| {
                         let is_highlighted = idx == highlighted;
                         let icon = if item.is_dir {
-                            "folder.svg"
+                            "icons/folder.svg"
                         } else {
-                            "file.svg"
+                            "icons/file.svg"
                         };
                         let label: SharedString = item.name.clone().into();
                         let detail: SharedString = if item.relative_path != item.name {
@@ -1382,7 +1382,7 @@ impl ChatWindow {
                     .secondary()
                     .icon(
                         Icon::empty()
-                            .path("manage.svg")
+                            .path("icons/manage.svg")
                             .size(px(10.))
                             .text_color(cx.theme().muted_foreground),
                     )
@@ -1411,13 +1411,16 @@ impl ChatWindow {
                 };
                 button
                     .when(ws.name == "Default", |this| {
-                        this.icon(Icon::empty().path("folder.svg").size(px(10.)).text_color(
-                            if is_selected {
-                                cx.theme().primary_active
-                            } else {
-                                cx.theme().muted_foreground
-                            },
-                        ))
+                        this.icon(
+                            Icon::empty()
+                                .path("icons/folder.svg")
+                                .size(px(10.))
+                                .text_color(if is_selected {
+                                    cx.theme().primary_active
+                                } else {
+                                    cx.theme().muted_foreground
+                                }),
+                        )
                     })
                     .label(name)
                     .on_click(cx.listener(move |this, _, _window, cx| {
@@ -1490,7 +1493,7 @@ impl ChatWindow {
             .when(self.messages.is_empty(), |el| {
                 el.items_center().justify_center().child(
                     svg()
-                        .path("logo.svg")
+                        .path("icons/logo.svg")
                         .text_color(cx.theme().muted)
                         .size(px(180.)),
                 )
@@ -1754,7 +1757,7 @@ impl ChatWindow {
                     .w_full()
                     .child(
                         Icon::empty()
-                            .path("file.svg")
+                            .path("icons/file.svg")
                             .size(px(20.))
                             .text_color(cx.theme().muted_foreground),
                     )
@@ -1971,7 +1974,7 @@ impl ChatWindow {
                                 .w_full()
                                 .child(
                                     Icon::empty()
-                                        .path("file.svg")
+                                        .path("icons/file.svg")
                                         .size(px(20.))
                                         .text_color(cx.theme().muted_foreground),
                                 )
@@ -2140,7 +2143,7 @@ impl ChatWindow {
                         )
                         .icon(
                             Icon::empty()
-                                .path("clipboard.svg")
+                                .path("icons/clipboard.svg")
                                 .size(px(12.))
                                 .text_color(cx.theme().muted_foreground),
                         )
@@ -2170,7 +2173,7 @@ impl ChatWindow {
                                 )
                                 .icon(
                                     Icon::empty()
-                                        .path("clipboard.svg")
+                                        .path("icons/clipboard.svg")
                                         .size(px(12.))
                                         .text_color(cx.theme().muted_foreground),
                                 )
@@ -2192,7 +2195,7 @@ impl ChatWindow {
                                 )
                                 .icon(
                                     Icon::empty()
-                                        .path("edit.svg")
+                                        .path("icons/edit.svg")
                                         .size(px(12.))
                                         .text_color(cx.theme().muted_foreground),
                                 )
@@ -2308,20 +2311,8 @@ impl ChatWindow {
             .child({
                 let is_recording = self.voice_state == VoiceState::Recording;
                 let is_transcribing = self.voice_state == VoiceState::Transcribing;
-                if is_transcribing {
-                    Button::new("voice-btn")
-                        .with_size(Size::Small)
-                        .ghost()
-                        .icon(
-                            Icon::empty()
-                                .path("mic.svg")
-                                .size(px(14.))
-                                .text_color(cx.theme().muted_foreground),
-                        )
-                        .loading(true)
-                        .disabled(true)
-                        .into_any_element()
-                } else if is_recording {
+
+                if is_recording {
                     Button::new("voice-btn")
                         .with_size(Size::Small)
                         .custom(
@@ -2333,7 +2324,7 @@ impl ChatWindow {
                         )
                         .icon(
                             Icon::empty()
-                                .path("mic.svg")
+                                .path("icons/mic.svg")
                                 .size(px(14.))
                                 .text_color(cx.theme().danger_foreground),
                         )
@@ -2342,10 +2333,11 @@ impl ChatWindow {
                 } else {
                     Button::new("voice-btn")
                         .with_size(Size::Small)
+                        .loading(is_transcribing)
                         .ghost()
                         .icon(
                             Icon::empty()
-                                .path("mic.svg")
+                                .path("icons/mic.svg")
                                 .size(px(14.))
                                 .text_color(cx.theme().muted_foreground),
                         )
@@ -2359,7 +2351,7 @@ impl ChatWindow {
                     .primary()
                     .icon(
                         Icon::empty()
-                            .path("send.svg")
+                            .path("icons/send.svg")
                             .size(px(14.))
                             .text_color(cx.theme().primary_foreground),
                     )

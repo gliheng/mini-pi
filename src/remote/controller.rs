@@ -1007,6 +1007,7 @@ impl RemoteController {
             None,
             None,
             Some(Some(&metadata)),
+            false,
         ) {
             return json!({ "error": e.to_string() });
         }
@@ -1055,6 +1056,7 @@ impl RemoteController {
                     None,
                     None,
                     None,
+                    false,
                 ) {
                     return json!({ "error": e.to_string() });
                 }
@@ -1313,6 +1315,7 @@ impl RemoteController {
             None,
             None,
             Some(Some(&md)),
+            false,
         )
     }
 

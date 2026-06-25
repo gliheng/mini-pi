@@ -186,7 +186,7 @@ impl Render for UserPanel {
             )
             .child(
                 gpui::svg()
-                    .path("logo.svg")
+                    .path("icons/logo.svg")
                     .size(px(48.))
                     .text_color(cx.theme().primary),
             )
@@ -321,7 +321,7 @@ impl Render for UserPanel {
                                 .child(
                                     Button::new("auth-dialog-close-btn")
                                         .label("Cancel")
-                                        .with_size(Size::Small)
+                                        .with_size(Size::Large)
                                         .w_full()
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.auth_dialog = None;
@@ -495,7 +495,7 @@ fn render_cloudflared_dialog(
                             div().flex_1().child(
                                 Button::new("cloudflared-cancel-btn")
                                     .label("Cancel")
-                                    .with_size(Size::Small)
+                                    .with_size(Size::Large)
                                     .w_full()
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.cloudflared_dialog = None;
@@ -656,7 +656,7 @@ fn render_remote_control_section(
                                     .size(px(16.))
                                     .child(
                                         gpui::svg()
-                                            .path("exclamation.svg")
+                                            .path("icons/exclamation.svg")
                                             .size(px(14.))
                                             .text_color(icon_color),
                                     )
@@ -726,7 +726,7 @@ fn render_remote_control_section(
                         )
                         .icon(
                             Icon::empty()
-                                .path("clipboard.svg")
+                                .path("icons/clipboard.svg")
                                 .size(px(14.))
                                 .text_color(cx.theme().muted_foreground),
                         )
@@ -774,7 +774,7 @@ fn render_remote_control_section(
 
 fn render_back_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
     Button::new("back-button")
-        .with_size(Size::Small)
+        .with_size(Size::Large)
         .custom(
             ButtonCustomVariant::new(cx)
                 .color(cx.theme().secondary.into())
@@ -784,7 +784,7 @@ fn render_back_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
         )
         .icon(
             Icon::empty()
-                .path("arrow-left.svg")
+                .path("icons/arrow-left.svg")
                 .size(px(16.))
                 .text_color(cx.theme().muted_foreground),
         )
@@ -924,8 +924,8 @@ fn render_auth_content(
                                 .child("SETTINGS"),
                         )
                         .child(render_appearance_row(window, cx))
-                        .child(settings_row("Keyboard Shortcuts", "keyboard.svg", cx))
-                        .child(settings_row("About", "about.svg", cx)),
+                        .child(settings_row("Keyboard Shortcuts", "icons/keyboard.svg", cx))
+                        .child(settings_row("About", "icons/about.svg", cx)),
                 )
                 .child(render_logout_button(cx))
         }
@@ -938,12 +938,12 @@ fn render_auth_content(
             .child(
                 Button::new("login-dialog-btn")
                     .label("Sign In")
-                    .with_size(Size::Small)
+                    .with_size(Size::Large)
                     .primary()
                     .w_full()
                     .icon(
                         Icon::empty()
-                            .path("login.svg")
+                            .path("icons/login.svg")
                             .size(px(16.))
                             .text_color(rgb(0xffffff)),
                     )
@@ -975,8 +975,8 @@ fn render_auth_content(
                             .child("SETTINGS"),
                     )
                     .child(render_appearance_row(window, cx))
-                    .child(settings_row("Keyboard Shortcuts", "keyboard.svg", cx))
-                    .child(settings_row("About", "about.svg", cx)),
+                    .child(settings_row("Keyboard Shortcuts", "icons/keyboard.svg", cx))
+                    .child(settings_row("About", "icons/about.svg", cx)),
             ),
     }
 }
@@ -1040,7 +1040,7 @@ fn render_login_button(
 ) -> impl IntoElement {
     Button::new("login-button")
         .label("Sign In")
-        .with_size(Size::Small)
+        .with_size(Size::Large)
         .primary()
         .w_full()
         .on_click(cx.listener(move |this, _, _, cx| {
@@ -1127,7 +1127,7 @@ fn render_signup_submit_button(
     let window_handle = window.window_handle();
     Button::new("signup-submit-button")
         .label("Create Account")
-        .with_size(Size::Small)
+        .with_size(Size::Large)
         .primary()
         .w_full()
         .on_click(cx.listener(move |this, _, _window, cx| {
@@ -1331,7 +1331,7 @@ fn render_appearance_row(_window: &mut Window, cx: &mut Context<UserPanel>) -> i
                 .justify_center()
                 .child(
                     gpui::svg()
-                        .path("appearance.svg")
+                        .path("icons/appearance.svg")
                         .size(px(18.))
                         .text_color(cx.theme().muted_foreground),
                 ),
@@ -1418,7 +1418,7 @@ fn settings_row(
         )
         .child(
             gpui::svg()
-                .path("chevron-right.svg")
+                .path("icons/chevron-right.svg")
                 .size(px(16.))
                 .text_color(cx.theme().muted_foreground),
         )

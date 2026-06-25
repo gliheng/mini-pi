@@ -130,7 +130,7 @@ impl WorkspaceManager {
                                 )
                                 .icon(
                                     Icon::empty()
-                                        .path("close.svg")
+                                        .path("icons/close.svg")
                                         .size(px(12.))
                                         .text_color(rgb(0x888888)),
                                 )

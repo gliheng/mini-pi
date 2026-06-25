@@ -87,7 +87,11 @@ impl Render for ChatApp {
                                     .ghost()
                                     .icon(
                                         Icon::empty()
-                                            .path(if pinned { "unpin.svg" } else { "pin.svg" })
+                                            .path(if pinned {
+                                                "icons/unpin.svg"
+                                            } else {
+                                                "icons/pin.svg"
+                                            })
                                             .text_color(if pinned {
                                                 gpui::rgb(0x4f46e5)
                                             } else {
@@ -109,7 +113,7 @@ impl Render for ChatApp {
                                     .ghost()
                                     .icon(
                                         Icon::empty()
-                                            .path("folder.svg")
+                                            .path("icons/folder.svg")
                                             .text_color(gpui::rgb(0x888888)),
                                     )
                                     .on_click(move |_, _, cx| {
@@ -137,7 +141,7 @@ impl Render for ChatApp {
                                     .ghost()
                                     .icon(
                                         Icon::empty()
-                                            .path("export.svg")
+                                            .path("icons/export.svg")
                                             .text_color(gpui::rgb(0x888888)),
                                     )
                                     .on_click(move |_, _, cx| {

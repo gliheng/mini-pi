@@ -118,6 +118,7 @@ impl SessionHandle {
                     None,
                     None,
                     None,
+                    false,
                 );
             }
             if let Some(ref mut rpc) = self.rpc
@@ -148,6 +149,7 @@ impl SessionHandle {
                     Some(Some(id)),
                     None,
                     None,
+                    false,
                 );
             }
             if let Some(ref mut rpc) = self.rpc
@@ -209,6 +211,7 @@ impl SessionHandle {
                         Some(thinking_opt),
                         None,
                         Some(metadata_ref),
+                        false,
                     );
                 }
                 Err(_) => {
@@ -246,6 +249,7 @@ impl SessionHandle {
                                     None,
                                     None,
                                     None,
+                                    true,
                                 );
                             }
                             cx.emit(SessionEvent::Changed);
@@ -278,6 +282,7 @@ impl SessionHandle {
             None,
             None,
             None,
+            true,
         );
 
         self.state = ChatState::Streaming;
@@ -338,6 +343,7 @@ impl SessionHandle {
                         Some(thinking_opt),
                         None,
                         None,
+                        false,
                     );
                 }
                 Err(_) => {
@@ -349,9 +355,17 @@ impl SessionHandle {
         }
         if let Some(ref tid) = self.thread_id {
             let preview: String = content.chars().take(120).collect();
-            let _ =
-                self.store
-                    .update_thread(tid, None, Some(&preview), None, None, None, None, None);
+            let _ = self.store.update_thread(
+                tid,
+                None,
+                Some(&preview),
+                None,
+                None,
+                None,
+                None,
+                None,
+                true,
+            );
         }
         self.state = ChatState::Streaming;
         if let Some(ref mut rpc) = self.rpc {
@@ -490,9 +504,17 @@ impl SessionHandle {
                 .unwrap_or_else(|| serde_json::json!({}));
             let mut md = md;
             md["has_new_activity"] = serde_json::Value::Bool(value);
-            let _ =
-                self.store
-                    .update_thread(tid, None, None, None, None, None, None, Some(Some(&md)));
+            let _ = self.store.update_thread(
+                tid,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(Some(&md)),
+                false,
+            );
         }
     }
 
@@ -885,6 +907,7 @@ impl SessionHandle {
                                 None,
                                 None,
                                 None,
+                                false,
                             );
                         }
                     }

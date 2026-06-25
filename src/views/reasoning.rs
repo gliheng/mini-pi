@@ -53,7 +53,7 @@ impl Render for Reasoning {
                     .cursor_pointer()
                     .child(
                         svg()
-                            .path("thinking.svg")
+                            .path("icons/thinking.svg")
                             .size(px(12.))
                             .text_color(cx.theme().muted_foreground),
                     )

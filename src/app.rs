@@ -311,7 +311,6 @@ impl gpui::Render for MiniPiApp {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
-        let theme = cx.theme().clone();
         let active_tab_index = self.active_tab_index;
         let user_panel_active = cx.global::<AppStore>().user_panel_active;
 
@@ -324,22 +323,21 @@ impl gpui::Render for MiniPiApp {
             .flex_col()
             .size_full()
             .relative()
-            .bg(theme.background)
-            .text_color(theme.foreground)
-            .font_family(theme.font_family.clone())
             .child(
                 TitleBar::new()
                     .child(
                         TabBar::new("app-tabs")
+                            .mt(px(1.))
                             .segmented()
-                            .px_2()
+                            .px_0()
                             .py(px(2.))
+                            .bg(cx.theme().title_bar)
+                            .flex_1()
                             .selected_index(active_tab_index)
                             .on_click(cx.listener(|this, ix: &usize, window, cx| {
                                 this.set_active_tab(*ix, window, cx);
                             }))
-                            .child(Tab::new().label("Threads"))
-                            .child(Tab::new().label("Mini app")),
+                            .child(Tab::new().label("Mini Pi")), // .child(Tab::new().label("Mini app")),
                     )
                     .child(
                         gpui::div()
@@ -383,7 +381,7 @@ impl MiniPiApp {
             .ghost()
             .icon(
                 Icon::empty()
-                    .path("account.svg")
+                    .path("icons/account.svg")
                     .text_color(gpui::rgb(0x888888)),
             )
             .on_click(cx.listener(|_this, _, _, cx| {

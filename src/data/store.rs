@@ -323,8 +323,9 @@ impl Store {
     /// Update any subset of a thread's mutable fields in a single
     /// transactional `UPDATE`. Passing `Some(v)` sets the field to `v`,
     /// `Some(None)` clears it (for nullable fields), and `None` leaves the
-    /// column as-is. `updated_at` is bumped once and only when at least one
-    /// field actually changed.
+    /// column as-is. `updated_at` is only bumped when `bump_updated_at` is
+    /// `true` so that metadata-only changes (e.g. clearing the "new activity"
+    /// flag) do not reorder the thread list.
     pub fn update_thread(
         &self,
         id: &str,
@@ -335,6 +336,7 @@ impl Store {
         thinking_level: Option<Option<&str>>,
         pinned: Option<bool>,
         metadata: Option<Option<&serde_json::Value>>,
+        bump_updated_at: bool,
     ) -> Result<(), StoreError> {
         let mut conn = self.conn.lock();
         let tx = conn.transaction().map_err(StoreError::Rusqlite)?;
@@ -353,7 +355,7 @@ impl Store {
                 thinking_level = CASE WHEN ?8 IS 1 THEN ?9 ELSE thinking_level END,
                 pinned         = COALESCE(?10, pinned),
                 metadata       = CASE WHEN ?11 IS 1 THEN ?12 ELSE metadata END,
-                updated_at     = datetime('now')
+                updated_at     = CASE WHEN ?13 IS 1 THEN datetime('now') ELSE updated_at END
              WHERE id = ?1",
             params![
                 id,
@@ -368,6 +370,7 @@ impl Store {
                 pinned.map(|p| p as i32),
                 metadata_str.is_some() as i32,
                 metadata_str.flatten(),
+                bump_updated_at as i32,
             ],
         )
         .map_err(StoreError::Rusqlite)?;

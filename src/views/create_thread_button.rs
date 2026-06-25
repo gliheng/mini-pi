@@ -186,7 +186,7 @@ impl Render for CreateThreadButton {
                     .border_color(primary_foreground.alpha(0.2))
                     .child(
                         svg()
-                            .path("logo.svg")
+                            .path("icons/logo.svg")
                             .text_color(primary_foreground)
                             .size(px(14.)),
                     ),

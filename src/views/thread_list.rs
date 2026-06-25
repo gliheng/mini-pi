@@ -218,7 +218,11 @@ impl Render for ThreadItem {
                                 )
                                 .icon(
                                     Icon::empty()
-                                        .path(if pinned { "unpin.svg" } else { "pin.svg" })
+                                        .path(if pinned {
+                                            "icons/unpin.svg"
+                                        } else {
+                                            "icons/pin.svg"
+                                        })
                                         .size(px(14.))
                                         .text_color(theme.muted_foreground),
                                 )
@@ -240,7 +244,7 @@ impl Render for ThreadItem {
                                 )
                                 .icon(
                                     Icon::empty()
-                                        .path("close.svg")
+                                        .path("icons/close.svg")
                                         .size(px(14.))
                                         .text_color(theme.muted_foreground),
                                 )
@@ -596,7 +600,7 @@ impl Render for ThreadList {
                     .gap_2()
                     .child(
                         svg()
-                            .path("search.svg")
+                            .path("icons/search.svg")
                             .size(px(16.))
                             .text_color(theme.muted_foreground),
                     )
@@ -639,7 +643,7 @@ impl Render for ThreadList {
                     .when(self.thread_items.is_empty(), |el| {
                         el.items_center().justify_center().child(
                             svg()
-                                .path("logo.svg")
+                                .path("icons/logo.svg")
                                 .text_color(theme.border)
                                 .size(px(180.)),
                         )

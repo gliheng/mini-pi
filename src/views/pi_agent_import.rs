@@ -112,7 +112,7 @@ impl Render for PiAgentImport {
                                     .gap_2()
                                     .child(
                                         Icon::empty()
-                                            .path("folder.svg")
+                                            .path("icons/folder.svg")
                                             .size(px(20.))
                                             .text_color(rgb(0x818cf8)),
                                     )
