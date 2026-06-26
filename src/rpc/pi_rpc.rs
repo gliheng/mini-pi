@@ -771,63 +771,8 @@ fn find_runtime(bridge_dir: &PathBuf) -> Result<(String, Vec<String>), PiRpcErro
         }
     }
 
-    // Legacy fallback: bundled Node binary plus compiled bridge JS.
-    let dist_js = bridge_dir.join("dist").join("index.js");
-    if dist_js.exists() {
-        let node_candidates: Vec<PathBuf> = if cfg!(windows) {
-            vec![
-                bridge_dir.join("node.exe"),
-                bridge_dir
-                    .parent()
-                    .map(|p| p.join("node.exe"))
-                    .unwrap_or_default(),
-            ]
-        } else {
-            vec![
-                bridge_dir.join("node"),
-                bridge_dir
-                    .parent()
-                    .map(|p| p.join("node"))
-                    .unwrap_or_default(),
-            ]
-        };
-        for node in node_candidates {
-            if node.exists() {
-                return Ok((
-                    node.to_string_lossy().to_string(),
-                    vec!["dist/index.js".to_string()],
-                ));
-            }
-        }
-    }
-
-    // Use the local tsx binary if npm install was run.
-    #[cfg(windows)]
-    let tsx_names: [&str; 2] = ["tsx.cmd", "tsx"];
-    #[cfg(not(windows))]
-    let tsx_names: [&str; 1] = ["tsx"];
-
-    for name in tsx_names.iter() {
-        let tsx = bridge_dir.join("node_modules").join(".bin").join(name);
-        if tsx.exists() {
-            return Ok((
-                tsx.to_string_lossy().to_string(),
-                vec!["src/index.ts".to_string()],
-            ));
-        }
-    }
-
-    // Last resort: npx tsx (requires network if tsx is missing).
-    if Command::new("npx").arg("--version").output().is_ok() {
-        return Ok((
-            "npx".to_string(),
-            vec!["tsx".to_string(), "src/index.ts".to_string()],
-        ));
-    }
-
     Err(PiRpcError::Spawn(
-        "no JavaScript runtime found (tried compiled pi-bridge, bundled bun, node, tsx, npx)."
-            .to_string(),
+        "no bun runtime found (tried compiled pi-bridge, bundled bun, system bun).".to_string(),
     ))
 }
 

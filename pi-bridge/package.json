@@ -4,7 +4,7 @@
   "description": "WebSocket bridge that runs the pi coding agent SDK for mini-pi",
   "type": "module",
   "scripts": {
-    "start": "tsx src/index.ts",
+    "start": "bun run src/index.ts",
     "build": "tsc",
     "test": "bun test"
   },
@@ -16,8 +16,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.0",
-    "tsx": "^4.0.0",
+    "@types/bun": "latest",
     "typescript": "^5.0.0"
-  },
-  "packageManager": "yarn@4.17.0"
+  }
 }

@@ -8,16 +8,12 @@ The Rust GUI opens a single WebSocket connection to this bridge and multiplexes 
 
 ```bash
 bun install
-# or
-npm install
 ```
 
 ## Run standalone (for development)
 
 ```bash
 bun run src/index.ts
-# or
-npm run start
 ```
 
 The bridge will print `BRIDGE_PORT <port>` once it is listening. Connect a WebSocket client to `ws://127.0.0.1:<port>/`.

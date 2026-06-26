@@ -80,8 +80,7 @@ scripts/                # Build scripts: macOS/Windows installers and generate_i
 ## Build, Run and Test
 
 ```bash
-# Install the SDK bridge dependencies
-# Bun is preferred and can run TypeScript directly; npm/yarn also work for development.
+# Install the SDK bridge dependencies (Bun only)
 cd pi-bridge && bun install && cd ..
 
 # Standard cargo workflow
@@ -117,7 +116,7 @@ Both scripts compile `pi-bridge` into a single standalone executable using `bun 
    - **macOS:** Xcode + Xcode Command Line Tools (`xcode-select --install`)
    - **Linux:** Vulkan drivers, `libxcb`, `libxkbcommon`, `libfontconfig`, `libssl`
    - **Windows:** Vulkan SDK or DirectX
-3. **Bun** is used to compile the SDK bridge for release builds, and `pi-bridge/node_modules` must be present for development (`cd pi-bridge && bun install`). The app spawns the bridge automatically and connects to it over a local WebSocket. For development, Node.js with `npm install` plus `tsx` also works.
+3. **Bun** is the only supported runtime for the SDK bridge; `pi-bridge/node_modules` must be present for development (`cd pi-bridge && bun install`). The app spawns the bridge automatically and connects to it over a local WebSocket.
 4. *(Optional)* **cloudflared** is used for the phone remote-control feature. If it is not installed on the system, the app offers to download the official binary into `~/.mini-pi/bin/` when the user enables remote control. You can also install it manually with `brew install cloudflared` or from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/.
 5. *(Optional)* **Cloudflare AI Gateway** environment variables for auto-generated thread titles:
    - `CLOUDFLARE_API_KEY`
@@ -209,7 +208,7 @@ Dropdowns handle `up`, `down`, `enter`, and `escape` internally. The chat input'
 
 ## External SDK Dependency
 
-This application is a thin GUI wrapper around the `@earendil-works/pi-coding-agent` SDK, run inside a local pi-bridge process. Release builds ship a compiled bridge executable; for development, Bun (or Node.js/`tsx`) and installed `pi-bridge/node_modules` are required. Chat functionality will fail at runtime when `PiBridge::spawn` is called if no bridge executable or runtime is available. The wire protocol is documented by the `BridgeEvent` enum and the multiplexed JSON messages in `src/rpc/pi_rpc.rs`.
+This application is a thin GUI wrapper around the `@earendil-works/pi-coding-agent` SDK, run inside a local pi-bridge process. Release builds ship a compiled bridge executable; for development, Bun and installed `pi-bridge/node_modules` are required. Chat functionality will fail at runtime when `PiBridge::spawn` is called if no bridge executable or Bun runtime is available. The wire protocol is documented by the `BridgeEvent` enum and the multiplexed JSON messages in `src/rpc/pi_rpc.rs`.
 
 ## Security Considerations
 
@@ -238,9 +237,9 @@ This application is a thin GUI wrapper around the `@earendil-works/pi-coding-age
 - The model list is loaded dynamically at startup from the SDK bridge via `ModelRegistry.getAvailable()` and stored in `AppStore.models`. `src/config/model_config.rs` exposes the helpers (`all_models`, `get_model_name`, `model_display_name`, `parse_model_id`) that take a `&[ModelInfo]` slice. Model IDs use a `<provider>:<model>` format parsed by `parse_model_id`.
 - When adding database changes, append a new migration tuple to `MIGRATIONS` in `src/data/store.rs`.
 - Assets are loaded at runtime via `core::assets::Assets`. The asset root is resolved from the executable path (`src/utils/paths::app_root`), so packaged releases keep `assets/` next to the binary (Windows) or inside `Mini Pi.app/Contents/Resources` (macOS). During development the helper falls back to `CARGO_MANIFEST_DIR`.
-- The `pi-bridge/` directory is resolved the same way. Release builds ship a compiled `pi-bridge`/`pi-bridge.exe` executable produced by `bun build --compile`; during development the bridge can still be run with bun/tsx/npx.
+- The `pi-bridge/` directory is resolved the same way. Release builds ship a compiled `pi-bridge`/`pi-bridge.exe` executable produced by `bun build --compile`; during development the bridge is run with `bun run src/index.ts`.
 - The app is primarily developed and tested on macOS. Windows-specific and Linux-specific code exists (e.g. `CREATE_NO_WINDOW`, client-side titlebar controls, `wmctrl`) but may need verification.
-- The `pi-bridge/` directory must have its dependencies installed (`bun install`, or `npm install` for Node-based development) before running the app outside an installer.
+- The `pi-bridge/` directory must have its dependencies installed with `bun install` before running the app outside an installer.
 - The wire protocol between Rust and the bridge uses a single WebSocket connection; every message includes a `sessionId` so multiple chat sessions can share one connection.
 - Model IDs in `src/config/model_config.rs` must resolve through the SDK's `ModelRegistry`/`getModel`. Provider names like `cloudflare-ai-gateway` may not be recognized by the SDK and may need to be mapped to SDK-supported providers (`anthropic`, `openai`, etc.).
 - Several known issues are documented in `docs/design-review.md`; review it before making large changes to process management, sync, or window lifecycle.
