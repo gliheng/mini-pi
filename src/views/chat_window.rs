@@ -4,8 +4,9 @@ use gpui::{
     AnyElement, AnyWindowHandle, Bounds, ClipboardItem, Context, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, Length, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, PathPromptOptions, Pixels, Render, ScrollHandle, SharedString, Styled, Window, canvas, div, fill, point, prelude::*, px, rems, svg
 };
 
+
 use crate::config::model_config::all_models;
-use crate::core::actions::{CancelInlineEdit, CloseWindow, ConfirmInlineEdit, SendMessage};
+use crate::core::actions::{CancelInlineEdit, CloseWindow, ConfirmInlineEdit, SendMessage, StopStreaming};
 use crate::core::app::AppStore;
 use crate::core::session_handle::{SessionEvent, SessionHandle, SessionStats, WorkspaceInfo};
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
@@ -305,6 +306,20 @@ impl ChatWindow {
                             session.set_model(Some(id.clone()), cx);
                         });
                     }
+                    // When a new model is selected, set thinking level to the highest supported
+                    let models = cx.global::<AppStore>().models.clone();
+                    let items = Self::thinking_level_items_for_model(
+                        &models,
+                        this.selected_model.as_deref(),
+                    );
+                    if let Some(highest) = items.last().map(|i| i.id.clone()) {
+                        this.thinking_level = Some(highest.clone());
+                        if let Some(ref session) = this.session {
+                            session.update(cx, |session, cx| {
+                                session.set_thinking_level(Some(highest), cx);
+                            });
+                        }
+                    }
                     this.refresh_thinking_dropdown(cx);
                 }
             },
@@ -384,7 +399,7 @@ impl ChatWindow {
             .as_ref()
             .filter(|id| valid_ids.contains(*id))
             .cloned()
-            .or_else(|| items.first().map(|i| i.id.clone()));
+            .or_else(|| items.last().map(|i| i.id.clone()));
 
         if new_level != self.thinking_level {
             self.thinking_level = new_level.clone();
@@ -739,6 +754,34 @@ impl ChatWindow {
             }
             cx.update_global(|app: &mut AppStore, _| {
                 app.streaming_thread_ids.insert(tid.clone());
+            });
+        }
+
+        cx.notify();
+    }
+
+    pub fn stop_streaming(
+        &mut self,
+        _: &StopStreaming,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(self.state, ChatState::Streaming) {
+            return;
+        }
+
+        eprintln!("[mini-pi] stop_streaming requested");
+
+        if let Some(ref session) = self.session {
+            session.update(cx, |session, cx| {
+                session.abort(cx);
+            });
+        }
+
+        self.state = ChatState::Idle;
+        if let Some(ref tid) = self.thread_id {
+            cx.update_global(|app: &mut AppStore, _| {
+                app.streaming_thread_ids.remove(tid);
             });
         }
 
@@ -2156,13 +2199,7 @@ impl ChatWindow {
                 this.child(
                     Button::new(("copy-btn", msg_idx as u64))
                         .with_size(Size::XSmall)
-                        .custom(
-                            ButtonCustomVariant::new(cx)
-                                .color(gpui::rgba(0x00000000).into())
-                                .foreground(cx.theme().muted_foreground.into())
-                                .hover(cx.theme().secondary.into())
-                                .active(cx.theme().secondary_active.into()),
-                        )
+                        .ghost()
                         .icon(
                             Icon::empty()
                                 .path("icons/clipboard.svg")
@@ -2186,13 +2223,7 @@ impl ChatWindow {
                         .child(
                             Button::new(("copy-btn", msg_idx as u64))
                                 .with_size(Size::XSmall)
-                                .custom(
-                                    ButtonCustomVariant::new(cx)
-                                        .color(gpui::rgba(0x00000000).into())
-                                        .foreground(cx.theme().muted_foreground.into())
-                                        .hover(cx.theme().secondary.into())
-                                        .active(cx.theme().secondary_active.into()),
-                                )
+                                .ghost()
                                 .icon(
                                     Icon::empty()
                                         .path("icons/clipboard.svg")
@@ -2208,13 +2239,7 @@ impl ChatWindow {
                         .child(
                             Button::new(("edit-btn", msg_idx as u64))
                                 .with_size(Size::XSmall)
-                                .custom(
-                                    ButtonCustomVariant::new(cx)
-                                        .color(gpui::rgba(0x00000000).into())
-                                        .foreground(cx.theme().muted_foreground.into())
-                                        .hover(cx.theme().secondary.into())
-                                        .active(cx.theme().secondary_active.into()),
-                                )
+                                .ghost()
                                 .icon(
                                     Icon::empty()
                                         .path("icons/edit.svg")
@@ -2331,6 +2356,7 @@ impl ChatWindow {
     }
 
     fn render_toolbar(&self, cx: &mut Context<Self>, is_disabled: bool) -> impl IntoElement {
+        let is_streaming = matches!(self.state, ChatState::Streaming);
         div()
             .flex()
             .flex_row()
@@ -2394,7 +2420,27 @@ impl ChatWindow {
                         .into_any_element()
                 }
             })
-            .child(
+            .child(if is_streaming {
+                Button::new("stop-btn")
+                    .with_size(Size::Small)
+                    .custom(
+                        ButtonCustomVariant::new(cx)
+                            .color(cx.theme().danger.into())
+                            .foreground(cx.theme().danger_foreground.into())
+                            .hover(cx.theme().danger_hover.into())
+                            .active(cx.theme().danger_active.into()),
+                    )
+                    .icon(
+                        Icon::empty()
+                            .path("icons/stop.svg")
+                            .size(px(14.))
+                            .text_color(cx.theme().danger_foreground),
+                    )
+                    .on_click(cx.listener(|this, _, _window, cx| {
+                        this.stop_streaming(&StopStreaming, _window, cx);
+                    }))
+                    .into_any_element()
+            } else {
                 Button::new("send-btn")
                     .with_size(Size::Small)
                     .primary()
@@ -2407,8 +2453,9 @@ impl ChatWindow {
                     .disabled(is_disabled)
                     .on_click(cx.listener(|this, _, _window, cx| {
                         this.send_message(&SendMessage, _window, cx);
-                    })),
-            )
+                    }))
+                    .into_any_element()
+            })
     }
 
     fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2537,6 +2584,8 @@ impl Render for ChatWindow {
                 if event.keystroke.key == "escape" {
                     if this.chat_input.read(cx).is_popup_visible() {
                         this.chat_input.update(cx, |ci, cx| ci.close_popup(cx));
+                    } else if matches!(this.state, ChatState::Streaming) {
+                        this.stop_streaming(&StopStreaming, _window, cx);
                     }
                 }
             }))

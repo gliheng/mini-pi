@@ -146,17 +146,41 @@ function assertShape<T extends TSchema>(msg: InboundMessage, schema: T): Static<
 }
 
 export async function handlePrompt(ctx: CommandContext): Promise<void> {
-  const { ws, sessionId, state, msg } = ctx;
+  const { ws, sessionId, state, msg, logger } = ctx;
   const parsed = assertShape(msg, PromptSchema);
-  const options: { images?: unknown[]; streamingBehavior?: string } = {};
+  const options: {
+    images?: unknown[];
+    streamingBehavior?: string;
+    preflightResult?: (success: boolean) => void;
+  } = {};
   if (parsed.images && parsed.images.length > 0) {
     options.images = parsed.images;
   }
   if (parsed.streamingBehavior) {
     options.streamingBehavior = parsed.streamingBehavior;
   }
-  await state.runtime.session.prompt(parsed.message, options as never);
-  sendResponse(ws, sessionId, "prompt", parsed.id, true);
+
+  // Do NOT await the full turn — that would block the session message queue
+  // and prevent abort/steer/follow_up from being handled while streaming.
+  // The SDK streams events via the session subscription; we only need to
+  // acknowledge once preflight succeeds (or fail early).
+  let preflightSucceeded = false;
+  options.preflightResult = (success: boolean) => {
+    preflightSucceeded = success;
+    if (success) {
+      sendResponse(ws, sessionId, "prompt", parsed.id, true);
+    }
+  };
+
+  state.runtime.session
+    .prompt(parsed.message, options as never)
+    .catch((e: unknown) => {
+      const err = e instanceof Error ? e.message : String(e);
+      logger.error("[bridge] prompt failed:", sessionId, err);
+      if (!preflightSucceeded) {
+        sendResponse(ws, sessionId, "prompt", parsed.id, false, undefined, err);
+      }
+    });
 }
 
 export async function handleSteer(ctx: CommandContext): Promise<void> {
@@ -174,8 +198,15 @@ export async function handleFollowUp(ctx: CommandContext): Promise<void> {
 }
 
 export async function handleAbort(ctx: CommandContext): Promise<void> {
-  const { ws, sessionId, state, msg } = ctx;
-  await state.runtime.session.abort();
+  const { ws, sessionId, state, msg, logger } = ctx;
+  logger.info("[bridge] handleAbort start:", sessionId, "isStreaming:", state.runtime.session.isStreaming);
+  try {
+    await state.runtime.session.abort();
+    logger.info("[bridge] handleAbort done:", sessionId, "isStreaming:", state.runtime.session.isStreaming);
+  } catch (e: unknown) {
+    const err = e instanceof Error ? e.message : String(e);
+    logger.error("[bridge] handleAbort error:", sessionId, err);
+  }
   sendResponse(ws, sessionId, "abort", msg.id, true);
 }
 

@@ -11,5 +11,6 @@ actions!(
         SignUp,
         ConfirmInlineEdit,
         CancelInlineEdit,
+        StopStreaming,
     ]
 );

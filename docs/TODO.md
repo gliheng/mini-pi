@@ -2,7 +2,7 @@
 - [x] Models and cloudflare gateway
 - [ ] Pi settings GUI (api keys, extensions, prompts)
 - [ ] Support extension UI protocol
-- [ ] Set model both on gpui and worker
+- [ ] Support setting model both on gpui and web
 - [x] Message editing
 - [ ] Steering, follow up and message queue
 - [ ] Properly display thinking select
@@ -14,6 +14,7 @@
 
 # UI
 - [ ] Show no more than two rows of thinking and make it default collapsed
+- [ ] Add a button to scroll to the bottom when user just scrolled
 
 # Pi-Commander
 - [ ] Refresh workspace, model on settings change

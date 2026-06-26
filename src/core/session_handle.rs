@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use gpui::{Context, EventEmitter, SharedString, Task};
+use gpui::prelude::*;
 use uuid::Uuid;
 
 use crate::config::model_config::parse_model_id;
@@ -398,10 +399,47 @@ impl SessionHandle {
         cx.emit(SessionEvent::Changed);
     }
 
-    pub fn abort(&mut self, _cx: &mut Context<Self>) {
+    pub fn abort(&mut self, cx: &mut Context<Self>) {
+        if !self.is_streaming() {
+            return;
+        }
+
+        // Tell the SDK to stop generating. We intentionally do NOT try to
+        // suppress late events here; that filtering belongs in the bridge
+        // event consumer once the abort is acknowledged.
         if let Some(ref mut rpc) = self.rpc {
             let _ = rpc.send_abort(None);
         }
+
+        // Finalize any in-flight streaming parts so the UI stops animating
+        // immediately, even before the bridge acknowledges the abort.
+        for msg in self.messages.iter_mut() {
+            for part in msg.parts.iter_mut() {
+                match part {
+                    MessagePart::Text { state, .. }
+                    | MessagePart::Reasoning { state, .. }
+                    | MessagePart::ToolCall { state, .. }
+                    | MessagePart::ToolResult { state, .. } => {
+                        if let Some(s) = state {
+                            if *s == PartState::Streaming {
+                                *s = PartState::Done;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.state = ChatState::Idle;
+        self.request_session_stats();
+
+        if let Some(ref tid) = self.thread_id {
+            cx.update_global(|app: &mut AppStore, _| {
+                app.streaming_thread_ids.remove(tid);
+            });
+        }
+
+        cx.emit(SessionEvent::Changed);
     }
 
     pub fn request_history(&mut self) {
