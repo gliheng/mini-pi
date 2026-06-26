@@ -19,7 +19,7 @@ use crate::utils::voice::{VoiceRecorder, VoiceState, start_recording, transcribe
 use crate::views::reasoning::Reasoning;
 use crate::views::workspace_manager::{WorkspaceManager, WorkspaceManagerEvent};
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants};
-use gpui_component::input::Input;
+use gpui_component::input::{Enter, IndentInline, Input, MoveDown, MoveUp};
 use gpui_component::notification::Notification;
 use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
 use gpui_component::text::{TextView, TextViewState};
@@ -2255,41 +2255,58 @@ impl ChatWindow {
                     .child(
                         div()
                             .flex()
-                            .on_key_down(cx.listener(
-                                |this, event: &gpui::KeyDownEvent, window, cx| {
-                                    let at_popup_active =
-                                        this.chat_input.read(cx).is_at_popup_visible();
-                                    let command_popup_active =
-                                        this.chat_input.read(cx).is_command_popup_visible();
-                                    if at_popup_active || command_popup_active {
-                                        match event.keystroke.key.as_str() {
-                                            "up" => {
-                                                this.chat_input
-                                                    .update(cx, |ci, cx| ci.navigate_popup(-1, cx));
-                                                window.prevent_default();
-                                                cx.stop_propagation();
-                                            }
-                                            "down" => {
-                                                this.chat_input
-                                                    .update(cx, |ci, cx| ci.navigate_popup(1, cx));
-                                                window.prevent_default();
-                                                cx.stop_propagation();
-                                            }
-                                            "enter" | "tab" => {
-                                                if at_popup_active {
-                                                    this.chat_input.update(cx, |ci, cx| {
-                                                        ci.select_highlighted_mention(window, cx)
-                                                    });
-                                                } else {
-                                                    this.chat_input.update(cx, |ci, cx| {
-                                                        ci.select_highlighted_command(window, cx)
-                                                    });
-                                                }
-                                                window.prevent_default();
-                                                cx.stop_propagation();
-                                            }
-                                            _ => {}
-                                        }
+                            // These input-bound actions (up/down/enter/tab) never
+                            // reach an `on_key_down` listener on a parent div, because
+                            // GPUI stops propagation once an action listener handles
+                            // them in the bubble phase (inside `Input`). Intercepts
+                            // them in the CAPTURE phase, which runs before the Input's
+                            // bubble-phase handlers, so the popup can swallow the keys
+                            // when it's open and lets them pass through otherwise.
+                            .capture_action(cx.listener(
+                                |this, _action: &MoveUp, _window, cx| {
+                                    if this.chat_input.read(cx).is_popup_visible() {
+                                        this.chat_input
+                                            .update(cx, |ci, cx| ci.navigate_popup(-1, cx));
+                                        cx.stop_propagation();
+                                    }
+                                },
+                            ))
+                            .capture_action(cx.listener(
+                                |this, _action: &MoveDown, _window, cx| {
+                                    if this.chat_input.read(cx).is_popup_visible() {
+                                        this.chat_input
+                                            .update(cx, |ci, cx| ci.navigate_popup(1, cx));
+                                        cx.stop_propagation();
+                                    }
+                                },
+                            ))
+                            .capture_action(cx.listener(
+                                |this, _action: &Enter, window, cx| {
+                                    if this.chat_input.read(cx).is_at_popup_visible() {
+                                        this.chat_input.update(cx, |ci, cx| {
+                                            ci.select_highlighted_mention(window, cx)
+                                        });
+                                        cx.stop_propagation();
+                                    } else if this.chat_input.read(cx).is_command_popup_visible() {
+                                        this.chat_input.update(cx, |ci, cx| {
+                                            ci.select_highlighted_command(window, cx)
+                                        });
+                                        cx.stop_propagation();
+                                    }
+                                },
+                            ))
+                            .capture_action(cx.listener(
+                                |this, _action: &IndentInline, window, cx| {
+                                    if this.chat_input.read(cx).is_at_popup_visible() {
+                                        this.chat_input.update(cx, |ci, cx| {
+                                            ci.select_highlighted_mention(window, cx)
+                                        });
+                                        cx.stop_propagation();
+                                    } else if this.chat_input.read(cx).is_command_popup_visible() {
+                                        this.chat_input.update(cx, |ci, cx| {
+                                            ci.select_highlighted_command(window, cx)
+                                        });
+                                        cx.stop_propagation();
                                     }
                                 },
                             ))
