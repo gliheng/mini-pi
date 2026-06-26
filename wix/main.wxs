@@ -23,7 +23,7 @@
 
     <MediaTemplate EmbedCab="yes" />
 
-    <Icon Id="AppIcon.ico" SourceFile="assets\app.ico" />
+    <Icon Id="AppIcon.ico" SourceFile="builder-assets\app.ico" />
     <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">

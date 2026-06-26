@@ -25,6 +25,7 @@ New-Item -ItemType Directory -Force -Path $package | Out-Null
 
 Copy-Item (Join-Path $root "target\release\mini-pi.exe") $package
 Copy-Item -Recurse (Join-Path $root "assets") $package
+Copy-Item -Recurse (Join-Path $root "scripts\builder-assets") $package
 
 $bridgeStage = Join-Path $package "pi-bridge"
 New-Item -ItemType Directory -Force -Path $bridgeStage | Out-Null

@@ -7,8 +7,8 @@ import cairosvg
 
 ROOT = Path(__file__).resolve().parent.parent
 SVG_PATH = ROOT / "assets" / "icons" / "pi.svg"
-ICO_PATH = ROOT / "assets" / "app.ico"
-ICNS_PATH = ROOT / "assets" / "app.icns"
+ICO_PATH = ROOT / "scripts" / "builder-assets" / "app.ico"
+ICNS_PATH = ROOT / "scripts" / "builder-assets" / "app.icns"
 
 ICO_SIZES = [16, 32, 48, 64, 128, 256]
 ICNS_SIZES = [16, 32, 64, 128, 256, 512, 1024]

@@ -23,6 +23,16 @@ if ! command -v cargo-bundle &>/dev/null; then
   cargo install cargo-bundle
 fi
 
+if ! command -v create-dmg &>/dev/null; then
+  echo "Installing create-dmg..."
+  if command -v brew &>/dev/null; then
+    brew install create-dmg
+  else
+    echo "create-dmg is required for a styled DMG. Install it from https://github.com/create-dmg/create-dmg" >&2
+    exit 1
+  fi
+fi
+
 echo "Building release app bundle..."
 # cargo-bundle on macOS also tries to build a DMG, which can fail due to
 # temp-space quirks even though the .app bundle is fine. We only need the
@@ -90,13 +100,16 @@ if command -v create-dmg &>/dev/null; then
   echo "Creating DMG with create-dmg..."
   create-dmg \
     --volname "$APP_NAME" \
+    --background "$ROOT/scripts/builder-assets/dmg-background.png" \
     --window-size 800 400 \
     --icon-size 100 \
-    --app-drop-link 600 185 \
+    --icon "$APP_NAME.app" 200 200 \
+    --app-drop-link 600 200 \
     "$DMG_OUT" \
     "$DMG_TMP"
 else
   echo "create-dmg not found; falling back to hdiutil..."
+  ln -sf /Applications "$DMG_TMP/Applications"
   hdiutil create -srcfolder "$DMG_TMP" -volname "$APP_NAME" -fs HFS+ -format UDZO "$DMG_OUT"
 fi
 
