@@ -37,29 +37,10 @@ pub struct FileSyncInfo {
     pub last_synced: String,
 }
 
-fn legacy_sync_meta_path() -> PathBuf {
-    let dir = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".mini-pi");
-    dir.join("sync_meta.json")
-}
-
 pub fn load_sync_meta(store: &Store) -> SyncMeta {
     match store.get_user_setting(SYNC_META_KEY) {
         Ok(Some(value)) => serde_json::from_str(&value).unwrap_or_default(),
-        Ok(None) => {
-            let legacy_path = legacy_sync_meta_path();
-            if legacy_path.exists() {
-                let content = std::fs::read_to_string(&legacy_path).unwrap_or_default();
-                let meta: SyncMeta = serde_json::from_str(&content).unwrap_or_default();
-                let _ = save_sync_meta(store, &meta);
-                let _ = std::fs::remove_file(&legacy_path);
-                meta
-            } else {
-                SyncMeta::default()
-            }
-        }
-        Err(_) => SyncMeta::default(),
+        Ok(None) | Err(_) => SyncMeta::default(),
     }
 }
 

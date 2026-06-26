@@ -2327,7 +2327,8 @@ impl ChatWindow {
                 div().max_w_full().child(
                     Select::new(&self.model_dropdown)
                         .with_size(Size::Small)
-                        .w(px(160.))
+                        .w(px(180.))
+                        .placeholder("LLM Model")
                         .menu_width(Length::Auto)
                         .menu_max_h(rems(10.)),
                 ),
@@ -2336,7 +2337,8 @@ impl ChatWindow {
                 div().max_w_full().child(
                     Select::new(&self.thinking_dropdown)
                         .with_size(Size::Small)
-                        .w(px(100.))
+                        .w(px(140.))
+                        .placeholder("Thinking effort")
                         .menu_width(Length::Auto)
                         .menu_max_h(rems(10.)),
                 ),
