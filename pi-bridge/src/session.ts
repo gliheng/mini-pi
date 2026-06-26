@@ -74,9 +74,8 @@ export class SessionStore {
   }
 
   subscribe(ws: WebSocket, sessionId: string, runtime: AgentSessionRuntime): () => void {
-    const logger = this.#logger;
     const unsubscribe = runtime.session.subscribe((event: Record<string, unknown>) => {
-      forwardEvent(ws, sessionId, event, logger);
+      forwardEvent(ws, sessionId, event);
     });
     return unsubscribe;
   }

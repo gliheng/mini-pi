@@ -1,7 +1,10 @@
 use gpui::{
     Context, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, px, svg,
+    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px, svg,
 };
+
+use crate::data::models::PartState;
+use crate::ui::loader::spinner_with;
 use gpui_component::ActiveTheme as _;
 use gpui_component::collapsible::Collapsible;
 
@@ -12,13 +15,18 @@ use gpui_component::collapsible::Collapsible;
 pub struct Reasoning {
     content: SharedString,
     collapsed: bool,
+    state: Option<PartState>,
 }
 
 impl Reasoning {
-    pub fn new(content: impl Into<SharedString>) -> Self {
+    pub fn new(
+        content: impl Into<SharedString>,
+        state: Option<PartState>,
+    ) -> Self {
         Self {
             content: content.into(),
-            collapsed: false,
+            collapsed: true,
+            state,
         }
     }
 
@@ -27,8 +35,13 @@ impl Reasoning {
         self
     }
 
-    pub fn set_content(&mut self, content: impl Into<SharedString>) {
+    pub fn set_content(
+        &mut self,
+        content: impl Into<SharedString>,
+        state: Option<PartState>,
+    ) {
         self.content = content.into();
+        self.state = state;
     }
 }
 
@@ -36,6 +49,7 @@ impl Render for Reasoning {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let collapsed = self.collapsed;
         let content = self.content.clone();
+        let is_streaming = self.state == Some(PartState::Streaming);
 
         Collapsible::new()
             .open(!collapsed)
@@ -62,6 +76,18 @@ impl Render for Reasoning {
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
                             .child(format!("Thinking {}", if collapsed { "▶" } else { "▼" })),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .justify_end()
+                            .when(is_streaming, |this| {
+                                this.child(spinner_with(
+                                    12.0,
+                                    u32::from(cx.theme().muted_foreground.to_rgb()) >> 8,
+                                ))
+                            }),
                     )
                     .on_click(cx.listener(|this, _, _window, cx| {
                         this.collapsed = !this.collapsed;

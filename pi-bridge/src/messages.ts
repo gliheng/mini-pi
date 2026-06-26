@@ -3,7 +3,6 @@ import type { WebSocket } from "ws";
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
 import type {
   ErrorPayload,
-  Logger,
   ResponsePayload,
   WireMessage,
 } from "./types.js";
@@ -274,10 +273,6 @@ export function sendResponse(
   });
 }
 
-export function forwardEvent(ws: WebSocket, sessionId: string, event: Record<string, unknown>, logger?: Logger): void {
-  const type = (event as { type?: string }).type;
-  if (logger && ["agent_start", "agent_end", "message_start", "message_end", "turn_start", "turn_end", "text_start", "text_delta", "text_end", "thinking_start", "thinking_delta", "thinking_end", "tool_execution_start", "tool_execution_end"].includes(type ?? "")) {
-    logger.info(`[bridge] forwardEvent ${type}`);
-  }
+export function forwardEvent(ws: WebSocket, sessionId: string, event: Record<string, unknown>): void {
   send(ws, { sessionId, ...event } as WireMessage);
 }

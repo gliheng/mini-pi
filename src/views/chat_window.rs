@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use gpui::{
-    AnyElement, AnyWindowHandle, Bounds, ClipboardItem, Context, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, Length, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, PathPromptOptions, Pixels, Render, ScrollHandle, SharedString, Styled, Window, canvas, div, fill, point, prelude::*, px, rems, svg
+    Anchor, AnyElement, AnyWindowHandle, Bounds, ClipboardItem, Context, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, Length, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, PathPromptOptions, Pixels, Render, ScrollHandle, SharedString, Styled, Window, canvas, div, fill, point, prelude::*, px, rems, svg
 };
 
 
@@ -23,7 +23,7 @@ use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectItem, Sel
 use gpui_component::text::{TextView, TextViewState};
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IndexPath, Sizable as _, Size, WindowExt as _,
-    h_flex, status_bar::StatusBar,
+    h_flex, hover_card::HoverCard, status_bar::StatusBar,
 };
 
 type ReasoningEntities = Vec<Vec<Option<Entity<Reasoning>>>>;
@@ -1338,7 +1338,7 @@ impl ChatWindow {
                 row.truncate(part_count);
             }
             for (part_idx, part) in msg.parts.iter().enumerate() {
-                if let MessagePart::Reasoning { text, .. } = part {
+                if let MessagePart::Reasoning { text, state, .. } = part {
                     if msg_idx >= self.reasoning_displays.len() {
                         self.reasoning_displays
                             .resize_with(msg_idx + 1, std::vec::Vec::new);
@@ -1347,13 +1347,14 @@ impl ChatWindow {
                     if part_idx >= row.len() {
                         row.resize_with(part_idx + 1, || None);
                     }
+                    let reasoning_state = state.clone();
                     let entity = if let Some(Some(existing)) = row.get(part_idx) {
                         existing.update(cx, |display, _cx| {
-                            display.set_content(text);
+                            display.set_content(text, reasoning_state);
                         });
                         existing.clone()
                     } else {
-                        let new = cx.new(|_cx| Reasoning::new(text));
+                        let new = cx.new(|_cx| Reasoning::new(text, reasoning_state));
                         row[part_idx] = Some(new.clone());
                         new
                     };
@@ -1867,34 +1868,19 @@ impl ChatWindow {
             return self.render_send_file_tool(cx, msg_idx, args, output, details);
         }
 
-        let result_element: AnyElement = if let Some(ref md) = markdown_entity {
-            div()
-                .flex()
-                .w(assistant_text_width)
-                .min_w_0()
-                .opacity(0.75)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(TextView::new(md).selectable(true).w_full()),
-                )
-                .into_any_element()
-        } else if let Some(output) = output {
-            div().opacity(0.75).child(output.to_string()).into_any_element()
-        } else {
-            div().into_any_element()
-        };
+        let has_output =
+            markdown_entity.is_some() || output.as_ref().map_or(false, |o| !o.is_empty());
+        let output_text = output.clone();
+        let output_markdown = markdown_entity.clone();
+        let hover_width = assistant_text_width.min(px(480.));
+        let input_text = format!("⚙ {} {}", name, args);
 
-        div()
-            .flex()
+        h_flex()
             .w_full()
-            .justify_start()
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
+                h_flex()
+                    .items_center()
+                    .gap_2()
                     .px_2()
                     .py_1()
                     .rounded_md()
@@ -1904,13 +1890,63 @@ impl ChatWindow {
                     .w_full()
                     .child(
                         div()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .opacity(0.75)
-                            .child(format!("⚙ {}", name)),
+                            .line_clamp(2)
+                            .flex_1()
+                            .min_w_0()
+                            .child(input_text),
                     )
-                    .child(div().opacity(0.75).child(args.to_string()))
-                    .child(div().h_px().bg(cx.theme().border))
-                    .child(result_element),
+                    .when(has_output, |this| {
+                        this.child(
+                            HoverCard::new(format!("tool-output-{}", msg_idx))
+                                .anchor(Anchor::TopRight)
+                                .open_delay(std::time::Duration::from_millis(200))
+                                .close_delay(std::time::Duration::from_millis(100))
+                                .trigger(
+                                    div()
+                                        .cursor_pointer()
+                                        .child(
+                                            Icon::empty()
+                                                .path("icons/chevron-right.svg")
+                                                .size(px(14.))
+                                                .text_color(cx.theme().muted_foreground),
+                                        ),
+                                )
+                                .content(move |_, _, _cx| {
+                                    let output_element: AnyElement = if let Some(ref md) =
+                                        output_markdown
+                                    {
+                                        div()
+                                            .flex()
+                                            .w(hover_width)
+                                            .min_w_0()
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .child(
+                                                        TextView::new(md).selectable(true).w_full(),
+                                                    ),
+                                            )
+                                            .into_any_element()
+                                    } else if let Some(ref text) = output_text {
+                                        div()
+                                            .w(hover_width)
+                                            .min_w_0()
+                                            .child(text.to_string())
+                                            .into_any_element()
+                                    } else {
+                                        div().into_any_element()
+                                    };
+
+                                    div()
+                                        .id(format!("tool-output-content-{}", msg_idx))
+                                        .max_w(px(520.))
+                                        .max_h(px(360.))
+                                        .overflow_y_scroll()
+                                        .child(output_element)
+                                }),
+                        )
+                    }),
             )
             .into_any_element()
     }

@@ -157,12 +157,19 @@ pub fn run() {
             }
 
             cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
-            cx.bind_keys([
-                KeyBinding::new("ctrl-w", crate::core::actions::CloseWindow, None),
+            let mut key_bindings = vec![
                 KeyBinding::new("cmd-w", crate::core::actions::CloseWindow, None),
                 KeyBinding::new("cmd-q", Quit, None),
                 KeyBinding::new("enter", crate::core::actions::SendMessage, None),
-            ]);
+            ];
+            if !cfg!(target_os = "macos") {
+                key_bindings.push(KeyBinding::new(
+                    "ctrl-w",
+                    crate::core::actions::CloseWindow,
+                    None,
+                ));
+            }
+            cx.bind_keys(key_bindings);
 
             cx.set_menus(vec![Menu {
                 name: "Mini Pi".into(),

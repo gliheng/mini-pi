@@ -198,15 +198,8 @@ export async function handleFollowUp(ctx: CommandContext): Promise<void> {
 }
 
 export async function handleAbort(ctx: CommandContext): Promise<void> {
-  const { ws, sessionId, state, msg, logger } = ctx;
-  logger.info("[bridge] handleAbort start:", sessionId, "isStreaming:", state.runtime.session.isStreaming);
-  try {
-    await state.runtime.session.abort();
-    logger.info("[bridge] handleAbort done:", sessionId, "isStreaming:", state.runtime.session.isStreaming);
-  } catch (e: unknown) {
-    const err = e instanceof Error ? e.message : String(e);
-    logger.error("[bridge] handleAbort error:", sessionId, err);
-  }
+  const { ws, sessionId, state, msg } = ctx;
+  await state.runtime.session.abort();
   sendResponse(ws, sessionId, "abort", msg.id, true);
 }
 

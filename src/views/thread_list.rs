@@ -64,12 +64,38 @@ impl RenderOnce for ThreadListItem {
         let title: SharedString = if thread.title.is_empty() {
             "New Thread".into()
         } else {
-            thread.title.clone().into()
+            // Collapse whitespace including newlines so the title always
+            // renders as one line with proper ellipsis truncation.
+            let mut cleaned = String::with_capacity(thread.title.len());
+            let mut in_space = false;
+            for ch in thread.title.chars() {
+                if ch.is_whitespace() && !in_space {
+                    cleaned.push(' ');
+                    in_space = true;
+                } else if !ch.is_whitespace() {
+                    cleaned.push(ch);
+                    in_space = false;
+                }
+            }
+            cleaned.trim().to_string().into()
         };
         let preview: SharedString = if thread.preview.is_empty() {
             "No messages yet".into()
         } else {
-            thread.preview.clone().into()
+            // Collapse multiple whitespace including newlines into a single
+            // space so the preview always renders as one line.
+            let mut cleaned = String::with_capacity(thread.preview.len());
+            let mut in_space = false;
+            for ch in thread.preview.chars() {
+                if ch.is_whitespace() && !in_space {
+                    cleaned.push(' ');
+                    in_space = true;
+                } else if !ch.is_whitespace() {
+                    cleaned.push(ch);
+                    in_space = false;
+                }
+            }
+            cleaned.trim().to_string().into()
         };
         let time_label: SharedString = if thread.updated_at.is_empty() {
             "".into()
