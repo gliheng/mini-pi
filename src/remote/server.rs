@@ -686,6 +686,43 @@ mod tests {
     }
 
     #[test]
+    fn options_preflight_succeeds_without_bearer_token() {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        spawn_dummy_controller(rx);
+        let (_handle, port) =
+            start(0, Some("secret".to_string()), tx).expect("server should start");
+
+        let client = reqwest::blocking::Client::new();
+        let response = client
+            .request(
+                reqwest::Method::OPTIONS,
+                &format!("http://127.0.0.1:{}/threads/1/message", port),
+            )
+            .header("Origin", "https://example.com")
+            .header("Access-Control-Request-Method", "POST")
+            .header("Access-Control-Request-Headers", "authorization,content-type")
+            .send()
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), 200);
+        assert!(
+            response
+                .headers()
+                .contains_key("access-control-allow-origin"),
+            "missing CORS allow-origin header"
+        );
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-methods")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .contains("POST"),
+            "missing CORS allow-methods header"
+        );
+    }
+
+    #[test]
     fn list_threads_uses_pagination_defaults() {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         spawn_dummy_controller(rx);
