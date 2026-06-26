@@ -315,7 +315,6 @@ impl gpui::Render for MiniPiApp {
     ) -> impl gpui::IntoElement {
         let active_tab_index = self.active_tab_index;
         let user_panel_active = cx.global::<AppStore>().user_panel_active;
-        let pinned = self.pinned;
 
         let dialog_layer = Root::render_dialog_layer(window, cx);
         let notification_layer = Root::render_notification_layer(window, cx);
@@ -350,32 +349,7 @@ impl gpui::Render for MiniPiApp {
                             .px_2()
                             .gap_2()
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .child(
-                                Button::new("pin")
-                                    .with_size(gpui_component::Size::Small)
-                                    .ghost()
-                                    .icon(
-                                        Icon::empty()
-                                            .path(if pinned {
-                                                "icons/unpin.svg"
-                                            } else {
-                                                "icons/pin.svg"
-                                            })
-                                            .text_color(if pinned {
-                                                gpui::rgb(0x4f46e5)
-                                            } else {
-                                                gpui::rgb(0x888888)
-                                            }),
-                                    )
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.pinned = !this.pinned;
-                                        crate::views::title_bar::set_window_level(
-                                            window,
-                                            this.pinned,
-                                        );
-                                        cx.notify();
-                                    })),
-                            )
+                            .child(self.pin_button(cx))
                             .child(Self::user_menu_button(cx)),
                     ),
             )
@@ -404,6 +378,31 @@ impl gpui::Render for MiniPiApp {
 }
 
 impl MiniPiApp {
+    fn pin_button(&mut self, cx: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+        let pinned = self.pinned;
+        Button::new("pin")
+            .with_size(gpui_component::Size::Small)
+            .ghost()
+            .icon(
+                Icon::empty()
+                    .path(if pinned {
+                        "icons/unpin.svg"
+                    } else {
+                        "icons/pin.svg"
+                    })
+                    .text_color(if pinned {
+                        gpui::rgb(0x4f46e5)
+                    } else {
+                        gpui::rgb(0x888888)
+                    }),
+            )
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.pinned = !this.pinned;
+                crate::views::title_bar::set_window_level(window, this.pinned);
+                cx.notify();
+            }))
+    }
+
     fn user_menu_button(cx: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
         Button::new("user-menu")
             .with_size(gpui_component::Size::Small)

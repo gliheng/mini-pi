@@ -108,6 +108,13 @@ const GetModelSchema = Type.Intersect([
   }),
 ]);
 
+const GetSessionStatsSchema = Type.Intersect([
+  BaseMessageSchema,
+  Type.Object({
+    type: Type.Literal("get_session_stats"),
+  }),
+]);
+
 export type InboundMessage = Static<typeof BaseMessageSchema>;
 
 export interface CommandContext {
@@ -314,6 +321,16 @@ export async function handleGetModels(ctx: GlobalCommandContext): Promise<void> 
   });
 }
 
+export async function handleGetSessionStats(ctx: CommandContext): Promise<void> {
+  const { ws, sessionId, state, msg } = ctx;
+  const stats = state.runtime.session.getSessionStats();
+  const contextUsage = state.runtime.session.getContextUsage();
+  sendResponse(ws, sessionId, "get_session_stats", msg.id, true, {
+    ...stats,
+    contextUsage,
+  });
+}
+
 export async function handleGetModel(ctx: GlobalCommandContext, state?: SessionState): Promise<void> {
   const { ws, msg, modelRegistry } = ctx;
   const parsed = assertShape(msg, GetModelSchema);
@@ -358,4 +375,5 @@ export const sessionCommands = new Map<string, SessionCommandHandler>([
   ["export_html", handleExportHtml],
   ["compact", handleCompact],
   ["extension_ui_response", handleExtensionUiResponse],
+  ["get_session_stats", handleGetSessionStats],
 ]);

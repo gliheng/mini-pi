@@ -21,6 +21,26 @@ pub struct WorkspaceInfo {
     pub name: String,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct SessionStats {
+    pub session_file: Option<String>,
+    pub session_id: String,
+    pub user_messages: usize,
+    pub assistant_messages: usize,
+    pub tool_calls: usize,
+    pub tool_results: usize,
+    pub total_messages: usize,
+    pub tokens_input: usize,
+    pub tokens_output: usize,
+    pub tokens_cache_read: usize,
+    pub tokens_cache_write: usize,
+    pub tokens_total: usize,
+    pub cost: f64,
+    pub context_tokens: Option<usize>,
+    pub context_window: usize,
+    pub context_percent: Option<f64>,
+}
+
 #[derive(Clone, Debug)]
 pub enum SessionEvent {
     Changed,
@@ -43,6 +63,7 @@ pub struct SessionHandle {
     pub pending_fork: Option<(String, String)>,
     pub refresh_entry_ids_after_streaming: bool,
     pub pi_restart_count: u32,
+    pub session_stats: Option<SessionStats>,
     pub store: Arc<Store>,
 }
 
@@ -76,6 +97,7 @@ impl SessionHandle {
             pending_fork: None,
             refresh_entry_ids_after_streaming: false,
             pi_restart_count: 0,
+            session_stats: None,
             store,
         };
 
@@ -394,6 +416,12 @@ impl SessionHandle {
         }
     }
 
+    pub fn request_session_stats(&mut self) {
+        if let Some(ref mut rpc) = self.rpc {
+            let _ = rpc.send_get_session_stats(None);
+        }
+    }
+
     pub fn export_html(&mut self, output_path: &str) {
         if let Some(ref mut rpc) = self.rpc
             && let Err(e) = rpc.send_export_html(Some(output_path), None)
@@ -557,6 +585,7 @@ impl SessionHandle {
                 if let Some(messages) = messages {
                     self.apply_final_agent_messages(messages);
                 }
+                self.request_session_stats();
                 for msg in self.messages.iter_mut() {
                     for part in msg.parts.iter_mut() {
                         match part {
@@ -1013,6 +1042,11 @@ impl SessionHandle {
                         .collect();
                     self.commands = items;
                 }
+                if command == "get_session_stats" && success {
+                    if let Some(ref data_val) = data {
+                        self.session_stats = Some(parse_session_stats(data_val));
+                    }
+                }
             }
         }
 
@@ -1241,6 +1275,88 @@ impl SessionHandle {
     }
 }
 
+fn parse_session_stats(val: &serde_json::Value) -> SessionStats {
+    let tokens = val.get("tokens").and_then(|t| t.as_object());
+    let context_usage = val.get("contextUsage");
+    SessionStats {
+        session_file: val
+            .get("sessionFile")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        session_id: val
+            .get("sessionId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        user_messages: val
+            .get("userMessages")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize,
+        assistant_messages: val
+            .get("assistantMessages")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize,
+        tool_calls: val
+            .get("toolCalls")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize,
+        tool_results: val
+            .get("toolResults")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize,
+        total_messages: val
+            .get("totalMessages")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize,
+        tokens_input: tokens
+            .and_then(|t| t.get("input"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize,
+        tokens_output: tokens
+            .and_then(|t| t.get("output"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize,
+        tokens_cache_read: tokens
+            .and_then(|t| t.get("cacheRead"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize,
+        tokens_cache_write: tokens
+            .and_then(|t| t.get("cacheWrite"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize,
+        tokens_total: tokens
+            .and_then(|t| t.get("total"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize,
+        cost: val
+            .get("cost")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0),
+        context_tokens: context_usage
+            .and_then(|c| c.get("tokens"))
+            .and_then(|v| {
+                if v.is_null() {
+                    None
+                } else {
+                    v.as_u64().map(|n| n as usize)
+                }
+            }),
+        context_window: context_usage
+            .and_then(|c| c.get("contextWindow"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize,
+        context_percent: context_usage
+            .and_then(|c| c.get("percent"))
+            .and_then(|v| {
+                if v.is_null() {
+                    None
+                } else {
+                    v.as_f64()
+                }
+            }),
+    }
+}
+
 fn loaded_parts_to_message_parts(parts: Vec<LoadedPart>) -> Vec<MessagePart> {
     parts
         .into_iter()
@@ -1269,4 +1385,84 @@ fn loaded_parts_to_message_parts(parts: Vec<LoadedPart>) -> Vec<MessagePart> {
             }),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_session_stats_full() {
+        let val = serde_json::json!({
+            "sessionFile": "/home/user/.mini-pi/sessions/session_123.jsonl",
+            "sessionId": "session_123",
+            "userMessages": 3,
+            "assistantMessages": 4,
+            "toolCalls": 5,
+            "toolResults": 6,
+            "totalMessages": 7,
+            "tokens": {
+                "input": 1000,
+                "output": 500,
+                "cacheRead": 200,
+                "cacheWrite": 100,
+                "total": 1500
+            },
+            "cost": 0.0042,
+            "contextUsage": {
+                "tokens": 1200,
+                "contextWindow": 200000,
+                "percent": 0.006
+            }
+        });
+        let stats = parse_session_stats(&val);
+        assert_eq!(stats.session_file, Some("/home/user/.mini-pi/sessions/session_123.jsonl".to_string()));
+        assert_eq!(stats.session_id, "session_123");
+        assert_eq!(stats.user_messages, 3);
+        assert_eq!(stats.assistant_messages, 4);
+        assert_eq!(stats.tool_calls, 5);
+        assert_eq!(stats.tool_results, 6);
+        assert_eq!(stats.total_messages, 7);
+        assert_eq!(stats.tokens_input, 1000);
+        assert_eq!(stats.tokens_output, 500);
+        assert_eq!(stats.tokens_cache_read, 200);
+        assert_eq!(stats.tokens_cache_write, 100);
+        assert_eq!(stats.tokens_total, 1500);
+        assert!((stats.cost - 0.0042).abs() < f64::EPSILON);
+        assert_eq!(stats.context_tokens, Some(1200));
+        assert_eq!(stats.context_window, 200000);
+        assert!((stats.context_percent.unwrap() - 0.006).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn parse_session_stats_null_context() {
+        let val = serde_json::json!({
+            "sessionId": "session_456",
+            "tokens": {},
+            "contextUsage": {
+                "tokens": null,
+                "contextWindow": 100000,
+                "percent": null
+            }
+        });
+        let stats = parse_session_stats(&val);
+        assert_eq!(stats.session_id, "session_456");
+        assert_eq!(stats.tokens_total, 0);
+        assert_eq!(stats.context_tokens, None);
+        assert_eq!(stats.context_window, 100000);
+        assert_eq!(stats.context_percent, None);
+    }
+
+    #[test]
+    fn parse_session_stats_minimal() {
+        let val = serde_json::json!({
+            "sessionId": "session_789"
+        });
+        let stats = parse_session_stats(&val);
+        assert_eq!(stats.session_id, "session_789");
+        assert_eq!(stats.total_messages, 0);
+        assert_eq!(stats.tokens_total, 0);
+        assert_eq!(stats.cost, 0.0);
+        assert_eq!(stats.context_window, 0);
+    }
 }

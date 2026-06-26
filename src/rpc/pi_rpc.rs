@@ -555,6 +555,12 @@ impl PiRpc {
         self.send(&cmd)
     }
 
+    pub fn send_get_session_stats(&mut self, request_id: Option<&str>) -> Result<(), PiRpcError> {
+        let mut cmd = serde_json::json!({ "type": "get_session_stats" });
+        add_request_id(&mut cmd, request_id);
+        self.send(&cmd)
+    }
+
     pub fn send_navigate_tree(
         &mut self,
         entry_id: &str,

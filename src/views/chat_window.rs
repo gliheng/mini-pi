@@ -1,13 +1,13 @@
 use std::{path::PathBuf, sync::Arc};
 
 use gpui::{
-    AnyElement, AnyWindowHandle, Bounds, ClipboardItem, Context, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, Length, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, PathPromptOptions, Pixels, Position, Render, ScrollHandle, SharedString, Styled, Window, canvas, div, fill, point, prelude::*, px, rems, svg
+    AnyElement, AnyWindowHandle, Bounds, ClipboardItem, Context, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, Length, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, PathPromptOptions, Pixels, Render, ScrollHandle, SharedString, Styled, Window, canvas, div, fill, point, prelude::*, px, rems, svg
 };
 
 use crate::config::model_config::all_models;
 use crate::core::actions::{CancelInlineEdit, CloseWindow, ConfirmInlineEdit, SendMessage};
 use crate::core::app::AppStore;
-use crate::core::session_handle::{SessionEvent, SessionHandle, WorkspaceInfo};
+use crate::core::session_handle::{SessionEvent, SessionHandle, SessionStats, WorkspaceInfo};
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::data::store::{Store, ThreadMeta, WorkspaceMeta};
 use crate::ui::chat_input::ChatInput;
@@ -22,6 +22,7 @@ use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectItem, Sel
 use gpui_component::text::{TextView, TextViewState};
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IndexPath, Sizable as _, Size, WindowExt as _,
+    h_flex, status_bar::StatusBar,
 };
 
 type ReasoningEntities = Vec<Vec<Option<Entity<Reasoning>>>>;
@@ -105,6 +106,7 @@ pub struct ChatWindow {
     pub window_handle: AnyWindowHandle,
     pub voice_state: VoiceState,
     pub voice_recorder: Option<VoiceRecorder>,
+    pub session_stats: Option<SessionStats>,
 }
 
 impl ChatWindow {
@@ -209,6 +211,7 @@ impl ChatWindow {
         let window_handle = window.window_handle();
         let voice_state = VoiceState::Idle;
         let voice_recorder = None;
+        let session_stats = None;
 
         let workspace_info = selected_workspace_id
             .as_ref()
@@ -249,6 +252,7 @@ impl ChatWindow {
             window_handle,
             voice_state,
             voice_recorder,
+            session_stats,
         };
 
         let default_model = cx.global::<AppStore>().config.default_model.clone();
@@ -448,6 +452,14 @@ impl ChatWindow {
             }
             cx.update_global(|_: &mut AppStore, _| {});
         }
+
+        // Ask the SDK for the current session stats so the status bar is
+        // populated immediately when opening or switching to a thread.
+        if let Some(ref session) = self.session {
+            session.update(cx, |session, _cx| {
+                session.request_session_stats();
+            });
+        }
     }
 
     fn sync_from_session(&mut self, cx: &mut Context<Self>) {
@@ -472,6 +484,7 @@ impl ChatWindow {
         self.title = title;
         self.selected_model = selected_model.clone();
         self.thinking_level = thinking_level.clone();
+        self.session_stats = s.session_stats.clone();
 
         self.chat_input.update(cx, |ci, cx| {
             ci.set_commands(commands, cx);
@@ -2397,6 +2410,102 @@ impl ChatWindow {
                     })),
             )
     }
+
+    fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let stats = self.session_stats.as_ref();
+        let total_messages = stats.map(|s| s.total_messages).unwrap_or(0);
+        let input_tokens = stats.map(|s| s.tokens_input).unwrap_or(0);
+        let output_tokens = stats.map(|s| s.tokens_output).unwrap_or(0);
+        let total_tokens = stats.map(|s| s.tokens_total).unwrap_or(0);
+        let cache_read = stats.map(|s| s.tokens_cache_read).unwrap_or(0);
+        let cache_write = stats.map(|s| s.tokens_cache_write).unwrap_or(0);
+        let cost = stats.map(|s| s.cost).unwrap_or(0.0);
+        let context_percent = stats.and_then(|s| s.context_percent);
+
+        fn format_tokens(n: usize) -> String {
+            if n >= 1_000_000 {
+                format!("{:.1}M", n as f64 / 1_000_000.0)
+            } else if n >= 1_000 {
+                format!("{:.1}k", n as f64 / 1_000.0)
+            } else {
+                n.to_string()
+            }
+        }
+
+        let muted = cx.theme().muted_foreground;
+
+        StatusBar::new()
+            .left(
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        Icon::empty()
+                            .path("icons/pi.svg")
+                            .size(px(10.))
+                            .text_color(muted),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(format!("{} messages", total_messages)),
+                    )
+                    .when(total_tokens > 0, |this| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(muted)
+                                .child(format!("{} tokens", format_tokens(total_tokens))),
+                        )
+                    }),
+            )
+            .right(
+                h_flex()
+                    .items_center()
+                    .gap_3()
+                    .when(input_tokens > 0 || output_tokens > 0, |this| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(muted)
+                                .child(format!(
+                                    "{} in / {} out",
+                                    format_tokens(input_tokens),
+                                    format_tokens(output_tokens)
+                                )),
+                        )
+                    })
+                    .when(cache_read > 0 || cache_write > 0, |this| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(muted)
+                                .child(format!(
+                                    "cache {}r / {}w",
+                                    format_tokens(cache_read),
+                                    format_tokens(cache_write)
+                                )),
+                        )
+                    })
+                    .when(cost > 0.0, |this| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(muted)
+                                .child(format!("${:.4}", cost)),
+                        )
+                    })
+                    .when_some(context_percent, |this, pct| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(muted)
+                                .child(format!("context {:.1}%", pct)),
+                        )
+                    }),
+            )
+    }
 }
 
 impl Render for ChatWindow {
@@ -2457,5 +2566,6 @@ impl Render for ChatWindow {
                 el.child(self.render_workspace_selector(cx))
             })
             .child(self.render_input_area(cx, is_disabled, input_focused))
+            .when(self.session.is_some(), |el| el.child(self.render_status_bar(cx)))
     }
 }

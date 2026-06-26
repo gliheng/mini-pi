@@ -47,7 +47,6 @@ impl Render for ChatApp {
         let theme = cx.theme().clone();
         let chat_window = self.chat_window.clone();
         let title = self.title.clone();
-        let pinned = self.pinned;
 
         let export_chat = chat_window.clone();
         let open_workspace_chat = chat_window.clone();
@@ -81,32 +80,7 @@ impl Render for ChatApp {
                             .gap_1()
                             .pr_2()
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .child(
-                                Button::new("pin")
-                                    .with_size(gpui_component::Size::Small)
-                                    .ghost()
-                                    .icon(
-                                        Icon::empty()
-                                            .path(if pinned {
-                                                "icons/unpin.svg"
-                                            } else {
-                                                "icons/pin.svg"
-                                            })
-                                            .text_color(if pinned {
-                                                gpui::rgb(0x4f46e5)
-                                            } else {
-                                                gpui::rgb(0x888888)
-                                            }),
-                                    )
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.pinned = !this.pinned;
-                                        crate::views::title_bar::set_window_level(
-                                            window,
-                                            this.pinned,
-                                        );
-                                        cx.notify();
-                                    })),
-                            )
+                            .child(self.pin_button(cx))
                             .child(
                                 Button::new("open-workspace")
                                     .with_size(gpui_component::Size::Small)
@@ -183,6 +157,33 @@ impl Render for ChatApp {
             .children(dialog_layer)
             .children(notification_layer)
             .children(sheet_layer)
+    }
+}
+
+impl ChatApp {
+    fn pin_button(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let pinned = self.pinned;
+        Button::new("pin")
+            .with_size(gpui_component::Size::Small)
+            .ghost()
+            .icon(
+                Icon::empty()
+                    .path(if pinned {
+                        "icons/unpin.svg"
+                    } else {
+                        "icons/pin.svg"
+                    })
+                    .text_color(if pinned {
+                        gpui::rgb(0x4f46e5)
+                    } else {
+                        gpui::rgb(0x888888)
+                    }),
+            )
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.pinned = !this.pinned;
+                crate::views::title_bar::set_window_level(window, this.pinned);
+                cx.notify();
+            }))
     }
 }
 
