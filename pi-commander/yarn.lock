@@ -8662,6 +8662,18 @@ __metadata:
   languageName: node
   linkType: hard
 
+"dedent@npm:^1.7.2":
+  version: 1.7.2
+  resolution: "dedent@npm:1.7.2"
+  peerDependencies:
+    babel-plugin-macros: ^3.1.0
+  peerDependenciesMeta:
+    babel-plugin-macros:
+      optional: true
+  checksum: 10c0/acaff07cac355b93f17b1b17ebbb84d3cc55af6ab4b7814c3f505e061903e168bc6bf9ddce331552d64dee1525f0b4c549c9ade46aebfac6f69caaed74e90751
+  languageName: node
+  linkType: hard
+
 "deep-is@npm:^0.1.3":
   version: 0.1.4
   resolution: "deep-is@npm:0.1.4"
@@ -13432,6 +13444,7 @@ __metadata:
     "@vueuse/core": "npm:^14.3.0"
     ai: "npm:^6.0.205"
     date-fns: "npm:^4.4.0"
+    dedent: "npm:^1.7.2"
     eslint: "npm:^10.5.0"
     motion-v: "npm:^2.3.0"
     nitro-cloudflare-dev: "npm:^0.2.2"
