@@ -101,10 +101,10 @@ if command -v create-dmg &>/dev/null; then
   create-dmg \
     --volname "$APP_NAME" \
     --background "$ROOT/scripts/builder-assets/dmg-background.png" \
-    --window-size 800 400 \
+    --window-size 560 400 \
     --icon-size 100 \
-    --icon "$APP_NAME.app" 200 200 \
-    --app-drop-link 600 200 \
+    --icon "$APP_NAME.app" 140 200 \
+    --app-drop-link 420 200 \
     "$DMG_OUT" \
     "$DMG_TMP"
 else
