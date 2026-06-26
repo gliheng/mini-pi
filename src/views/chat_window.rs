@@ -1,10 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use gpui::{
-    AnyElement, AnyWindowHandle, Bounds, ClipboardItem, Context, Entity, FocusHandle,
-    InteractiveElement, IntoElement, KeyDownEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, PathPromptOptions, Pixels, Position, Render, ScrollHandle, SharedString, Styled,
-    Window, canvas, div, fill, point, prelude::*, px, rems, svg,
+    AnyElement, AnyWindowHandle, Bounds, ClipboardItem, Context, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, Length, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, PathPromptOptions, Pixels, Position, Render, ScrollHandle, SharedString, Styled, Window, canvas, div, fill, point, prelude::*, px, rems, svg
 };
 
 use crate::config::model_config::all_models;
@@ -2330,6 +2327,8 @@ impl ChatWindow {
                 div().max_w_full().child(
                     Select::new(&self.model_dropdown)
                         .with_size(Size::Small)
+                        .w(px(160.))
+                        .menu_width(Length::Auto)
                         .menu_max_h(rems(10.)),
                 ),
             )
@@ -2337,6 +2336,8 @@ impl ChatWindow {
                 div().max_w_full().child(
                     Select::new(&self.thinking_dropdown)
                         .with_size(Size::Small)
+                        .w(px(100.))
+                        .menu_width(Length::Auto)
                         .menu_max_h(rems(10.)),
                 ),
             )

@@ -258,6 +258,7 @@ struct MiniPiApp {
     user_panel: gpui::Entity<UserPanel>,
     mini_app: gpui::Entity<MiniApp>,
     active_tab_index: usize,
+    pinned: bool,
     _user_panel_subscription: gpui::Subscription,
 }
 
@@ -300,6 +301,7 @@ impl MiniPiApp {
             user_panel,
             mini_app,
             active_tab_index: 0,
+            pinned: false,
             _user_panel_subscription,
         }
     }
@@ -313,6 +315,7 @@ impl gpui::Render for MiniPiApp {
     ) -> impl gpui::IntoElement {
         let active_tab_index = self.active_tab_index;
         let user_panel_active = cx.global::<AppStore>().user_panel_active;
+        let pinned = self.pinned;
 
         let dialog_layer = Root::render_dialog_layer(window, cx);
         let notification_layer = Root::render_notification_layer(window, cx);
@@ -347,6 +350,32 @@ impl gpui::Render for MiniPiApp {
                             .px_2()
                             .gap_2()
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .child(
+                                Button::new("pin")
+                                    .with_size(gpui_component::Size::Small)
+                                    .ghost()
+                                    .icon(
+                                        Icon::empty()
+                                            .path(if pinned {
+                                                "icons/unpin.svg"
+                                            } else {
+                                                "icons/pin.svg"
+                                            })
+                                            .text_color(if pinned {
+                                                gpui::rgb(0x4f46e5)
+                                            } else {
+                                                gpui::rgb(0x888888)
+                                            }),
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.pinned = !this.pinned;
+                                        crate::views::title_bar::set_window_level(
+                                            window,
+                                            this.pinned,
+                                        );
+                                        cx.notify();
+                                    })),
+                            )
                             .child(Self::user_menu_button(cx)),
                     ),
             )
