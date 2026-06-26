@@ -74,6 +74,7 @@ impl Render for Reasoning {
                     .pb_2()
                     .text_xs()
                     .text_color(cx.theme().secondary_foreground)
+                    .opacity(0.75)
                     .child(content),
             )
     }

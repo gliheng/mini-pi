@@ -29,26 +29,33 @@ Copy-Item -Recurse (Join-Path $root "assets") $package
 $bridgeStage = Join-Path $package "pi-bridge"
 New-Item -ItemType Directory -Force -Path $bridgeStage | Out-Null
 Copy-Item (Join-Path $root "pi-bridge\package.json") $bridgeStage
-Copy-Item (Join-Path $root "pi-bridge\package-lock.json") $bridgeStage
-Copy-Item -Recurse (Join-Path $root "pi-bridge\dist") $bridgeStage
+Copy-Item (Join-Path $root "pi-bridge\tsconfig.json") $bridgeStage
+Copy-Item -Recurse (Join-Path $root "pi-bridge\src") $bridgeStage
 
-Write-Host "Installing production Node dependencies for pi-bridge..."
+$bunVersion = "1.2.22"
+$bunZip = Join-Path $tools "bun-windows-x64.zip"
+$bunExtract = Join-Path $tools "bun-$bunVersion-windows-x64"
+if (-not (Test-Path $bunZip)) {
+    Write-Host "Downloading Bun v$bunVersion ..."
+    Invoke-WebRequest -Uri "https://github.com/oven-sh/bun/releases/download/bun-v$bunVersion/bun-windows-x64.zip" -OutFile $bunZip
+}
+if (-not (Test-Path $bunExtract)) {
+    New-Item -ItemType Directory -Force -Path $bunExtract | Out-Null
+    Expand-Archive -Path $bunZip -DestinationPath $bunExtract -Force
+}
+$bunExe = Join-Path $bunExtract "bun-windows-x64\bun.exe"
+
+Write-Host "Installing production Bun dependencies for pi-bridge..."
 Push-Location $bridgeStage
-& npm ci --omit=dev
-if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
+& $bunExe install --production
+if ($LASTEXITCODE -ne 0) { throw "bun install failed" }
+
+Write-Host "Compiling pi-bridge into a standalone executable..."
+& $bunExe build --compile src/index.ts --outfile pi-bridge.exe
+if ($LASTEXITCODE -ne 0) { throw "bun build --compile failed" }
 Pop-Location
 
-$nodeVersion = "20.15.1"
-$nodeZip = Join-Path $tools "node-v$nodeVersion-win-x64.zip"
-$nodeExtract = Join-Path $tools "node-v$nodeVersion-win-x64"
-if (-not (Test-Path $nodeZip)) {
-    Write-Host "Downloading Node.js v$nodeVersion ..."
-    Invoke-WebRequest -Uri "https://nodejs.org/dist/v$nodeVersion/node-v$nodeVersion-win-x64.zip" -OutFile $nodeZip
-}
-if (-not (Test-Path $nodeExtract)) {
-    Expand-Archive -Path $nodeZip -DestinationPath $tools -Force
-}
-Copy-Item (Join-Path $nodeExtract "node.exe") $package
+Copy-Item (Join-Path $bridgeStage "pi-bridge.exe") $package
 
 $wixZip = Join-Path $tools "wix311-binaries.zip"
 $wixDir = Join-Path $tools "wix"

@@ -17,8 +17,10 @@
 
 # Pi-Commander
 - [ ] Refresh workspace, model on settings change
+- [ ] Cannot stop
 
 # Bug
 - [ ] Option请求没有带Bearer Token会被401
 - [ ] Cannot be stopped when stuck
 - [ ] Why stuck sometimes
+- [ ] Only one thread can be running at a time

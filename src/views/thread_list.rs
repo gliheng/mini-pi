@@ -643,7 +643,7 @@ impl Render for ThreadList {
                     .when(self.thread_items.is_empty(), |el| {
                         el.items_center().justify_center().child(
                             svg()
-                                .path("icons/logo.svg")
+                                .path("icons/pi.svg")
                                 .text_color(theme.border)
                                 .size(px(180.)),
                         )

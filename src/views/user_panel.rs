@@ -186,7 +186,7 @@ impl Render for UserPanel {
             )
             .child(
                 gpui::svg()
-                    .path("icons/logo.svg")
+                    .path("icons/pi.svg")
                     .size(px(48.))
                     .text_color(cx.theme().primary),
             )

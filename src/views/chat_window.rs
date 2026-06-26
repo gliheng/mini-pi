@@ -254,9 +254,13 @@ impl ChatWindow {
             voice_recorder,
         };
 
-        // Attach to an existing session for restored threads.
+        let default_model = cx.global::<AppStore>().config.default_model.clone();
+        // Only create/attach a session immediately for restored threads so
+        // history + slash commands are available right away. For new threads
+        // leave the session uncreated so the workspace picker is shown; the
+        // session is created lazily in `ensure_session` once the user picks a
+        // workspace and sends the first message.
         if thread.is_some() {
-            let default_model = cx.global::<AppStore>().config.default_model.clone();
             let session = Self::get_or_create_session(
                 thread,
                 workspace_info.clone(),
@@ -1493,7 +1497,7 @@ impl ChatWindow {
             .when(self.messages.is_empty(), |el| {
                 el.items_center().justify_center().child(
                     svg()
-                        .path("icons/logo.svg")
+                        .path("icons/pi.svg")
                         .text_color(cx.theme().muted)
                         .size(px(180.)),
                 )
@@ -1815,6 +1819,7 @@ impl ChatWindow {
                 .flex()
                 .w(assistant_text_width)
                 .min_w_0()
+                .opacity(0.75)
                 .child(
                     div()
                         .flex_1()
@@ -1823,7 +1828,7 @@ impl ChatWindow {
                 )
                 .into_any_element()
         } else if let Some(output) = output {
-            div().child(output.to_string()).into_any_element()
+            div().opacity(0.75).child(output.to_string()).into_any_element()
         } else {
             div().into_any_element()
         };
@@ -1847,9 +1852,10 @@ impl ChatWindow {
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .opacity(0.75)
                             .child(format!("⚙ {}", name)),
                     )
-                    .child(div().child(args.to_string()))
+                    .child(div().opacity(0.75).child(args.to_string()))
                     .child(div().h_px().bg(cx.theme().border))
                     .child(result_element),
             )
@@ -1906,8 +1912,13 @@ impl ChatWindow {
                             .text_color(cx.theme().muted_foreground)
                             .text_xs()
                             .w_full()
-                            .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(header))
-                            .child(div().child(args.to_string())),
+                            .child(
+                                div()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .opacity(0.75)
+                                    .child(header),
+                            )
+                            .child(div().opacity(0.75).child(args.to_string())),
                     )
                     .into_any_element()
             }
@@ -2028,6 +2039,7 @@ impl ChatWindow {
                                 .text_color(cx.theme().secondary_foreground)
                                 .text_xs()
                                 .w_full()
+                                .opacity(0.75)
                                 .child(output.to_string()),
                         )
                         .into_any_element()

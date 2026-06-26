@@ -694,20 +694,55 @@ function startServer(port: number) {
     clientSocket = ws;
     log("client connected");
 
-    // Process messages sequentially so create_session always finishes before
-    // later commands like get_messages are handled.
-    let processQueue: Promise<void> = Promise.resolve();
+    // Process messages for a given session sequentially so that
+    // create_session always finishes before later commands like
+    // get_messages are handled, while allowing independent sessions to
+    // run concurrently. Global commands (no sessionId) use a shared
+    // queue so get_models/get_model ordering is preserved.
+    const sessionQueues = new Map<string, Promise<void>>();
+    let globalQueue: Promise<void> = Promise.resolve();
     ws.on("message", (data) => {
-      processQueue = processQueue.then(async () => {
+      let msg: any;
+      try {
+        msg = JSON.parse(String(data));
+      } catch (e) {
+        log("failed to parse message:", e);
+        send(ws, { type: "error", error: String(e) });
+        return;
+      }
+      log("recv:", msg.type, msg.sessionId || "-");
+      const run = async () => {
         try {
-          const msg = JSON.parse(String(data));
-          log("recv:", msg.type, msg.sessionId || "-");
           await dispatch(ws, msg);
         } catch (e) {
           log("failed to handle message:", e);
           send(ws, { type: "error", error: String(e) });
         }
-      });
+      };
+      const sid = msg.sessionId;
+      // create_session establishes a new session, so it must run on the
+      // global queue to avoid racing with its own session queue creation.
+      // It also seeds that session's queue so subsequent per-session
+      // commands wait until the session is actually registered.
+      if (msg.type === "create_session") {
+        const createPromise = globalQueue.then(run);
+        globalQueue = createPromise;
+        if (sid) {
+          const prevSession = sessionQueues.get(sid) ?? Promise.resolve();
+          sessionQueues.set(sid, prevSession.then(() => createPromise));
+        }
+      } else if (sid) {
+        const prev = sessionQueues.get(sid) ?? Promise.resolve();
+        const next = prev.then(run);
+        sessionQueues.set(sid, next);
+        next.finally(() => {
+          if (sessionQueues.get(sid) === next) {
+            sessionQueues.delete(sid);
+          }
+        });
+      } else {
+        globalQueue = globalQueue.then(run);
+      }
     });
 
     ws.on("close", () => {

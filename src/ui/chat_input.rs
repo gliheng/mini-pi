@@ -2,7 +2,8 @@ use std::ops::Range;
 use std::path::PathBuf;
 
 use gpui::{
-    AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Window,
+    AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Subscription,
+    Window,
 };
 
 use gpui_component::input::{InputEvent, InputState, RopeExt as _};
@@ -38,6 +39,7 @@ pub enum ChatInputEvent {
 pub struct ChatInput {
     pub focus_handle: FocusHandle,
     pub input_state: Entity<InputState>,
+    _input_subscription: Subscription,
 
     pub enable_at_mention: bool,
     pub at_mention_active: bool,
@@ -78,7 +80,7 @@ impl ChatInput {
                 .submit_on_enter(true)
         });
 
-        let _subscription = cx.subscribe_in(
+        let input_subscription = cx.subscribe_in(
             &input_state,
             window,
             |this, _state, event: &InputEvent, _window, cx| {
@@ -93,6 +95,7 @@ impl ChatInput {
         Self {
             focus_handle: input_state.focus_handle(cx),
             input_state,
+            _input_subscription: input_subscription,
             enable_at_mention: true,
             at_mention_active: false,
             at_mention_query: String::new(),

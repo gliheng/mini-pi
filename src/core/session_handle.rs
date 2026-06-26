@@ -405,7 +405,7 @@ impl SessionHandle {
     fn spawn_pi(&mut self, restoring: bool, cx: &mut Context<Self>) -> bool {
         let Some(bridge) = cx.global::<AppStore>().pi_bridge.clone() else {
             self.state = ChatState::Error(
-                "Failed to start pi SDK bridge. Run `cd pi-bridge && npm install`.".into(),
+                "Failed to start pi SDK bridge. Run `cd pi-bridge && bun install`.".into(),
             );
             cx.emit(SessionEvent::Changed);
             return false;

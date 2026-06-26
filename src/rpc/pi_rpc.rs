@@ -719,7 +719,59 @@ impl PiRpc {
 // ---------------------------------------------------------------------------
 
 fn find_runtime(bridge_dir: &PathBuf) -> Result<(String, Vec<String>), PiRpcError> {
-    // In release builds we ship a bundled Node binary plus compiled bridge JS.
+    // Release builds compile the bridge into a single executable with
+    // `bun build --compile`. No separate runtime or node_modules is needed.
+    let compiled_names: [&str; 2] = if cfg!(windows) {
+        ["pi-bridge.exe", "pi-bridge"]
+    } else {
+        ["pi-bridge", "pi-bridge.exe"]
+    };
+    for name in compiled_names.iter() {
+        let exe = bridge_dir.join(name);
+        if exe.exists() {
+            return Ok((exe.to_string_lossy().to_string(), vec![]));
+        }
+    }
+
+    // Development fallback: a bundled bun binary that runs src/index.ts.
+    let src_ts = bridge_dir.join("src").join("index.ts");
+    if src_ts.exists() {
+        let bun_candidates: Vec<PathBuf> = if cfg!(windows) {
+            vec![
+                bridge_dir.join("bun.exe"),
+                bridge_dir
+                    .parent()
+                    .map(|p| p.join("bun.exe"))
+                    .unwrap_or_default(),
+            ]
+        } else {
+            vec![
+                bridge_dir.join("bun"),
+                bridge_dir
+                    .parent()
+                    .map(|p| p.join("bun"))
+                    .unwrap_or_default(),
+            ]
+        };
+        for bun in bun_candidates {
+            if bun.exists() {
+                return Ok((
+                    bun.to_string_lossy().to_string(),
+                    vec!["run".to_string(), "src/index.ts".to_string()],
+                ));
+            }
+        }
+
+        // Fallback to a system-installed bun.
+        if Command::new("bun").arg("--version").output().is_ok() {
+            return Ok((
+                "bun".to_string(),
+                vec!["run".to_string(), "src/index.ts".to_string()],
+            ));
+        }
+    }
+
+    // Legacy fallback: bundled Node binary plus compiled bridge JS.
     let dist_js = bridge_dir.join("dist").join("index.js");
     if dist_js.exists() {
         let node_candidates: Vec<PathBuf> = if cfg!(windows) {
@@ -749,14 +801,6 @@ fn find_runtime(bridge_dir: &PathBuf) -> Result<(String, Vec<String>), PiRpcErro
         }
     }
 
-    // Prefer bun because it can run TypeScript directly.
-    if Command::new("bun").arg("--version").output().is_ok() {
-        return Ok((
-            "bun".to_string(),
-            vec!["run".to_string(), "src/index.ts".to_string()],
-        ));
-    }
-
     // Use the local tsx binary if npm install was run.
     #[cfg(windows)]
     let tsx_names: [&str; 2] = ["tsx.cmd", "tsx"];
@@ -782,7 +826,8 @@ fn find_runtime(bridge_dir: &PathBuf) -> Result<(String, Vec<String>), PiRpcErro
     }
 
     Err(PiRpcError::Spawn(
-        "no JavaScript runtime found (tried bundled node, bun, tsx, npx).".to_string(),
+        "no JavaScript runtime found (tried compiled pi-bridge, bundled bun, node, tsx, npx)."
+            .to_string(),
     ))
 }
 
