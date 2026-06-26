@@ -74,7 +74,7 @@ src/views/
   pi_agent_import.rs    # First-run import prompt from ~/.pi/agent/
 assets/                 # SVG icons loaded at runtime
 docs/                   # Internal reference: GPUI guides, design review, markdown improvement plan, TODO
-examples/               # Standalone markdown renderer example and test markdown file
+scripts/                # Build scripts: macOS/Windows installers and generate_icons.py
 ```
 
 ## Build, Run and Test
@@ -230,7 +230,7 @@ This application is a thin GUI wrapper around the `@earendil-works/pi-coding-age
 - `docs/design-review.md` — Design review (in Chinese) that lists known architecture issues such as PiRpc process monitoring, sync file locking, stale window handles, and Store `Connection` thread safety.
 - `docs/markdown-improvement-plan.md` — Planned markdown renderer improvements and known rendering bugs.
 - `docs/TODO.md` — Short checklist of upcoming features.
-- `examples/markdown_renderer.rs` + `examples/markdown_test.md` — Standalone markdown renderer example.
+
 
 ## Notes for Agents
 
