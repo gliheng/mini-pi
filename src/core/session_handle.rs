@@ -10,7 +10,7 @@ use crate::config::model_config::parse_model_id;
 use crate::core::app::AppStore;
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::data::store::Store;
-use crate::rpc::pi_rpc::{BridgeEvent, LoadedMessage, LoadedPart, PiRpc};
+use crate::rpc::pi_rpc::{BridgeEvent, ImageContent, LoadedMessage, LoadedPart, PiRpc};
 use crate::ui::chat_input::CommandItem;
 use crate::utils::format::truncate_str;
 use crate::utils::llm::generate_title;
@@ -312,6 +312,142 @@ impl SessionHandle {
 
         if let Some(ref mut rpc) = self.rpc {
             let _ = rpc.send_prompt(&content);
+        }
+
+        cx.emit(SessionEvent::Changed);
+    }
+
+    pub fn send_message_with_images(
+        &mut self,
+        content: SharedString,
+        images: Vec<ImageContent>,
+        cx: &mut Context<Self>,
+    ) {
+        eprintln!(
+            "[mini-pi] send_message_with_images: {} chars, {} images",
+            content.len(),
+            images.len()
+        );
+        if images.is_empty() {
+            self.send_message(content, cx);
+            return;
+        }
+
+        if self.rpc.is_none() && !self.spawn_pi(false, cx) {
+            return;
+        }
+
+        self.messages.push(Message {
+            id: Uuid::new_v4().to_string(),
+            entry_id: None,
+            role: Role::User,
+            parts: vec![MessagePart::Text {
+                text: content.clone(),
+                state: Some(PartState::Done),
+            }],
+        });
+
+        if self.thread_id.is_none() {
+            match self.store.create_thread("", "") {
+                Ok(thread) => {
+                    let thread_id = thread.id.clone();
+                    self.thread_id = Some(thread_id);
+                    self.title = content.chars().take(80).collect::<String>().into();
+                    let sf = self.session_file.clone();
+                    let model_opt = self.selected_model.as_deref();
+                    let thinking_opt = self.thinking_level.as_deref();
+                    let metadata = self
+                        .workspace
+                        .as_ref()
+                        .map(|ws| serde_json::json!({ "workspace_id": ws.id }));
+                    let metadata_ref = metadata.as_ref();
+                    let _ = self.store.update_thread(
+                        &thread.id,
+                        Some(&self.title),
+                        None,
+                        Some(Some(&sf)),
+                        Some(model_opt),
+                        Some(thinking_opt),
+                        None,
+                        Some(metadata_ref),
+                        false,
+                    );
+                }
+                Err(_) => {
+                    self.state = ChatState::Error("Failed to create thread".into());
+                    cx.emit(SessionEvent::Changed);
+                    return;
+                }
+            }
+        }
+
+        let tid = self.thread_id.as_ref().unwrap();
+        let user_count = self
+            .messages
+            .iter()
+            .filter(|m| matches!(m.role, Role::User))
+            .count();
+        let title = if user_count == 1 {
+            let temp_title: String = content.chars().take(80).collect();
+
+            let content_clone = content.clone();
+            let weak = cx.entity().downgrade();
+            cx.spawn(async move |_, cx| {
+                let result = smol::unblock(move || generate_title(&content_clone)).await;
+                match result {
+                    Ok(title) => {
+                        let _ = weak.update(cx, |session, cx| {
+                            session.title = title.clone().into();
+                            if let Some(ref tid) = session.thread_id {
+                                let _ = session.store.update_thread(
+                                    tid,
+                                    Some(&title),
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    true,
+                                );
+                            }
+                            cx.emit(SessionEvent::Changed);
+                        });
+                        let _ = cx.update_global(|_: &mut AppStore, _| {});
+                    }
+                    Err(e) => {
+                        eprintln!("[mini-pi] failed to generate title: {}", e);
+                    }
+                }
+            })
+            .detach();
+
+            temp_title
+        } else {
+            self.store
+                .get_thread(tid)
+                .ok()
+                .flatten()
+                .map(|t| t.title)
+                .unwrap_or_default()
+        };
+        let preview: String = content.chars().take(120).collect();
+        let _ = self.store.update_thread(
+            tid,
+            Some(&title),
+            Some(&preview),
+            None,
+            None,
+            None,
+            None,
+            None,
+            true,
+        );
+
+        self.state = ChatState::Streaming;
+
+        if let Some(ref mut rpc) = self.rpc {
+            let _ = rpc.send_prompt_ext(&content, Some(&images), None, None);
         }
 
         cx.emit(SessionEvent::Changed);

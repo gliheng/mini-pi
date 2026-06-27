@@ -1,7 +1,9 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, sync::LazyLock};
 
 use gpui::{
-    Anchor, AnyElement, AnyWindowHandle, Bounds, ClipboardItem, Context, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, Length, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, PathPromptOptions, Pixels, Render, ScrollHandle, SharedString, Styled, Window, canvas, div, fill, point, prelude::*, px, rems, svg
+    Anchor, AnyElement, AnyWindowHandle, ClipboardItem, Context, Entity, FocusHandle,
+    InteractiveElement, IntoElement, KeyDownEvent, Length, ParentElement, PathPromptOptions,
+    Pixels, Render, ScrollHandle, SharedString, Styled, Window, div, prelude::*, px, rems, svg,
 };
 
 
@@ -11,6 +13,7 @@ use crate::core::app::AppStore;
 use crate::core::session_handle::{SessionEvent, SessionHandle, SessionStats, WorkspaceInfo};
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::data::store::{Store, ThreadMeta, WorkspaceMeta};
+use crate::rpc::pi_rpc::ImageContent;
 use crate::ui::chat_input::ChatInput;
 use crate::ui::loader::{loader, text_loader};
 use crate::utils::voice::{VoiceRecorder, VoiceState, start_recording, transcribe};
@@ -23,11 +26,26 @@ use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectItem, Sel
 use gpui_component::text::{TextView, TextViewState};
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IndexPath, Sizable as _, Size, WindowExt as _,
-    h_flex, hover_card::HoverCard, status_bar::StatusBar,
+    h_flex, hover_card::HoverCard, scroll::Scrollbar, status_bar::StatusBar,
 };
 
 type ReasoningEntities = Vec<Vec<Option<Entity<Reasoning>>>>;
 type MarkdownEntities = Vec<Vec<Option<Entity<TextViewState>>>>;
+
+#[derive(Clone, Debug)]
+pub enum PendingAttachment {
+    Image {
+        path: PathBuf,
+        name: String,
+        mime_type: String,
+        base64: String,
+    },
+    Text {
+        path: PathBuf,
+        name: String,
+        content: String,
+    },
+}
 
 fn format_file_size(size: usize) -> String {
     if size < 1024 {
@@ -57,6 +75,47 @@ fn open_file(path: &std::path::Path) -> std::io::Result<()> {
         std::process::Command::new("xdg-open").arg(path).spawn()?;
     }
     Ok(())
+}
+
+fn is_image_file(path: &std::path::Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_lowercase())
+            .as_deref(),
+        Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg")
+    )
+}
+
+fn mime_type_for_path(path: &std::path::Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .as_deref()
+    {
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        Some("svg") => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
+}
+
+static TOOL_NAME_COLORS: LazyLock<HashMap<&'static str, gpui::Hsla>> = LazyLock::new(|| {
+    let mut m = HashMap::new();
+    m.insert("read", gpui::rgb(0x3b82f6).into());
+    m.insert("write", gpui::rgb(0x22c55e).into());
+    m.insert("edit", gpui::rgb(0xf59e0b).into());
+    m.insert("bash", gpui::rgb(0xef4444).into());
+    m.insert("send_file", gpui::rgb(0x8b5cf6).into());
+    m
+});
+
+fn tool_name_color(name: &str) -> gpui::Hsla {
+    TOOL_NAME_COLORS.get(name).copied().unwrap_or(gpui::rgb(0x888888).into())
 }
 
 #[derive(Clone)]
@@ -98,7 +157,6 @@ pub struct ChatWindow {
     pub markdown_displays: MarkdownEntities,
     pub scroll_handle: ScrollHandle,
     pub scroll_locked: bool,
-    pub scrollbar_drag_offset_y: Option<Pixels>,
     pub workspaces: Vec<WorkspaceMeta>,
     pub selected_workspace_id: Option<String>,
     pub workspace_manager: gpui::Entity<WorkspaceManager>,
@@ -108,6 +166,7 @@ pub struct ChatWindow {
     pub voice_state: VoiceState,
     pub voice_recorder: Option<VoiceRecorder>,
     pub session_stats: Option<SessionStats>,
+    pub pending_attachments: Vec<PendingAttachment>,
 }
 
 impl ChatWindow {
@@ -217,6 +276,7 @@ impl ChatWindow {
         let voice_state = VoiceState::Idle;
         let voice_recorder = None;
         let session_stats = None;
+        let pending_attachments = Vec::new();
 
         let workspace_info = selected_workspace_id
             .as_ref()
@@ -248,7 +308,6 @@ impl ChatWindow {
             at_mention_scroll_handle: ScrollHandle::new(),
             command_scroll_handle: ScrollHandle::new(),
             scroll_locked: true,
-            scrollbar_drag_offset_y: None,
             workspaces,
             selected_workspace_id,
             workspace_manager: workspace_manager.clone(),
@@ -258,6 +317,7 @@ impl ChatWindow {
             voice_state,
             voice_recorder,
             session_stats,
+            pending_attachments,
         };
 
         let default_model = cx.global::<AppStore>().config.default_model.clone();
@@ -715,13 +775,16 @@ impl ChatWindow {
             self.chat_input.read(cx).content(cx).clone()
         };
         eprintln!("[mini-pi] send_message: {} chars", content.len());
-        if content.is_empty() {
+        let has_attachment = !self.pending_attachments.is_empty();
+        if content.is_empty() && !has_attachment {
             return;
         }
 
         // Handle editing an existing user message: fork from it and send the
-        // edited prompt into the new branch.
+        // edited prompt into the new branch. Attachments are not carried over
+        // when editing; discard them to keep the flow simple.
         if let Some(editing_id) = self.editing_message_id.take() {
+            self.pending_attachments.clear();
             self.chat_input.update(cx, |ci, cx| ci.reset(_window, cx));
             let Some(edit_idx) = self.messages.iter().position(|m| m.id == editing_id) else {
                 eprintln!("[mini-pi] edited message {} not found", editing_id);
@@ -754,11 +817,49 @@ impl ChatWindow {
 
         self.chat_input.update(cx, |ci, cx| ci.reset(_window, cx));
         self.scroll_locked = true;
+        let attachments = std::mem::take(&mut self.pending_attachments);
+
+        let mut images: Vec<ImageContent> = Vec::new();
+        let mut file_parts: Vec<String> = Vec::new();
+        for attachment in attachments {
+            match attachment {
+                PendingAttachment::Image {
+                    mime_type, base64, ..
+                } => {
+                    images.push(ImageContent { data: base64, mime_type });
+                }
+                PendingAttachment::Text { content, path, .. } => {
+                    file_parts.push(format!(
+                        "<file path=\"{}\">\n{}\n</file>",
+                        path.to_string_lossy(),
+                        content
+                    ));
+                }
+            }
+        }
+
+        let combined_content: SharedString = if file_parts.is_empty() {
+            content
+        } else {
+            let files_block = file_parts.join("\n\n");
+            if content.is_empty() {
+                files_block
+            } else {
+                format!("{}\n\n{}", content, files_block)
+            }
+            .into()
+        };
 
         let session = self.session.clone().unwrap();
-        session.update(cx, |session, cx| {
-            session.send_message(content, cx);
-        });
+        if !images.is_empty() {
+            session.update(cx, |session, cx| {
+                session.send_message_with_images(combined_content, images, cx);
+            });
+        } else {
+            session.update(cx, |session, cx| {
+                session.send_message(combined_content, cx);
+            });
+        }
 
         let thread_id = session.read(cx).thread_id.clone();
         if let Some(ref tid) = thread_id {
@@ -799,6 +900,122 @@ impl ChatWindow {
         }
 
         cx.notify();
+    }
+
+    pub fn pick_and_send_file(
+        &mut self,
+        _: &gpui::ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.state, ChatState::Streaming | ChatState::Loading) {
+            return;
+        }
+
+        let rx = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: None,
+        });
+
+        cx.spawn_in(window, async move |this, cx| {
+            let paths = match rx.await {
+                Ok(Ok(Some(paths))) => paths,
+                _ => return,
+            };
+            if paths.is_empty() {
+                return;
+            }
+
+            let results: Vec<Result<PendingAttachment, String>> = smol::unblock(move || {
+                paths
+                    .into_iter()
+                    .map(|path| {
+                        let metadata = std::fs::metadata(&path)
+                            .map_err(|e| format!("Cannot read file metadata: {}", e))?;
+                        if metadata.is_dir() {
+                            return Err(format!(
+                                "{}: please select a file, not a directory",
+                                path.file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or("selected item")
+                            ));
+                        }
+                        let size = metadata.len();
+                        if size > 5 * 1024 * 1024 {
+                            return Err(format!(
+                                "{}: file is larger than 5 MB",
+                                path.file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or("selected file")
+                            ));
+                        }
+                        let name = path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("file")
+                            .to_string();
+                        let bytes = std::fs::read(&path)
+                            .map_err(|e| format!("Failed to read file: {}", e))?;
+
+                        if is_image_file(&path) {
+                            let mime_type = mime_type_for_path(&path).to_string();
+                            let base64 = base64::Engine::encode(
+                                &base64::engine::general_purpose::STANDARD,
+                                &bytes,
+                            );
+                            Ok(PendingAttachment::Image {
+                                path,
+                                name,
+                                mime_type,
+                                base64,
+                            })
+                        } else {
+                            const MAX_TEXT_BYTES: usize = 100 * 1024;
+                            if bytes.len() > MAX_TEXT_BYTES {
+                                return Err(format!(
+                                    "{}: text file is larger than 100 KB",
+                                    name
+                                ));
+                            }
+                            let content = String::from_utf8(bytes).map_err(|_| {
+                                format!(
+                                    "{}: binary files are not supported",
+                                    name
+                                )
+                            })?;
+                            Ok(PendingAttachment::Text { path, name, content })
+                        }
+                    })
+                    .collect()
+            })
+            .await;
+
+            this.update_in(cx, |this, window, cx| {
+                let mut errors = Vec::new();
+                for result in results {
+                    match result {
+                        Ok(attachment) => this.pending_attachments.push(attachment),
+                        Err(err) => errors.push(err),
+                    }
+                }
+                if !errors.is_empty() {
+                    let message = if errors.len() == 1 {
+                        errors.into_iter().next().unwrap()
+                    } else {
+                        format!("{} files could not be attached:\n{}", errors.len(), errors.join("\n"))
+                    };
+                    window.push_notification(Notification::error(message), cx);
+                }
+                if !this.pending_attachments.is_empty() {
+                    this.chat_input.update(cx, |ci, cx| ci.focus(window, cx));
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn send_edited_prompt(
@@ -1114,108 +1331,14 @@ impl ChatWindow {
             )
     }
 
-    fn render_messages_scrollbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let scroll_handle = self.scroll_handle.clone();
-        let entity = cx.entity();
-        let scrollbar_color = cx.theme().scrollbar;
-        let scrollbar_thumb_color = cx.theme().scrollbar_thumb;
+    fn render_messages_scrollbar(&self, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .id("messages-scrollbar")
             .absolute()
             .top_0()
-            .right_1()
+            .left_0()
+            .right_0()
             .bottom_0()
-            .w(px(8.))
-            .child(
-                canvas(
-                    |_, _, _| (),
-                    move |bounds, _, window, _| {
-                        let viewport_height = scroll_handle.bounds().size.height;
-                        let max_scroll = scroll_handle.max_offset().y;
-                        if viewport_height <= px(0.) || max_scroll <= px(0.) {
-                            return;
-                        }
-
-                        let track_bounds = Bounds::from_corners(
-                            point(bounds.left() + px(2.), bounds.top() + px(6.)),
-                            point(bounds.right() - px(2.), bounds.bottom() - px(6.)),
-                        );
-                        let track_height = track_bounds.size.height;
-                        if track_height <= px(0.) {
-                            return;
-                        }
-
-                        let content_height = viewport_height + max_scroll;
-                        let thumb_height = ((viewport_height / content_height) * track_height)
-                            .clamp(px(36.), track_height);
-                        let progress = (f32::from(-scroll_handle.offset().y)
-                            / f32::from(max_scroll))
-                        .clamp(0., 1.);
-                        let thumb_top =
-                            track_bounds.top() + (track_height - thumb_height) * progress;
-                        let thumb_bounds = Bounds::from_corners(
-                            point(track_bounds.left(), thumb_top),
-                            point(track_bounds.right(), thumb_top + thumb_height),
-                        );
-
-                        window.on_mouse_event({
-                            let entity = entity.clone();
-                            move |ev: &MouseDownEvent, _, _, cx| {
-                                if !thumb_bounds.contains(&ev.position) {
-                                    return;
-                                }
-
-                                entity.update(cx, |this, _| {
-                                    this.scrollbar_drag_offset_y =
-                                        Some(ev.position.y - thumb_bounds.origin.y);
-                                });
-                            }
-                        });
-                        window.on_mouse_event({
-                            let entity = entity.clone();
-                            move |_: &MouseUpEvent, _, _, cx| {
-                                entity.update(cx, |this, _| {
-                                    this.scrollbar_drag_offset_y = None;
-                                });
-                            }
-                        });
-                        window.on_mouse_event({
-                            let entity = entity.clone();
-                            let scroll_handle = scroll_handle.clone();
-                            move |ev: &MouseMoveEvent, _, _, cx| {
-                                if !ev.dragging() {
-                                    return;
-                                }
-
-                                let Some(drag_offset_y) = entity.read(cx).scrollbar_drag_offset_y
-                                else {
-                                    return;
-                                };
-
-                                let draggable_height = (track_height - thumb_height).max(px(0.));
-                                if draggable_height <= px(0.) {
-                                    return;
-                                }
-
-                                let thumb_top = (ev.position.y - drag_offset_y).clamp(
-                                    track_bounds.top(),
-                                    track_bounds.bottom() - thumb_height,
-                                );
-                                let progress = ((thumb_top - track_bounds.top())
-                                    / draggable_height)
-                                    .clamp(0., 1.);
-                                let offset_y = (max_scroll * progress).clamp(px(0.), max_scroll);
-                                scroll_handle.set_offset(point(px(0.), -offset_y));
-                                cx.notify(entity.entity_id());
-                            }
-                        });
-
-                        window.paint_quad(fill(track_bounds, scrollbar_color));
-                        window.paint_quad(fill(thumb_bounds, scrollbar_thumb_color));
-                    },
-                )
-                .size_full(),
-            )
+            .child(Scrollbar::vertical(&self.scroll_handle))
     }
 
     fn render_command_popup(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1629,7 +1752,7 @@ impl ChatWindow {
         let is_user = matches!(msg.role, Role::User);
         let msg_id = msg.id.clone();
         div()
-            .flex()
+            .block()
             .w_full()
             .when(is_user, |this| this.justify_end())
             .when(!is_user, |this| this.justify_start())
@@ -1893,7 +2016,6 @@ impl ChatWindow {
         let output_text = output.clone();
         let output_markdown = markdown_entity.clone();
         let hover_width = assistant_text_width.min(px(480.));
-        let input_text = format!("{} {}", name, args);
 
         h_flex()
             .w_full()
@@ -1918,11 +2040,23 @@ impl ChatWindow {
                             .text_color(cx.theme().muted_foreground),
                     )
                     .child(
-                        div()
-                            .line_clamp(2)
+                        h_flex()
                             .flex_1()
                             .min_w_0()
-                            .child(input_text),
+                            .gap_1()
+                            .child(
+                                div()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(tool_name_color(name.as_ref()))
+                                    .child(name.to_string()),
+                            )
+                            .child(
+                                div()
+                                    .line_clamp(2)
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(args.to_string()),
+                            ),
                     )
                     .when(has_output, |this| {
                         this.child(
@@ -2049,7 +2183,7 @@ impl ChatWindow {
                                     .child(
                                         div()
                                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .opacity(0.75)
+                                            .text_color(tool_name_color(name.as_ref()))
                                             .child(name.to_string()),
                                     ),
                             )
@@ -2342,6 +2476,66 @@ impl ChatWindow {
             .into_any_element()
     }
 
+    fn render_attachment_bar(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        if self.pending_attachments.is_empty() {
+            return div().into_any_element();
+        }
+        let attachments = self.pending_attachments.clone();
+        div()
+            .px_3()
+            .pt_2()
+            .pb_1()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap_2()
+            .children(attachments.into_iter().enumerate().map(|(idx, attachment)| {
+                let name = match &attachment {
+                    PendingAttachment::Image { name, .. } | PendingAttachment::Text { name, .. } => {
+                        name.clone()
+                    }
+                };
+                div()
+                    .id(SharedString::from(format!("pending-attachment-{}", idx)))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(cx.theme().accent)
+                    .text_color(cx.theme().accent_foreground)
+                    .child(
+                        Icon::empty()
+                            .path("icons/file.svg")
+                            .size(px(14.))
+                            .text_color(cx.theme().accent_foreground),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .child(SharedString::from(name)),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("remove-attachment-{}", idx)))
+                            .with_size(Size::XSmall)
+                            .ghost()
+                            .icon(
+                                Icon::empty()
+                                    .path("icons/close.svg")
+                                    .size(px(12.))
+                                    .text_color(cx.theme().accent_foreground),
+                            )
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.pending_attachments.remove(idx);
+                                cx.notify();
+                            })),
+                    )
+            }))
+            .into_any_element()
+    }
+
     fn render_input_area(
         &mut self,
         cx: &mut Context<Self>,
@@ -2370,10 +2564,13 @@ impl ChatWindow {
                     })
                     .shadow_sm()
                     .px_3()
-                    .py_2()
+                    .pb_2()
                     .flex()
                     .flex_col()
                     .gap_1()
+                    .when(!self.pending_attachments.is_empty(), |this| {
+                        this.child(self.render_attachment_bar(cx))
+                    })
                     .child(
                         div()
                             .flex()
@@ -2444,6 +2641,7 @@ impl ChatWindow {
 
     fn render_toolbar(&self, cx: &mut Context<Self>, is_disabled: bool) -> impl IntoElement {
         let is_streaming = matches!(self.state, ChatState::Streaming);
+        let is_busy = matches!(self.state, ChatState::Streaming | ChatState::Loading);
         div()
             .flex()
             .flex_row()
@@ -2453,6 +2651,7 @@ impl ChatWindow {
                 div().max_w_full().child(
                     Select::new(&self.model_dropdown)
                         .with_size(Size::Small)
+                        .appearance(false)
                         .w(px(180.))
                         .placeholder("LLM Model")
                         .menu_width(Length::Auto)
@@ -2463,6 +2662,7 @@ impl ChatWindow {
                 div().max_w_full().child(
                     Select::new(&self.thinking_dropdown)
                         .with_size(Size::Small)
+                        .appearance(false)
                         .w(px(140.))
                         .placeholder("Thinking effort")
                         .menu_width(Length::Auto)
@@ -2470,6 +2670,20 @@ impl ChatWindow {
                 ),
             )
             .child(div().flex_1())
+            .child(
+                Button::new("attach-file-btn")
+                    .with_size(Size::Small)
+                    .ghost()
+                    .disabled(is_busy)
+                    .icon(
+                        Icon::empty()
+                            .path("icons/plus.svg")
+                            .size(px(14.))
+                            .text_color(cx.theme().muted_foreground),
+                    )
+                    .on_click(cx.listener(Self::pick_and_send_file))
+                    .into_any_element(),
+            )
             .child({
                 let is_recording = self.voice_state == VoiceState::Recording;
                 let is_transcribing = self.voice_state == VoiceState::Transcribing;
@@ -2654,7 +2868,8 @@ impl Render for ChatWindow {
         let is_loading = matches!(self.state, ChatState::Loading);
         let is_streaming = matches!(self.state, ChatState::Streaming);
         let input_empty = self.chat_input.read(cx).content(cx).is_empty();
-        let is_disabled = is_streaming || is_loading || input_empty;
+        let is_disabled =
+            is_streaming || is_loading || (input_empty && self.pending_attachments.is_empty());
         let input_focused = self.chat_input.read(cx).focus_handle.is_focused(window);
 
         let (reasoning_entities, markdown_entities) = self.sync_display_entities(cx);

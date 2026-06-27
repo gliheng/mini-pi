@@ -1,6 +1,7 @@
 # Mini Pi
 - [x] Models and cloudflare gateway
 - [ ] Pi settings GUI (api keys, extensions, prompts)
+- [ ] Send attachments, copy paste images
 - [ ] Support extension UI protocol
 - [ ] Support setting model both on gpui and web
 - [x] Message editing
