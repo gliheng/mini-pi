@@ -862,9 +862,9 @@ impl SessionHandle {
                         tool_call_id: call_id.into(),
                         name: tool_name.into(),
                         output: if is_error {
-                            format!("ERROR: {}", truncate_str(&output, 500))
+                            format!("ERROR: {}", truncate_str(&output, 5000))
                         } else {
-                            truncate_str(&output, 500)
+                            truncate_str(&output, 5000)
                         }
                         .into(),
                         state: Some(PartState::Done),
@@ -1577,7 +1577,7 @@ mod tests {
             "totalMessages": 7,
             "tokens": {
                 "input": 1000,
-                "output": 500,
+                "output": 5000,
                 "cacheRead": 200,
                 "cacheWrite": 100,
                 "total": 1500
@@ -1598,7 +1598,7 @@ mod tests {
         assert_eq!(stats.tool_results, 6);
         assert_eq!(stats.total_messages, 7);
         assert_eq!(stats.tokens_input, 1000);
-        assert_eq!(stats.tokens_output, 500);
+        assert_eq!(stats.tokens_output, 5000);
         assert_eq!(stats.tokens_cache_read, 200);
         assert_eq!(stats.tokens_cache_write, 100);
         assert_eq!(stats.tokens_total, 1500);

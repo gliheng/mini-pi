@@ -2075,7 +2075,7 @@ impl ChatWindow {
                                                 .text_color(cx.theme().muted_foreground),
                                         )
                                 )
-                                .content(move |_, _, _cx| {
+                                .content(move |_, _, cx| {
                                     let output_element: AnyElement = if let Some(ref md) =
                                         output_markdown
                                     {
@@ -2107,6 +2107,22 @@ impl ChatWindow {
                                         .max_w(px(520.))
                                         .max_h(px(360.))
                                         .overflow_y_scroll()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_1()
+                                        .px_2()
+                                        .py_2()
+                                        .child(
+                                            div()
+                                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                .child("Output"),
+                                        )
+                                        .child(
+                                            div()
+                                                .w_full()
+                                                .h_px()
+                                                .bg(cx.theme().border),
+                                        )
                                         .child(output_element)
                                 }),
                         )
@@ -2306,6 +2322,9 @@ impl ChatWindow {
                         .justify_start()
                         .child(
                             div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
                                 .px_2()
                                 .py_1()
                                 .rounded_md()
@@ -2313,8 +2332,22 @@ impl ChatWindow {
                                 .text_color(cx.theme().secondary_foreground)
                                 .text_xs()
                                 .w_full()
-                                .opacity(0.75)
-                                .child(output.to_string()),
+                                .child(
+                                    div()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .child("Output"),
+                                )
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .h_px()
+                                        .bg(cx.theme().border),
+                                )
+                                .child(
+                                    div()
+                                        .opacity(0.75)
+                                        .child(output.to_string()),
+                                ),
                         )
                         .into_any_element()
                 }

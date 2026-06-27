@@ -839,7 +839,7 @@ fn parse_bridge_message(text: &str) -> Option<(String, BridgeEvent)> {
             log!(
                 "failed to parse JSON: {} (line: {})",
                 e,
-                truncate_str(text, 100)
+                truncate_str(text, 5000)
             );
             return None;
         }
@@ -868,7 +868,7 @@ fn parse_pi_line_value(val: &serde_json::Value) -> Option<BridgeEvent> {
     log!(
         "raw event type={}, data={}",
         event_type,
-        truncate_str(&serde_json::to_string(val).unwrap_or_default(), 200)
+        truncate_str(&serde_json::to_string(val).unwrap_or_default(), 5000)
     );
 
     match event_type {
@@ -1021,7 +1021,7 @@ fn parse_pi_line_value(val: &serde_json::Value) -> Option<BridgeEvent> {
             Some(BridgeEvent::ToolEnd {
                 call_id,
                 tool_name,
-                output: truncate_str(&output, 500),
+                output: truncate_str(&output, 5000),
                 is_error,
                 details,
             })
@@ -1192,7 +1192,7 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
                                     .unwrap_or_default();
                                 parts.push(LoadedPart::ToolCall {
                                     name: name.to_string(),
-                                    args: truncate_str(&args_str, 200),
+                                    args: truncate_str(&args_str, 5000),
                                 });
                             }
                             _ => {}
@@ -1225,7 +1225,7 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
                     role: "tool".to_string(),
                     parts: vec![LoadedPart::ToolResult {
                         name: tool_name.to_string(),
-                        output: format!("{}: {}", tool_name, truncate_str(&output, 500)),
+                        output: truncate_str(&output, 5000),
                     }],
                 });
             }
@@ -1245,7 +1245,7 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
                             "`{}` (exit {})\n{}",
                             command,
                             exit_code,
-                            truncate_str(output, 500)
+                            truncate_str(output, 5000)
                         ),
                     }],
                 });
