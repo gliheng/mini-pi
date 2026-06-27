@@ -13,6 +13,7 @@ use gpui_component::collapsible::Collapsible;
 /// Manages its own collapsed/expanded state internally and renders via
 /// `gpui_component::Collapsible`.
 pub struct Reasoning {
+    id: SharedString,
     content: SharedString,
     collapsed: bool,
     state: Option<PartState>,
@@ -20,10 +21,12 @@ pub struct Reasoning {
 
 impl Reasoning {
     pub fn new(
+        id: impl Into<SharedString>,
         content: impl Into<SharedString>,
         state: Option<PartState>,
     ) -> Self {
         Self {
+            id: id.into(),
             content: content.into(),
             collapsed: true,
             state,
@@ -55,9 +58,10 @@ impl Render for Reasoning {
             .open(!collapsed)
             .bg(cx.theme().secondary)
             .rounded_md()
+            .w_full()
             .child(
                 div()
-                    .id("reasoning-toggle")
+                    .id(format!("reasoning-toggle-{}", self.id))
                     .px_2()
                     .py_1()
                     .flex()
@@ -96,6 +100,7 @@ impl Render for Reasoning {
             )
             .content(
                 div()
+                    .w_full()
                     .px_2()
                     .pb_2()
                     .text_xs()

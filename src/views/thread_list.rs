@@ -197,7 +197,7 @@ impl RenderOnce for ThreadListItem {
                                         div()
                                             .text_xs()
                                             .text_color(theme.green)
-                                            .child("Thinking..."),
+                                            .child("Thinking"),
                                     ),
                             )
                         })

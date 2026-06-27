@@ -106,6 +106,8 @@ pub fn run() {
             }) {
                 eprintln!("[theme] failed to watch themes directory: {}", err);
             }
+            // Other theme settings
+            Theme::global_mut(cx).notification.placement = gpui::Anchor::TopCenter;
 
             let models = pi_bridge
                 .as_ref()

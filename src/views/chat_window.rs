@@ -132,7 +132,12 @@ impl ChatWindow {
         let selected_model: Option<String> = thread
             .and_then(|t| t.model.clone())
             .or_else(|| cx.global::<AppStore>().config.default_model.clone());
-        let selected_thinking_level: Option<String> = thread.and_then(|t| t.thinking_level.clone());
+        let models = cx.global::<AppStore>().models.clone();
+        let selected_thinking_level: Option<String> = if thread.is_some() {
+            thread.and_then(|t| t.thinking_level.clone())
+        } else {
+            Self::highest_thinking_level_for_model(&models, selected_model.as_deref())
+        };
 
         let mut workspaces = store.list_workspaces().unwrap_or_default();
         if workspaces.is_empty() {
@@ -171,7 +176,6 @@ impl ChatWindow {
             .or_else(|| workspaces.first().map(|ws| ws.id.clone()));
 
         // Build model dropdown items
-        let models = cx.global::<AppStore>().models.clone();
         let model_items: Vec<SelectModelItem> = all_models(&models)
             .iter()
             .map(|m| SelectModelItem {
@@ -366,6 +370,15 @@ impl ChatWindow {
         ("high", "High"),
         ("xhigh", "Extra High"),
     ];
+
+    fn highest_thinking_level_for_model(
+        models: &[crate::config::model_config::ModelInfo],
+        model_id: Option<&str>,
+    ) -> Option<String> {
+        Self::thinking_level_items_for_model(models, model_id)
+            .last()
+            .map(|item| item.id.clone())
+    }
 
     fn thinking_level_items_for_model(
         models: &[crate::config::model_config::ModelInfo],
@@ -1354,7 +1367,13 @@ impl ChatWindow {
                         });
                         existing.clone()
                     } else {
-                        let new = cx.new(|_cx| Reasoning::new(text, reasoning_state));
+                        let new = cx.new(|_cx| {
+                            Reasoning::new(
+                                format!("{}-{}", msg_idx, part_idx),
+                                text,
+                                reasoning_state,
+                            )
+                        });
                         row[part_idx] = Some(new.clone());
                         new
                     };
@@ -1621,6 +1640,7 @@ impl ChatWindow {
                     .w_full()
                     .min_w_0()
                     .when(is_user, |this| this.items_end())
+                    .when(!is_user, |this| this.items_stretch())
                     .gap_1()
                     .children({
                         let n = msg.parts.len();
@@ -1873,10 +1893,12 @@ impl ChatWindow {
         let output_text = output.clone();
         let output_markdown = markdown_entity.clone();
         let hover_width = assistant_text_width.min(px(480.));
-        let input_text = format!("⚙ {} {}", name, args);
+        let input_text = format!("{} {}", name, args);
 
         h_flex()
             .w_full()
+            .min_w_0()
+            .self_stretch()
             .child(
                 h_flex()
                     .items_center()
@@ -1888,6 +1910,13 @@ impl ChatWindow {
                     .text_color(cx.theme().secondary_foreground)
                     .text_xs()
                     .w_full()
+                    .min_w_0()
+                    .child(
+                        Icon::empty()
+                            .path("icons/wrench.svg")
+                            .size(px(12.))
+                            .text_color(cx.theme().muted_foreground),
+                    )
                     .child(
                         div()
                             .line_clamp(2)
@@ -1902,14 +1931,15 @@ impl ChatWindow {
                                 .open_delay(std::time::Duration::from_millis(200))
                                 .close_delay(std::time::Duration::from_millis(100))
                                 .trigger(
-                                    div()
-                                        .cursor_pointer()
-                                        .child(
+                                    Button::new(format!("tool-output-btn-{}", msg_idx))
+                                        .ghost()
+                                        .xsmall()
+                                        .icon(
                                             Icon::empty()
-                                                .path("icons/chevron-right.svg")
+                                                .path("icons/notepad-text.svg")
                                                 .size(px(14.))
                                                 .text_color(cx.theme().muted_foreground),
-                                        ),
+                                        )
                                 )
                                 .content(move |_, _, _cx| {
                                     let output_element: AnyElement = if let Some(ref md) =
@@ -1979,16 +2009,19 @@ impl ChatWindow {
                 .flex()
                 .flex_col()
                 .w_full()
+                .min_w_0()
+                .self_stretch()
                 .when(reasoning_entity.is_some(), |this| {
                     this.child(reasoning_entity.unwrap())
                 })
                 .into_any_element(),
             MessagePart::ToolCall { name, args, .. } => {
-                let header = format!("⚙ {}", name);
                 div()
                     .flex()
+                    .flex_col()
                     .w_full()
-                    .justify_start()
+                    .min_w_0()
+                    .self_stretch()
                     .child(
                         div()
                             .flex()
@@ -2001,13 +2034,31 @@ impl ChatWindow {
                             .text_color(cx.theme().muted_foreground)
                             .text_xs()
                             .w_full()
+                            .min_w_0()
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_1()
+                                    .items_center()
+                                    .child(
+                                        Icon::empty()
+                                            .path("icons/wrench.svg")
+                                            .size(px(12.))
+                                            .text_color(cx.theme().muted_foreground),
+                                    )
+                                    .child(
+                                        div()
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .opacity(0.75)
+                                            .child(name.to_string()),
+                                    ),
+                            )
                             .child(
                                 div()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .w_full()
                                     .opacity(0.75)
-                                    .child(header),
-                            )
-                            .child(div().opacity(0.75).child(args.to_string())),
+                                    .child(args.to_string()),
+                            ),
                     )
                     .into_any_element()
             }
@@ -2620,8 +2671,6 @@ impl Render for ChatWindow {
                 if event.keystroke.key == "escape" {
                     if this.chat_input.read(cx).is_popup_visible() {
                         this.chat_input.update(cx, |ci, cx| ci.close_popup(cx));
-                    } else if matches!(this.state, ChatState::Streaming) {
-                        this.stop_streaming(&StopStreaming, _window, cx);
                     }
                 }
             }))
