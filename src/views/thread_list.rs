@@ -1,22 +1,27 @@
 use std::sync::Arc;
 
 use gpui::{
-    div, prelude::*, px, size, svg, AnyWindowHandle, App, Bounds, ClickEvent, Context, ElementId,
-    FocusHandle, IntoElement, ParentElement, Render, RenderOnce, SharedString, Styled, Window,
+    div, prelude::*, px, size, svg, Anchor, AnyWindowHandle, App, Bounds, ClickEvent, Context,
+    ElementId, FocusHandle, Focusable, IntoElement, MouseButton, ParentElement, Render, RenderOnce,
+    SharedString, Styled, Window,
 };
 
 use crate::auth::state;
 use crate::core::actions::CloseWindow;
 use crate::core::app::{custom_window_options, AppStore};
-use crate::data::store::{PaginatedThreads, Store, ThreadMeta};
+use crate::data::store::{PaginatedThreads, Store, ThreadMeta, WorkspaceMeta};
 use crate::utils::format::format_relative_time;
 use crate::views::chat_app::open_chat_window;
 use crate::views::create_thread_button::{CreateThreadButton, CreateThreadButtonEvent};
 use crate::views::pi_agent_import::{PiAgentImport, PiAgentImportEvent};
-use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
+use crate::views::workspace_filter::{WorkspaceFilterPopover, WorkspaceFilterTag};
+use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _, Toggle};
 use gpui_component::{
+    h_flex,
+    input::{Input, InputEvent, InputState},
     list::{List, ListDelegate, ListEvent, ListState},
-    ActiveTheme, Icon, IndexPath, Selectable, Sizable as _, Size,
+    popover::Popover,
+    ActiveTheme, Icon, IconName, IndexPath, Selectable, Sizable as _, Size,
 };
 
 #[derive(IntoElement)]
@@ -318,6 +323,7 @@ impl RenderOnce for ThreadListItem {
 struct ThreadListDelegate {
     store: Arc<Store>,
     query: String,
+    workspace_filter: Option<String>,
     pinned: Vec<Arc<ThreadMeta>>,
     unpinned: Vec<Arc<ThreadMeta>>,
     selected_index: Option<IndexPath>,
@@ -334,6 +340,7 @@ impl ThreadListDelegate {
         Self {
             store,
             query: String::new(),
+            workspace_filter: None,
             pinned: Vec::new(),
             unpinned: Vec::new(),
             selected_index: None,
@@ -402,7 +409,31 @@ impl ThreadListDelegate {
         self.hovered_index = None;
         self.selected_index = None;
 
-        if query.is_empty() {
+        if let Some(workspace_id) = self.workspace_filter.as_deref() {
+            self.page = 1;
+            self.eof = true;
+            let query = query.to_lowercase();
+            match self.store.list_threads_by_workspace(workspace_id) {
+                Ok(threads) => {
+                    let threads: Vec<ThreadMeta> = if query.is_empty() {
+                        threads
+                    } else {
+                        threads
+                            .into_iter()
+                            .filter(|t| t.title.to_lowercase().contains(&query))
+                            .collect()
+                    };
+                    self.total = threads.len();
+                    self.per_page = threads.len().max(1);
+                    self.set_threads(&threads, cx);
+                }
+                Err(_) => {
+                    self.pinned.clear();
+                    self.unpinned.clear();
+                    self.total = 0;
+                }
+            }
+        } else if query.is_empty() {
             self.page = 1;
             self.eof = false;
             match self.store.list_threads_paginated(1, self.per_page.max(1)) {
@@ -576,18 +607,46 @@ pub struct ThreadList {
     pub create_thread_button: gpui::Entity<CreateThreadButton>,
     pub focus_handle: FocusHandle,
     list_state: gpui::Entity<ListState<ThreadListDelegate>>,
+    pub search_input: gpui::Entity<InputState>,
     pub store: Arc<Store>,
     pub show_import_prompt: bool,
+    pub workspaces: Vec<WorkspaceMeta>,
+    pub search_focused: bool,
     pub _global_subscription: gpui::Subscription,
     pub _import_prompt_subscription: gpui::Subscription,
     pub _create_thread_subscription: gpui::Subscription,
     pub _list_subscription: gpui::Subscription,
+    pub _search_focus_subscription: gpui::Subscription,
+    pub _search_input_subscription: gpui::Subscription,
 }
 
 impl ThreadList {
     pub fn new(window: &mut Window, cx: &mut Context<Self>, store: Arc<Store>) -> Self {
         let delegate = ThreadListDelegate::new(store.clone());
-        let list_state = cx.new(|cx| ListState::new(delegate, window, cx).searchable(true));
+        let list_state = cx.new(|cx| ListState::new(delegate, window, cx).searchable(false));
+
+        let search_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("Search threads...")
+        });
+        let search_input_subscription = cx.subscribe_in(
+            &search_input,
+            window,
+            |this, _state, event: &InputEvent, _window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.refresh_threads(cx);
+                    cx.notify();
+                }
+            },
+        );
+
+        let workspaces = store.list_workspaces().unwrap_or_default();
+
+        let search_focus_handle = search_input.read(cx).focus_handle(cx);
+        let search_focus_subscription = cx.on_focus(&search_focus_handle, window, |this, _, cx| {
+            this.workspaces = this.store.list_workspaces().unwrap_or_default();
+            this.search_focused = true;
+            cx.notify();
+        });
 
         let global_subscription = cx.observe_global::<AppStore>(move |this, cx| {
             this.refresh_threads(cx);
@@ -637,12 +696,17 @@ impl ThreadList {
             create_thread_button,
             focus_handle: cx.focus_handle(),
             list_state: list_state.clone(),
+            search_input,
             store,
             show_import_prompt,
+            workspaces,
+            search_focused: false,
             _global_subscription: global_subscription,
             _import_prompt_subscription: import_prompt_subscription,
             _create_thread_subscription: create_thread_subscription,
             _list_subscription: list_subscription,
+            _search_focus_subscription: search_focus_subscription,
+            _search_input_subscription: search_input_subscription,
         };
 
         thread_list.refresh_threads(cx);
@@ -650,10 +714,20 @@ impl ThreadList {
     }
 
     fn refresh_threads(&mut self, cx: &mut Context<Self>) {
-        let query = self.list_state.read(cx).delegate().query.clone();
+        let query = self.search_input.read(cx).value().to_string();
         self.list_state.update(cx, |state, cx| {
             state.delegate_mut().refresh(&query, cx);
         });
+    }
+
+    fn set_workspace_filter(&mut self, workspace: Option<&WorkspaceMeta>, _window: &mut Window, cx: &mut Context<Self>) {
+        let workspace_id = workspace.map(|ws| ws.id.clone());
+        self.list_state.update(cx, |state, _cx| {
+            state.delegate_mut().workspace_filter = workspace_id;
+        });
+        self.refresh_threads(cx);
+        self.search_focused = false;
+        cx.notify();
     }
 
     fn open_new_thread_window(&mut self, cx: &mut Context<Self>) {
@@ -701,8 +775,31 @@ impl ThreadList {
 }
 
 impl Render for ThreadList {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
+        let window_width = window.bounds().size.width;
+        let filter_panel_width = (window_width - px(24.)).max(px(100.));
+        let active_workspace_id = self
+            .list_state
+            .read(cx)
+            .delegate()
+            .workspace_filter
+            .clone();
+        let active_workspace = active_workspace_id
+            .as_ref()
+            .and_then(|id| self.workspaces.iter().find(|ws| ws.id == *id));
+
+        let workspace_filter_tag = active_workspace.map(|ws| {
+            let ws = ws.clone();
+            WorkspaceFilterTag::new(ws, {
+                let listener = cx.listener(|this, _: &(), window, cx| {
+                    this.set_workspace_filter(None, window, cx);
+                });
+                move |window, cx| {
+                    listener(&(), window, cx);
+                }
+            })
+        });
 
         div()
             .track_focus(&self.focus_handle)
@@ -715,10 +812,99 @@ impl Render for ThreadList {
             .min_h(px(0.))
             .bg(theme.background)
             .child(
+                h_flex()
+                    .px_2()
+                    .py_2()
+                    .gap_2()
+                    .items_center()
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(
+                                Popover::new("workspace-filter-popover")
+                                    .anchor(Anchor::TopCenter)
+                                    .mouse_button(MouseButton::Right)
+                                    .open(self.search_focused)
+                                    .on_open_change(cx.listener(|this, open, _, cx| {
+                                        this.search_focused = *open;
+                                        cx.notify();
+                                    }))
+                                    .p_1()
+                                    .max_h(px(200.))
+                                    .trigger(
+                                        Input::new(&self.search_input)
+                                            .w_full()
+                                            .appearance(false)
+                                            .prefix(
+                                                Icon::new(IconName::Search)
+                                                    .text_color(theme.muted_foreground),
+                                            )
+                                            .when(active_workspace_id.is_none(), |this| {
+                                                this.suffix(
+                                                    div()
+                                                        .text_color(theme.muted_foreground)
+                                                        .child(
+                                                            Toggle::new("workspace-filter-trigger")
+                                                                .icon(
+                                                                    Icon::empty()
+                                                                        .path("icons/filter.svg")
+                                                                        .size(px(14.)),
+                                                                )
+                                                                .with_size(Size::XSmall)
+                                                                .checked(self.search_focused)
+                                                                .on_click(cx.listener(
+                                                                    |this,
+                                                                     checked: &bool,
+                                                                     _,
+                                                                     cx| {
+                                                                        this.search_focused = *checked;
+                                                                        cx.stop_propagation();
+                                                                        cx.notify();
+                                                                    },
+                                                                )),
+                                                        ),
+                                                )
+                                            })
+                                            .cleanable(true),
+                                    )
+                                    .child(
+                                        div()
+                                            .w(filter_panel_width)
+                                            .child(WorkspaceFilterPopover::new(
+                                                self.workspaces.clone(),
+                                                {
+                                                    let listener = cx.listener(
+                                                        |this,
+                                                         workspace: &Option<WorkspaceMeta>,
+                                                         window,
+                                                         cx| {
+                                                            this.set_workspace_filter(
+                                                                workspace.as_ref(),
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        },
+                                                    );
+                                                    move |workspace: Option<WorkspaceMeta>,
+                                                          window,
+                                                          cx| {
+                                                        listener(&workspace, window, cx);
+                                                    }
+                                                },
+                                            )),
+                                    )
+                            ),
+                    )
+                    .when_some(workspace_filter_tag, |this, tag| {
+                        this.child(tag)
+                    }),
+            )
+            .child(
                 List::new(&self.list_state)
                     .flex_1()
-                    .w_full()
-                    .search_placeholder("Search threads..."),
+                    .w_full(),
             )
             .child(
                 div()
