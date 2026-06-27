@@ -23,6 +23,7 @@ use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_component::input::{Enter, IndentInline, Input, MoveDown, MoveUp};
 use gpui_component::notification::Notification;
 use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
+use gpui_component::tag::Tag;
 use gpui_component::text::{TextView, TextViewState};
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IndexPath, Sizable as _, Size, WindowExt as _,
@@ -117,6 +118,8 @@ static TOOL_NAME_COLORS: LazyLock<HashMap<&'static str, gpui::Hsla>> = LazyLock:
 fn tool_name_color(name: &str) -> gpui::Hsla {
     TOOL_NAME_COLORS.get(name).copied().unwrap_or(gpui::rgb(0x888888).into())
 }
+
+
 
 #[derive(Clone)]
 pub struct SelectModelItem {
@@ -2041,10 +2044,14 @@ impl ChatWindow {
                             .min_w_0()
                             .gap_1()
                             .child(
-                                div()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(tool_name_color(name.as_ref()))
-                                    .child(name.to_string()),
+                                Tag::custom(
+                                    tool_name_color(name.as_ref()),
+                                    tool_name_color(name.as_ref()),
+                                    tool_name_color(name.as_ref()),
+                                )
+                                .outline()
+                                .small()
+                                .child(name.to_string()),
                             )
                             .child(
                                 div()
@@ -2199,10 +2206,14 @@ impl ChatWindow {
                                             .text_color(cx.theme().muted_foreground),
                                     )
                                     .child(
-                                        div()
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .text_color(tool_name_color(name.as_ref()))
-                                            .child(name.to_string()),
+                                        Tag::custom(
+                                            tool_name_color(name.as_ref()),
+                                            tool_name_color(name.as_ref()),
+                                            tool_name_color(name.as_ref()),
+                                        )
+                                        .outline()
+                                        .small()
+                                        .child(name.to_string()),
                                     ),
                             )
                             .child(
