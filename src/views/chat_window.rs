@@ -2106,12 +2106,10 @@ impl ChatWindow {
                                         .id(format!("tool-output-content-{}", msg_idx))
                                         .max_w(px(520.))
                                         .max_h(px(360.))
-                                        .overflow_y_scroll()
                                         .flex()
                                         .flex_col()
                                         .gap_1()
                                         .px_2()
-                                        .py_2()
                                         .child(
                                             div()
                                                 .font_weight(gpui::FontWeight::SEMIBOLD)
@@ -2123,7 +2121,15 @@ impl ChatWindow {
                                                 .h_px()
                                                 .bg(cx.theme().border),
                                         )
-                                        .child(output_element)
+                                        .child(
+                                            div()
+                                                .id(format!("tool-output-scroll-{}", msg_idx))
+                                                .flex_1()
+                                                .h_full()
+                                                .overflow_y_scroll()
+                                                .pb_2()
+                                                .child(output_element),
+                                        )
                                 }),
                         )
                     }),
