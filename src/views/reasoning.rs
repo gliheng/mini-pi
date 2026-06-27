@@ -81,18 +81,13 @@ impl Render for Reasoning {
                             .text_color(cx.theme().muted_foreground)
                             .child(format!("Thinking {}", if collapsed { "▶" } else { "▼" })),
                     )
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .justify_end()
-                            .when(is_streaming, |this| {
-                                this.child(spinner_with(
-                                    12.0,
-                                    u32::from(cx.theme().muted_foreground.to_rgb()) >> 8,
-                                ))
-                            }),
-                    )
+                    .child(div().flex_1())
+                    .when(is_streaming, |this| {
+                        this.child(spinner_with(
+                            12.0,
+                            u32::from(cx.theme().muted_foreground.to_rgb()) >> 8,
+                        ))
+                    })
                     .on_click(cx.listener(|this, _, _window, cx| {
                         this.collapsed = !this.collapsed;
                         cx.notify();
@@ -100,7 +95,6 @@ impl Render for Reasoning {
             )
             .content(
                 div()
-                    .w_full()
                     .px_2()
                     .pb_2()
                     .text_xs()

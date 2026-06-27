@@ -1586,7 +1586,6 @@ impl ChatWindow {
                             .size(px(10.))
                             .text_color(cx.theme().muted_foreground),
                     )
-                    .label("Workspace")
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.open_workspace_manager(window, cx);
                     })),
@@ -1754,16 +1753,13 @@ impl ChatWindow {
         div()
             .block()
             .w_full()
-            .when(is_user, |this| this.justify_end())
-            .when(!is_user, |this| this.justify_start())
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .w_full()
-                    .min_w_0()
                     .when(is_user, |this| this.items_end())
-                    .when(!is_user, |this| this.items_stretch())
+                    .when(!is_user, |this| this.items_start())
                     .gap_1()
                     .children({
                         let n = msg.parts.len();
