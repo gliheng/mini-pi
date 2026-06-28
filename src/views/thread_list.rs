@@ -409,31 +409,7 @@ impl ThreadListDelegate {
         self.hovered_index = None;
         self.selected_index = None;
 
-        if let Some(workspace_id) = self.workspace_filter.as_deref() {
-            self.page = 1;
-            self.eof = true;
-            let query = query.to_lowercase();
-            match self.store.list_threads_by_workspace(workspace_id) {
-                Ok(threads) => {
-                    let threads: Vec<ThreadMeta> = if query.is_empty() {
-                        threads
-                    } else {
-                        threads
-                            .into_iter()
-                            .filter(|t| t.title.to_lowercase().contains(&query))
-                            .collect()
-                    };
-                    self.total = threads.len();
-                    self.per_page = threads.len().max(1);
-                    self.set_threads(&threads, cx);
-                }
-                Err(_) => {
-                    self.pinned.clear();
-                    self.unpinned.clear();
-                    self.total = 0;
-                }
-            }
-        } else if query.is_empty() {
+        if query.is_empty() && self.workspace_filter.is_none() {
             self.page = 1;
             self.eof = false;
             match self.store.list_threads_paginated(1, self.per_page.max(1)) {
@@ -448,7 +424,7 @@ impl ThreadListDelegate {
         } else {
             self.page = 1;
             self.eof = true;
-            match self.store.search_threads(query) {
+            match self.store.search_threads(query, self.workspace_filter.as_deref()) {
                 Ok(threads) => {
                     self.total = threads.len();
                     self.per_page = threads.len().max(1);
@@ -644,7 +620,13 @@ impl ThreadList {
         let search_focus_handle = search_input.read(cx).focus_handle(cx);
         let search_focus_subscription = cx.on_focus(&search_focus_handle, window, |this, _, cx| {
             this.workspaces = this.store.list_workspaces().unwrap_or_default();
-            this.search_focused = true;
+            let has_active_filter = this
+                .list_state
+                .read(cx)
+                .delegate()
+                .workspace_filter
+                .is_some();
+            this.search_focused = !has_active_filter;
             cx.notify();
         });
 
@@ -832,6 +814,7 @@ impl Render for ThreadList {
                                         cx.notify();
                                     }))
                                     .p_1()
+                                    .overlay_closable(false)
                                     .max_h(px(200.))
                                     .trigger(
                                         Input::new(&self.search_input)
@@ -845,6 +828,12 @@ impl Render for ThreadList {
                                                 this.suffix(
                                                     div()
                                                         .text_color(theme.muted_foreground)
+                                                        .on_mouse_down(
+                                                            MouseButton::Left,
+                                                            |_, _, cx| {
+                                                                cx.stop_propagation();
+                                                            },
+                                                        )
                                                         .child(
                                                             Toggle::new("workspace-filter-trigger")
                                                                 .icon(

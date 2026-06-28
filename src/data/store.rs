@@ -298,49 +298,58 @@ impl Store {
         })
     }
 
-    pub fn search_threads(&self, query: &str) -> Result<Vec<ThreadMeta>, StoreError> {
-        let q = format!("%{}%", query.to_lowercase());
+    /// Search threads by title. When `workspace_id` is provided, only threads
+    /// whose metadata contains that workspace id are returned. An empty query
+    /// returns all threads (optionally filtered by workspace).
+    pub fn search_threads(
+        &self,
+        query: &str,
+        workspace_id: Option<&str>,
+    ) -> Result<Vec<ThreadMeta>, StoreError> {
         let conn = self.conn.lock();
-        let mut stmt = conn
-            .prepare(&format!(
-                "SELECT {THREAD_SELECT_COLUMNS} FROM threads \
-                 WHERE lower(title) LIKE ?1 \
-                 ORDER BY pinned DESC, updated_at DESC"
-            ))
-            .map_err(StoreError::Rusqlite)?;
-        let rows = stmt
-            .query_map(params![q], row_to_thread)
-            .map_err(StoreError::Rusqlite)?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(StoreError::Rusqlite)
-    }
+        let threads: Vec<ThreadMeta> = if query.is_empty() {
+            let mut stmt = conn
+                .prepare(&format!(
+                    "SELECT {THREAD_SELECT_COLUMNS} FROM threads \
+                     ORDER BY pinned DESC, updated_at DESC"
+                ))
+                .map_err(StoreError::Rusqlite)?;
+            let rows = stmt
+                .query_map([], row_to_thread)
+                .map_err(StoreError::Rusqlite)?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(StoreError::Rusqlite)?
+        } else {
+            let q = format!("%{}%", query.to_lowercase());
+            let mut stmt = conn
+                .prepare(&format!(
+                    "SELECT {THREAD_SELECT_COLUMNS} FROM threads \
+                     WHERE lower(title) LIKE ?1 \
+                     ORDER BY pinned DESC, updated_at DESC"
+                ))
+                .map_err(StoreError::Rusqlite)?;
+            let rows = stmt
+                .query_map(params![q], row_to_thread)
+                .map_err(StoreError::Rusqlite)?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(StoreError::Rusqlite)?
+        };
+        drop(conn);
 
-    /// Returns all threads whose metadata contains the given workspace id,
-    /// ordered by pinned first, then updated_at descending.
-    pub fn list_threads_by_workspace(&self, workspace_id: &str) -> Result<Vec<ThreadMeta>, StoreError> {
-        let conn = self.conn.lock();
-        let mut stmt = conn
-            .prepare(&format!(
-                "SELECT {THREAD_SELECT_COLUMNS} FROM threads \
-                 ORDER BY pinned DESC, updated_at DESC"
-            ))
-            .map_err(StoreError::Rusqlite)?;
-        let rows = stmt
-            .query_map([], row_to_thread)
-            .map_err(StoreError::Rusqlite)?;
-        let threads = rows
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(StoreError::Rusqlite)?;
-        Ok(threads
-            .into_iter()
-            .filter(|t| {
-                t.metadata
-                    .as_ref()
-                    .and_then(|md| md.get("workspace_id"))
-                    .and_then(|v| v.as_str())
-                    == Some(workspace_id)
-            })
-            .collect())
+        if let Some(workspace_id) = workspace_id {
+            Ok(threads
+                .into_iter()
+                .filter(|t| {
+                    t.metadata
+                        .as_ref()
+                        .and_then(|md| md.get("workspace_id"))
+                        .and_then(|v| v.as_str())
+                        == Some(workspace_id)
+                })
+                .collect())
+        } else {
+            Ok(threads)
+        }
     }
 
     pub fn get_thread(&self, id: &str) -> Result<Option<ThreadMeta>, StoreError> {
