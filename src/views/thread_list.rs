@@ -841,6 +841,7 @@ impl Render for ThreadList {
                                                                         .path("icons/filter.svg")
                                                                         .size(px(14.)),
                                                                 )
+                                                                .cursor_default()
                                                                 .with_size(Size::XSmall)
                                                                 .checked(self.search_focused)
                                                                 .on_click(cx.listener(

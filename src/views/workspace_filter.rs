@@ -13,6 +13,7 @@ use gpui_component::{
 };
 
 use crate::data::store::WorkspaceMeta;
+use crate::utils::color::{workspace_color, workspace_foreground};
 
 /// A closable tag showing the active workspace filter.
 #[derive(IntoElement)]
@@ -38,10 +39,13 @@ impl RenderOnce for WorkspaceFilterTag {
         let theme = cx.theme().clone();
         let on_clear = self.on_clear.clone();
 
+        let bg = workspace_color(&self.workspace.name);
+        let fg = workspace_foreground(bg);
+
         h_flex()
             .gap_1()
             .items_center()
-            .child(Tag::primary().small().child(self.workspace.name))
+            .child(Tag::custom(bg, fg, bg).small().child(self.workspace.name))
             .child(
                 Button::new("clear-workspace-filter")
                     .with_size(Size::XSmall)
@@ -58,6 +62,7 @@ impl RenderOnce for WorkspaceFilterTag {
                             .size(px(12.))
                             .text_color(theme.muted_foreground),
                     )
+                    .cursor_default()
                     .on_click(move |_event, window, cx| {
                         on_clear(window, cx);
                     }),
@@ -87,8 +92,7 @@ impl WorkspaceFilterPopover {
 }
 
 impl RenderOnce for WorkspaceFilterPopover {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = cx.theme().clone();
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let on_select = self.on_select.clone();
 
         let workspace_rows: Vec<_> = self
@@ -99,17 +103,15 @@ impl RenderOnce for WorkspaceFilterPopover {
                 let name = ws.name.clone();
                 let on_select = on_select.clone();
                 let ws_for_callback = ws.clone();
+                let bg = workspace_color(&name);
+                let fg = workspace_foreground(bg);
                 div()
                     .id(ElementId::from(SharedString::from(format!(
                         "workspace-filter-{}",
                         ws_id
                     ))))
-                    .px_2()
-                    .py_1()
                     .cursor_pointer()
-                    .rounded_md()
-                    .hover(|this| this.bg(theme.secondary_hover))
-                    .child(Tag::primary().small().child(name))
+                    .child(Tag::custom(bg, fg, bg).small().child(name))
                     .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                         on_select(Some(ws_for_callback.clone()), window, cx);
                     })
@@ -119,6 +121,8 @@ impl RenderOnce for WorkspaceFilterPopover {
         h_flex()
             .flex_wrap()
             .gap_1()
+            .px_2()
+            .py_1()
             .children(workspace_rows)
     }
 }

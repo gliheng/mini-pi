@@ -2,8 +2,9 @@ use std::{path::PathBuf, sync::Arc};
 
 use gpui::{
     AnyElement, AnyWindowHandle, ClipboardItem, Context, Entity, FocusHandle,
-    InteractiveElement, IntoElement, KeyDownEvent, Length, ParentElement, PathPromptOptions,
-    Pixels, Render, ScrollHandle, SharedString, Styled, Window, div, prelude::*, px, rems, svg,
+    InteractiveElement, IntoElement, KeyDownEvent, Length, MouseButton, ParentElement,
+    PathPromptOptions, Pixels, Render, ScrollHandle, SharedString, Styled, Window, div, prelude::*,
+    px, rems, svg,
 };
 
 
@@ -16,12 +17,14 @@ use crate::data::store::{Store, ThreadMeta, WorkspaceMeta};
 use crate::rpc::pi_rpc::ImageContent;
 use crate::ui::chat_input::ChatInput;
 use crate::ui::loader::{loader, text_loader};
+use crate::utils::color::{workspace_color, workspace_foreground};
 use crate::utils::voice::{VoiceRecorder, VoiceState, start_recording, transcribe};
 use crate::views::reasoning::Reasoning;
 use crate::views::tool_call::ToolCall;
 use crate::views::workspace_manager::{WorkspaceManager, WorkspaceManagerEvent};
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_component::input::{Enter, IndentInline, Input, MoveDown, MoveUp};
+use gpui_component::tag::Tag;
 use gpui_component::notification::Notification;
 use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
 use gpui_component::text::{TextView, TextViewState};
@@ -1661,34 +1664,17 @@ impl ChatWindow {
                 let ws_id = ws.id.clone();
                 let ws_name = ws.name.clone();
                 let name: SharedString = ws_name.clone().into();
-                let button = Button::new(SharedString::from(format!("ws-{}", ws_id)))
-                    .with_size(Size::XSmall)
-                    .compact();
-                let button = if is_selected {
-                    let variant = ButtonCustomVariant::new(cx)
-                        .color(cx.theme().primary.into())
-                        .foreground(cx.theme().primary_foreground.into())
-                        .hover(cx.theme().primary_hover.into())
-                        .active(cx.theme().primary_active.into());
-                    button.custom(variant)
+                let bg = workspace_color(&ws.name);
+                let fg = workspace_foreground(bg);
+                let tag = if is_selected {
+                    Tag::custom(bg, fg, bg)
                 } else {
-                    button.outline()
+                    Tag::custom(bg.opacity(0.7), fg, bg.opacity(0.7))
                 };
-                button
-                    .when(ws.name == "Default", |this| {
-                        this.icon(
-                            Icon::empty()
-                                .path("icons/folder.svg")
-                                .size(px(10.))
-                                .text_color(if is_selected {
-                                    cx.theme().primary_active
-                                } else {
-                                    cx.theme().muted_foreground
-                                }),
-                        )
-                    })
-                    .label(name)
-                    .on_click(cx.listener(move |this, _, _window, cx| {
+                div()
+                    .cursor_pointer()
+                    .child(tag.with_size(Size::XSmall).child(name))
+                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _window, cx| {
                         this.selected_workspace_id = Some(ws_id.clone());
                         let ws_dir = this
                             .workspaces
