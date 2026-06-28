@@ -67,6 +67,38 @@ fn open_file(path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Returns a short title for a tool call based on its name and arguments.
+/// `read`/`edit`/`write` show the `path`, `bash` shows the `command`, and all
+/// other tools fall back to the full args.
+fn format_tool_title(name: &str, args: &str) -> String {
+    let key = match name {
+        "bash" => Some("command"),
+        "read" | "edit" | "write" => Some("path"),
+        _ => None,
+    };
+    if let Some(key) = key {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(args) {
+            if let Some(value) = json.get(key) {
+                return value
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| value.to_string());
+            }
+        }
+    }
+    args.to_string()
+}
+
+/// Pretty-prints tool arguments if they are valid JSON; otherwise returns them
+/// unchanged.
+fn format_tool_input(args: &str) -> String {
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(args) {
+        serde_json::to_string_pretty(&json).unwrap_or_else(|_| args.to_string())
+    } else {
+        args.to_string()
+    }
+}
+
 /// Which slice of a tool-call pair this view represents.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ToolCallKind {
@@ -174,9 +206,12 @@ impl ToolCall {
 
         let name = self.name.clone();
         let args = self.args.clone();
+        let title = format_tool_title(name.as_ref(), args.as_ref());
+        let input_text = format_tool_input(args.as_ref());
         let output = self.output.clone();
         let markdown_entity = self.markdown_entity.clone();
-        let has_output = markdown_entity.is_some()
+        let has_detail = !args.is_empty()
+            || markdown_entity.is_some()
             || output.as_ref().map_or(false, |o| !o.is_empty());
         let output_text = output.clone();
         let output_markdown = markdown_entity.clone();
@@ -224,17 +259,17 @@ impl ToolCall {
                                     .line_clamp(2)
                                     .flex_1()
                                     .min_w_0()
-                                    .child(args.to_string()),
+                                    .child(title),
                             ),
                     )
-                    .when(has_output, |this| {
+                    .when(has_detail, |this| {
                         this.child(
-                            HoverCard::new(format!("tool-output-{}", msg_idx))
+                            HoverCard::new(format!("tool-detail-{}", msg_idx))
                                 .anchor(gpui::Anchor::TopRight)
                                 .open_delay(std::time::Duration::from_millis(200))
                                 .close_delay(std::time::Duration::from_millis(100))
                                 .trigger(
-                                    Button::new(format!("tool-output-btn-{}", msg_idx))
+                                    Button::new(format!("tool-detail-btn-{}", msg_idx))
                                         .ghost()
                                         .xsmall()
                                         .icon(
@@ -245,6 +280,12 @@ impl ToolCall {
                                         ),
                                 )
                                 .content(move |_, _, cx| {
+                                    let input_element: AnyElement = div()
+                                        .w(hover_width)
+                                        .min_w_0()
+                                        .child(input_text.clone())
+                                        .into_any_element();
+
                                     let output_element: AnyElement = if let Some(ref md) =
                                         output_markdown
                                     {
@@ -272,7 +313,7 @@ impl ToolCall {
                                     };
 
                                     div()
-                                        .id(format!("tool-output-content-{}", msg_idx))
+                                        .id(format!("tool-detail-content-{}", msg_idx))
                                         .max_w(px(520.))
                                         .max_h(px(360.))
                                         .flex()
@@ -281,23 +322,50 @@ impl ToolCall {
                                         .px_2()
                                         .child(
                                             div()
-                                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                .child("Output"),
-                                        )
-                                        .child(
-                                            div()
-                                                .w_full()
-                                                .h_px()
-                                                .bg(cx.theme().border),
-                                        )
-                                        .child(
-                                            div()
-                                                .id(format!("tool-output-scroll-{}", msg_idx))
+                                                .id(format!("tool-detail-scroll-{}", msg_idx))
                                                 .flex_1()
                                                 .h_full()
                                                 .overflow_y_scroll()
                                                 .pb_2()
-                                                .child(output_element),
+                                                .flex()
+                                                .flex_col()
+                                                .gap_3()
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap_1()
+                                                        .child(
+                                                            div()
+                                                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                                .child("Input"),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .w_full()
+                                                                .h_px()
+                                                                .bg(cx.theme().border),
+                                                        )
+                                                        .child(input_element),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap_1()
+                                                        .child(
+                                                            div()
+                                                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                                .child("Output"),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .w_full()
+                                                                .h_px()
+                                                                .bg(cx.theme().border),
+                                                        )
+                                                        .child(output_element),
+                                                ),
                                         )
                                 }),
                         )
@@ -309,6 +377,7 @@ impl ToolCall {
     fn render_call_only(&self, cx: &mut Context<ChatWindow>) -> AnyElement {
         let name = self.name.clone();
         let args = self.args.clone();
+        let title = format_tool_title(name.as_ref(), args.as_ref());
         div()
             .flex()
             .flex_col()
@@ -354,7 +423,7 @@ impl ToolCall {
                         div()
                             .w_full()
                             .opacity(0.75)
-                            .child(args.to_string()),
+                            .child(title),
                     ),
             )
             .into_any_element()
