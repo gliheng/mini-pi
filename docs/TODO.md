@@ -14,6 +14,7 @@
 - [x] Packaging
 - [ ] Support bearer token settings for tunnel
 - [ ] Pet window
+- [ ] Auto update and release channel
 
 # UI
 - [ ] Show no more than two rows of thinking and make it default collapsed

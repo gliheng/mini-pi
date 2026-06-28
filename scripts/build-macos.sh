@@ -34,21 +34,11 @@ if ! command -v create-dmg &>/dev/null; then
 fi
 
 echo "Building release app bundle..."
-# cargo-bundle on macOS also tries to build a DMG, which can fail due to
-# temp-space quirks even though the .app bundle is fine. We only need the
-# .app here; the DMG is created ourselves below.
-set +e
-cargo bundle --release
-CARGO_BUNDLE_EXIT=$?
-set -e
-
-if [ $CARGO_BUNDLE_EXIT -ne 0 ] && [ ! -d "$APP_BUNDLE" ]; then
-  echo "cargo bundle failed and the app bundle was not created." >&2
-  exit $CARGO_BUNDLE_EXIT
-fi
-if [ $CARGO_BUNDLE_EXIT -ne 0 ]; then
-  echo "cargo bundle DMG step failed, but the app bundle is present; continuing..."
-fi
+# Only build the .app bundle here. cargo-bundle defaults to building both
+# osx and dmg on macOS, which (1) bundles the app twice and (2) often fails
+# its internal DMG step with a too-small staging image. We build the styled
+# DMG ourselves below with create-dmg.
+cargo bundle --release --format osx
 
 ARCH="$(uname -m)"
 DMG_OUT="$ROOT/target/mini-pi-$VERSION-$ARCH.dmg"
@@ -100,7 +90,7 @@ if command -v create-dmg &>/dev/null; then
   echo "Creating DMG with create-dmg..."
   create-dmg \
     --volname "$APP_NAME" \
-    --background "$ROOT/scripts/builder-assets/dmg-background.png" \
+    --background "$ROOT/scripts/installer/dmg-background.png" \
     --window-size 560 400 \
     --icon-size 100 \
     --icon "$APP_NAME.app" 140 200 \
