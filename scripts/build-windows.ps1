@@ -75,7 +75,7 @@ $env:PATH = "$wixDir;$env:PATH"
 
 $filesWxs = Join-Path $wixOut "files.wxs"
 Write-Host "Harvesting staged files with heat..."
-& heat dir "$package" -cg ApplicationFiles -gg -sfrag -srd -dr INSTALLFOLDER -out "$filesWxs"
+& heat dir "$package" -cg ApplicationFiles -gg -sfrag -srd -sreg -dr INSTALLFOLDER -out "$filesWxs"
 if ($LASTEXITCODE -ne 0) { throw "heat failed" }
 
 Write-Host "Compiling MSI..."
