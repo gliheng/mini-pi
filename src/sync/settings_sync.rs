@@ -65,7 +65,14 @@ fn scan_agent_files() -> Vec<(String, PathBuf)> {
     let agent_dir = state::agent_dir();
     let mut files = Vec::new();
     scan_dir_recursive(&agent_dir, &agent_dir, &mut files);
+    for (relative, _) in &mut files {
+        // Supabase Storage keys require '/' separators, even on Windows.
+        *relative = relative.replace('\\', "/");
+    }
     files
+        .into_iter()
+        .filter(|(relative, _)| relative != ".sync.lock" && is_sync_whitelisted(relative))
+        .collect()
 }
 
 fn scan_dir_recursive(base: &PathBuf, current: &PathBuf, files: &mut Vec<(String, PathBuf)>) {
@@ -103,6 +110,24 @@ fn content_type_for(path: &str) -> &str {
     }
 }
 
+fn is_sync_whitelisted(relative_path: &str) -> bool {
+    relative_path == "auth.json"
+        || relative_path == "settings.json"
+        || relative_path.starts_with("extensions/")
+}
+
+fn map_sync_error(e: supabase::SupabaseAuthError) -> String {
+    let text = e.to_string();
+    if text.to_lowercase().contains("not_found") {
+        format!(
+            "{} (hint: make sure the Supabase Storage bucket 'pi-sync' exists and has RLS policies allowing authenticated users to read/write.)",
+            text
+        )
+    } else {
+        text
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum SyncStatus {
     Idle,
@@ -119,23 +144,29 @@ pub fn pull_from_remote(
     with_sync_lock(|| {
         let agent_dir = state::agent_dir();
         let remote_files =
-            supabase::list_files(access_token, user_id).map_err(|e| e.to_string())?;
+            supabase::list_files(access_token, user_id).map_err(map_sync_error)?;
 
         let mut meta = initial_meta;
 
         for file in &remote_files {
-            if file.name.ends_with('/') {
+            let Some(name) = &file.name else {
+                continue;
+            };
+            if name.ends_with('/') || file.id.is_none() {
                 continue;
             }
 
-            let relative_path = file
-                .name
+            let relative_path = name
                 .strip_prefix(&format!("{}/", user_id))
-                .unwrap_or(&file.name)
+                .unwrap_or(name)
                 .to_string();
 
+            if relative_path == ".sync.lock" || !is_sync_whitelisted(&relative_path) {
+                continue;
+            }
+
             let data = supabase::download_file(access_token, user_id, &relative_path)
-                .map_err(|e| e.to_string())?;
+                .map_err(map_sync_error)?;
 
             let local_path = agent_dir.join(&relative_path);
             if let Some(parent) = local_path.parent() {
@@ -172,7 +203,7 @@ pub fn push_to_remote(
             let content_type = content_type_for(relative_path);
 
             supabase::upload_file(access_token, user_id, relative_path, content_type, &data)
-                .map_err(|e| e.to_string())?;
+                .map_err(map_sync_error)?;
 
             let hash = file_hash(&data);
             let now = chrono::Utc::now().to_rfc3339();
@@ -215,7 +246,7 @@ pub fn sync_changes(
             if needs_upload {
                 let content_type = content_type_for(relative_path);
                 supabase::upload_file(access_token, user_id, relative_path, content_type, &data)
-                    .map_err(|e| e.to_string())?;
+                    .map_err(map_sync_error)?;
                 let now = chrono::Utc::now().to_rfc3339();
                 meta.files.insert(
                     relative_path.clone(),
@@ -228,14 +259,24 @@ pub fn sync_changes(
         }
 
         let remote_files =
-            supabase::list_files(access_token, user_id).map_err(|e| e.to_string())?;
+            supabase::list_files(access_token, user_id).map_err(map_sync_error)?;
         let remote_set: std::collections::HashSet<String> = remote_files
             .iter()
-            .map(|f| {
-                f.name
-                    .strip_prefix(&format!("{}/", user_id))
-                    .unwrap_or(&f.name)
-                    .to_string()
+            .filter_map(|f| {
+                if f.id.is_none() {
+                    return None;
+                }
+                f.name.as_ref().and_then(|name| {
+                    let relative = name
+                        .strip_prefix(&format!("{}/", user_id))
+                        .unwrap_or(name)
+                        .to_string();
+                    if relative == ".sync.lock" || !is_sync_whitelisted(&relative) {
+                        None
+                    } else {
+                        Some(relative)
+                    }
+                })
             })
             .collect();
 
@@ -244,7 +285,7 @@ pub fn sync_changes(
         for remote_file in &remote_set {
             if !local_set.contains(remote_file) {
                 let data = supabase::download_file(access_token, user_id, remote_file)
-                    .map_err(|e| e.to_string())?;
+                    .map_err(map_sync_error)?;
                 let local_path = state::agent_dir().join(remote_file);
                 if let Some(parent) = local_path.parent() {
                     let _ = std::fs::create_dir_all(parent);
@@ -269,7 +310,7 @@ pub fn sync_changes(
                 let data = std::fs::read(full_path).map_err(|e| e.to_string())?;
                 let content_type = content_type_for(local_only);
                 supabase::upload_file(access_token, user_id, local_only, content_type, &data)
-                    .map_err(|e| e.to_string())?;
+                    .map_err(map_sync_error)?;
                 let hash = file_hash(&data);
                 let now = chrono::Utc::now().to_rfc3339();
                 meta.files.insert(
