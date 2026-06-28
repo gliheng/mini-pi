@@ -112,6 +112,10 @@ pub struct ChatWindow {
     pub thinking_dropdown: gpui::Entity<SelectState<SearchableVec<SelectModelItem>>>,
     pub reasoning_displays: ReasoningEntities,
     pub markdown_displays: MarkdownEntities,
+    /// (msg_idx, part_idx, last_text_len) for the single currently-streaming
+    /// markdown part.  Used to compute the delta for `push_str` so we only
+    /// re-parse new tokens rather than the entire document on every event.
+    pub streaming_md_pos: Option<(usize, usize, usize)>,
     pub scroll_handle: ScrollHandle,
     pub scroll_locked: bool,
     pub workspaces: Vec<WorkspaceMeta>,
@@ -265,6 +269,7 @@ impl ChatWindow {
             thinking_dropdown: thinking_dropdown.clone(),
             reasoning_displays: vec![],
             markdown_displays: vec![],
+            streaming_md_pos: None,
             scroll_handle: ScrollHandle::new(),
             at_mention_scroll_handle: ScrollHandle::new(),
             command_scroll_handle: ScrollHandle::new(),
@@ -455,6 +460,7 @@ impl ChatWindow {
     fn attach_session(&mut self, session: Entity<SessionHandle>, cx: &mut Context<Self>) {
         self.session = Some(session.clone());
         self.sync_from_session(cx);
+        self.sync_display_entities(cx);
         if self.scroll_locked {
             self.scroll_handle.scroll_to_bottom();
         }
@@ -481,6 +487,9 @@ impl ChatWindow {
                         );
                     });
                 }
+                // Keep display entities in sync whenever the session fires
+                // an event (new tokens, state changes, etc.).
+                this.sync_display_entities(cx);
                 cx.notify();
             },
         ));
@@ -758,6 +767,7 @@ impl ChatWindow {
             // Clear stale display entities.
             self.reasoning_displays.truncate(edit_idx + 1);
             self.markdown_displays.truncate(edit_idx + 1);
+            self.streaming_md_pos = None;
             self.clear_inline_edit_state(cx);
             self.send_edited_prompt(editing_id, content, cx);
             return;
@@ -992,6 +1002,7 @@ impl ChatWindow {
         self.messages.truncate(edit_idx + 1);
         self.reasoning_displays.truncate(edit_idx + 1);
         self.markdown_displays.truncate(edit_idx + 1);
+        self.streaming_md_pos = None;
         self.scroll_locked = true;
 
         let session = self.session.clone().unwrap();
@@ -1049,6 +1060,7 @@ impl ChatWindow {
         self.messages.truncate(edit_idx + 1);
         self.reasoning_displays.truncate(edit_idx + 1);
         self.markdown_displays.truncate(edit_idx + 1);
+        self.streaming_md_pos = None;
         self.clear_inline_edit_state(cx);
         self.send_edited_prompt(entry_id, content, cx);
     }
@@ -1467,14 +1479,19 @@ impl ChatWindow {
             .map(|ws| PathBuf::from(&ws.path))
     }
 
-    fn sync_display_entities(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> (ReasoningEntities, MarkdownEntities) {
-        // Ensure reasoning displays exist for reasoning parts
-        let mut reasoning_entities: ReasoningEntities = Vec::new();
+    /// Sync the reasoning and markdown display entities with the current
+    /// messages.  Call this whenever the message list changes (e.g. from
+    /// `sync_from_session`) rather than from inside `render()` so entity
+    /// creation does not happen on every frame.
+    ///
+    /// During streaming the markdown entity for the last (streaming) text part
+    /// is deliberately skipped — markdown parsing is too expensive to run on
+    /// every token.  The render path falls back to plain text for streaming
+    /// parts, and the full `TextViewState` is created once the part reaches
+    /// `Done`.
+    fn sync_display_entities(&mut self, cx: &mut Context<Self>) {
+        // --- reasoning displays ---
         for (msg_idx, msg) in self.messages.iter().enumerate() {
-            let mut msg_reasoning: Vec<Option<gpui::Entity<Reasoning>>> = Vec::new();
             let part_count = msg.parts.len();
             if let Some(row) = self.reasoning_displays.get_mut(msg_idx) {
                 row.truncate(part_count);
@@ -1490,11 +1507,10 @@ impl ChatWindow {
                         row.resize_with(part_idx + 1, || None);
                     }
                     let reasoning_state = state.clone();
-                    let entity = if let Some(Some(existing)) = row.get(part_idx) {
+                    if let Some(Some(existing)) = row.get(part_idx) {
                         existing.update(cx, |display, _cx| {
                             display.set_content(text, reasoning_state);
                         });
-                        existing.clone()
                     } else {
                         let new = cx.new(|_cx| {
                             Reasoning::new(
@@ -1503,27 +1519,23 @@ impl ChatWindow {
                                 reasoning_state,
                             )
                         });
-                        row[part_idx] = Some(new.clone());
-                        new
-                    };
-                    msg_reasoning.push(Some(entity));
+                        row[part_idx] = Some(new);
+                    }
                 } else {
                     if let Some(row) = self.reasoning_displays.get_mut(msg_idx)
                         && part_idx < row.len()
                     {
                         row[part_idx] = None;
                     }
-                    msg_reasoning.push(None);
                 }
             }
-            reasoning_entities.push(msg_reasoning);
         }
         self.reasoning_displays.truncate(self.messages.len());
 
-        // Ensure markdown displays exist for assistant text parts only
-        let mut markdown_entities: MarkdownEntities = Vec::new();
+        // --- markdown displays (assistant text parts only) ---
+        // Uses push_str for incremental streaming so markdown is only
+        // re-parsed for new tokens rather than from scratch on every event.
         for (msg_idx, msg) in self.messages.iter().enumerate() {
-            let mut msg_markdown: Vec<Option<gpui::Entity<TextViewState>>> = Vec::new();
             let is_assistant = matches!(msg.role, Role::Assistant);
             let part_count = msg.parts.len();
             if let Some(row) = self.markdown_displays.get_mut(msg_idx) {
@@ -1534,7 +1546,7 @@ impl ChatWindow {
             }
             for (part_idx, part) in msg.parts.iter().enumerate() {
                 if is_assistant && matches!(part, MessagePart::Text { .. }) {
-                    if let MessagePart::Text { text, .. } = part {
+                    if let MessagePart::Text { text, state, .. } = part {
                         if msg_idx >= self.markdown_displays.len() {
                             self.markdown_displays
                                 .resize_with(msg_idx + 1, std::vec::Vec::new);
@@ -1543,19 +1555,40 @@ impl ChatWindow {
                         if part_idx >= row.len() {
                             row.resize_with(part_idx + 1, || None);
                         }
-                        let entity = if let Some(Some(existing)) = row.get(part_idx) {
-                            existing.update(cx, |display, _cx| {
-                                display.set_text(text, _cx);
-                            });
-                            existing.clone()
+
+                        // Only one message streams at a time.  Track its
+                        // (msg,part,len) so we can push_str just the delta.
+                        let is_streaming = matches!(state, Some(PartState::Streaming));
+                        let same_pos = self.streaming_md_pos
+                            .map_or(false, |(m, p, _)| m == msg_idx && p == part_idx);
+                        let old_len = self.streaming_md_pos
+                            .and_then(|(m, p, len)| (m == msg_idx && p == part_idx).then_some(len))
+                            .unwrap_or(0);
+
+                        if let Some(Some(existing)) = row.get(part_idx) {
+                            if same_pos && text.len() > old_len {
+                                // Continuing stream — push only the delta.
+                                let delta: &str = &text[old_len..];
+                                existing.update(cx, |display, cx| {
+                                    display.push_str(delta, cx);
+                                });
+                            } else {
+                                // New or non-streaming part — rebuild.
+                                existing.update(cx, |display, cx| {
+                                    display.set_text(text, cx);
+                                });
+                            }
                         } else {
+                            // First time — parse full text.
                             let new = cx.new(|cx| TextViewState::markdown(text, cx));
-                            row[part_idx] = Some(new.clone());
-                            new
+                            row[part_idx] = Some(new);
+                        }
+
+                        self.streaming_md_pos = if is_streaming {
+                            Some((msg_idx, part_idx, text.len()))
+                        } else {
+                            None
                         };
-                        msg_markdown.push(Some(entity));
-                    } else {
-                        msg_markdown.push(None);
                     }
                 } else {
                     if let Some(row) = self.markdown_displays.get_mut(msg_idx)
@@ -1563,14 +1596,10 @@ impl ChatWindow {
                     {
                         row[part_idx] = None;
                     }
-                    msg_markdown.push(None);
                 }
             }
-            markdown_entities.push(msg_markdown);
         }
         self.markdown_displays.truncate(self.messages.len());
-
-        (reasoning_entities, markdown_entities)
     }
 
     fn render_workspace_selector(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2482,7 +2511,11 @@ impl Render for ChatWindow {
             is_streaming || is_loading || (input_empty && self.pending_attachments.is_empty());
         let input_focused = self.chat_input.read(cx).focus_handle.is_focused(window);
 
-        let (reasoning_entities, markdown_entities) = self.sync_display_entities(cx);
+        // Clone the pre-synced display handles (cheap — Entity is Copy).
+        // sync_display_entities is called from sync_from_session whenever
+        // the message list changes, not from inside render().
+        let reasoning_entities = self.reasoning_displays.clone();
+        let markdown_entities = self.markdown_displays.clone();
         let assistant_text_width = (window.viewport_size().width - px(80.)).max(px(320.));
 
         div()
