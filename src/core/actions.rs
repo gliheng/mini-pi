@@ -12,5 +12,7 @@ actions!(
         ConfirmInlineEdit,
         CancelInlineEdit,
         StopStreaming,
+        ShowMainWindow,
+        About,
     ]
 );

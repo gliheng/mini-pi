@@ -1,3 +1,4 @@
+pub mod about;
 pub mod chat_app;
 pub mod chat_window;
 pub mod create_thread_button;

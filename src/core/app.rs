@@ -21,6 +21,7 @@ pub struct AppStore {
     pub store: Arc<Store>,
     pub config: AppConfig,
     pub thread_windows: HashMap<String, AnyWindowHandle>,
+    pub main_window: Option<AnyWindowHandle>,
     pub auth: AuthState,
     pub session: Option<SupabaseSession>,
     pub sync_meta: SyncMeta,

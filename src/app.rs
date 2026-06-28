@@ -15,7 +15,7 @@ use gpui_component::{ActiveTheme, Icon, Root, Sizable, TitleBar};
 use crate::auth::state::{self, AuthState};
 use crate::config::app_config::{AppConfig, DEFAULT_DARK_THEME};
 use crate::config::model_config;
-use crate::core::actions::Quit;
+use crate::core::actions::{About, Quit, ShowMainWindow};
 use crate::core::app::AppStore;
 use crate::core::assets::Assets;
 use crate::core::session_manager::SessionManager;
@@ -23,6 +23,7 @@ use crate::data::store::Store;
 use crate::remote::RemoteController;
 use crate::rpc::pi_rpc::PiBridge;
 use crate::sync::settings_sync;
+use crate::views::about::open_about_window;
 use crate::views::mini_app::MiniApp;
 use crate::views::thread_list::ThreadList;
 use crate::views::user_panel::{UserPanel, UserPanelEvent};
@@ -134,6 +135,7 @@ pub fn run() {
                 store: store.clone(),
                 config: config.clone(),
                 thread_windows: HashMap::new(),
+                main_window: None,
                 auth: auth.clone(),
                 session: session.clone(),
                 sync_meta,
@@ -159,6 +161,23 @@ pub fn run() {
             }
 
             cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
+            cx.on_action(|_: &ShowMainWindow, cx: &mut App| {
+                let handle = cx.update_global::<AppStore, _>(|app, _| app.main_window);
+                let needs_new_window = match handle {
+                    Some(handle) => handle
+                        .update(cx, |_view, window, _app| {
+                            window.activate_window();
+                        })
+                        .is_err(),
+                    None => true,
+                };
+                if needs_new_window {
+                    open_main_window(cx);
+                }
+            });
+            cx.on_action(|_: &About, cx: &mut App| {
+                open_about_window(cx);
+            });
             let mut key_bindings = vec![
                 KeyBinding::new("cmd-w", crate::core::actions::CloseWindow, None),
                 KeyBinding::new("cmd-q", Quit, None),
@@ -173,41 +192,60 @@ pub fn run() {
             }
             cx.bind_keys(key_bindings);
 
-            cx.set_menus(vec![Menu {
-                name: "Mini Pi".into(),
-                items: vec![MenuItem::action("Quit", Quit)],
-                disabled: false,
-            }]);
+            cx.set_menus(vec![
+                Menu {
+                    name: "Mini Pi".into(),
+                    items: vec![
+                        MenuItem::action("About Mini Pi", About),
+                        MenuItem::separator(),
+                        MenuItem::action("Quit", Quit),
+                    ],
+                    disabled: false,
+                },
+                Menu {
+                    name: "Window".into(),
+                    items: vec![MenuItem::action("Show Main Window", ShowMainWindow)],
+                    disabled: false,
+                },
+            ]);
 
             cx.on_window_closed(|cx: &mut App, _window_id| {
-                if cx.windows().is_empty() {
+                if !cfg!(target_os = "macos") && cx.windows().is_empty() {
                     cx.quit();
                 }
             })
             .detach();
 
-            let bounds = Bounds::centered(None, size(px(420.0), px(600.0)), cx);
-            let window_options = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitleBar::title_bar_options()),
-                window_decorations: if cfg!(target_os = "macos") {
-                    None
-                } else {
-                    Some(WindowDecorations::Client)
-                },
-                ..Default::default()
-            };
-
-            cx.open_window(window_options, |window, cx| {
-                let app = cx.new(|cx| MiniPiApp::new(window, cx));
-                let focus_handle = app.read(cx).thread_list.read(cx).focus_handle.clone();
-                window.focus(&focus_handle, cx);
-                cx.new(|cx| Root::new(app, window, cx))
-            })
-            .expect("failed to open the Mini Pi window");
-
+            open_main_window(cx);
             cx.activate(true);
         });
+}
+
+fn open_main_window(cx: &mut App) {
+    let bounds = Bounds::centered(None, size(px(420.0), px(600.0)), cx);
+    let window_options = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        titlebar: Some(TitleBar::title_bar_options()),
+        window_decorations: if cfg!(target_os = "macos") {
+            None
+        } else {
+            Some(WindowDecorations::Client)
+        },
+        ..Default::default()
+    };
+
+    let handle = cx
+        .open_window(window_options, |window, cx| {
+            let app = cx.new(|cx| MiniPiApp::new(window, cx));
+            let focus_handle = app.read(cx).thread_list.read(cx).focus_handle.clone();
+            window.focus(&focus_handle, cx);
+            cx.new(|cx| Root::new(app, window, cx))
+        })
+        .expect("failed to open the Mini Pi window");
+
+    cx.update_global::<AppStore, _>(|app, _| {
+        app.main_window = Some(handle.into());
+    });
 }
 
 /// Trigger a background agent-config sync against Supabase Storage and
