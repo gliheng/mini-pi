@@ -15,6 +15,7 @@
 - [ ] Support bearer token settings for tunnel
 - [ ] Pet window
 - [ ] Auto update and release channel
+- [ ] Accidentally closed main windows and cannot reopen
 
 # UI
 - [ ] Show no more than two rows of thinking and make it default collapsed
