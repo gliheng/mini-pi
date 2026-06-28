@@ -1344,6 +1344,50 @@ impl ChatWindow {
             .child(Scrollbar::vertical(&self.scroll_handle))
     }
 
+    fn render_scroll_to_bottom_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("scroll-to-bottom-btn")
+            .absolute()
+            .bottom(px(12.))
+            .left(px(0.))
+            .right(px(0.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .when(!self.scroll_locked, |this| {
+                this.child(
+                    div()
+                        .rounded_full()
+                        .bg(cx.theme().popover)
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .shadow(vec![gpui::BoxShadow {
+                            color: cx.theme().overlay,
+                            offset: gpui::point(px(0.), px(4.)),
+                            blur_radius: px(12.),
+                            spread_radius: px(0.),
+                            inset: false,
+                        }])
+                        .child(
+                            Button::new("scroll-to-bottom")
+                                .with_size(Size::Small)
+                                .ghost()
+                                .icon(
+                                    Icon::empty()
+                                        .path("icons/chevron-down.svg")
+                                        .size(px(16.))
+                                        .text_color(cx.theme().muted_foreground),
+                                )
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.scroll_locked = true;
+                                    this.scroll_handle.scroll_to_bottom();
+                                    cx.notify();
+                                })),
+                        ),
+                )
+            })
+    }
+
     fn render_command_popup(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let chat_input = self.chat_input.read(cx);
         let items = chat_input.slash_command_items();
@@ -2955,7 +2999,8 @@ impl Render for ChatWindow {
                         is_loading,
                         is_streaming,
                     ))
-                    .child(self.render_messages_scrollbar(cx)),
+                    .child(self.render_messages_scrollbar(cx))
+                    .child(self.render_scroll_to_bottom_button(cx)),
             )
             .when(self.session.is_none(), |el| {
                 el.child(self.render_workspace_selector(cx))
