@@ -717,13 +717,6 @@ fn render_remote_control_section(
                     Button::new("remote-tunnel-url")
                         .w_full()
                         .with_size(Size::Small)
-                        .custom(
-                            ButtonCustomVariant::new(cx)
-                                .color(cx.theme().secondary.into())
-                                .foreground(cx.theme().foreground.into())
-                                .hover(cx.theme().secondary_hover.into())
-                                .active(cx.theme().secondary_active.into()),
-                        )
                         .icon(
                             Icon::empty()
                                 .path("icons/clipboard.svg")
