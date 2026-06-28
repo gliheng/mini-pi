@@ -1074,6 +1074,37 @@ impl ChatWindow {
         self.clear_inline_edit_state(cx);
     }
 
+    /// Rename the current thread title, persisting to the store and session.
+    pub fn rename_thread(&mut self, new_title: &str, cx: &mut Context<Self>) {
+        let title: SharedString = if new_title.is_empty() {
+            "New Thread".into()
+        } else {
+            new_title.into()
+        };
+        self.title = title.clone();
+        if let Some(ref session) = self.session {
+            session.update(cx, |session, _cx| {
+                session.title = title.clone();
+            });
+        }
+        if let Some(ref tid) = self.thread_id {
+            let _ = self.store.update_thread(
+                tid,
+                Some(&title),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                true,
+            );
+        }
+        // Ping AppStore so the ThreadList refreshes its data.
+        cx.update_global(|_: &mut AppStore, _| {});
+        cx.notify();
+    }
+
     fn clear_inline_edit_state(&mut self, cx: &mut Context<Self>) {
         self.editing_message_id = None;
         self.inline_edit_input = None;
