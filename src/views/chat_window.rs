@@ -1,7 +1,7 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc, sync::LazyLock};
+use std::{path::PathBuf, sync::Arc};
 
 use gpui::{
-    Anchor, AnyElement, AnyWindowHandle, ClipboardItem, Context, Entity, FocusHandle,
+    AnyElement, AnyWindowHandle, ClipboardItem, Context, Entity, FocusHandle,
     InteractiveElement, IntoElement, KeyDownEvent, Length, ParentElement, PathPromptOptions,
     Pixels, Render, ScrollHandle, SharedString, Styled, Window, div, prelude::*, px, rems, svg,
 };
@@ -18,16 +18,16 @@ use crate::ui::chat_input::ChatInput;
 use crate::ui::loader::{loader, text_loader};
 use crate::utils::voice::{VoiceRecorder, VoiceState, start_recording, transcribe};
 use crate::views::reasoning::Reasoning;
+use crate::views::tool_call::ToolCall;
 use crate::views::workspace_manager::{WorkspaceManager, WorkspaceManagerEvent};
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_component::input::{Enter, IndentInline, Input, MoveDown, MoveUp};
 use gpui_component::notification::Notification;
 use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
-use gpui_component::tag::Tag;
 use gpui_component::text::{TextView, TextViewState};
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IndexPath, Sizable as _, Size, WindowExt as _,
-    h_flex, hover_card::HoverCard, scroll::Scrollbar, status_bar::StatusBar,
+    h_flex, scroll::Scrollbar, status_bar::StatusBar,
 };
 
 type ReasoningEntities = Vec<Vec<Option<Entity<Reasoning>>>>;
@@ -46,36 +46,6 @@ pub enum PendingAttachment {
         name: String,
         content: String,
     },
-}
-
-fn format_file_size(size: usize) -> String {
-    if size < 1024 {
-        format!("{} B", size)
-    } else if size < 1024 * 1024 {
-        format!("{:.1} KB", size as f64 / 1024.0)
-    } else if size < 1024 * 1024 * 1024 {
-        format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
-    } else {
-        format!("{:.1} GB", size as f64 / (1024.0 * 1024.0 * 1024.0))
-    }
-}
-
-fn open_file(path: &std::path::Path) -> std::io::Result<()> {
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("cmd")
-            .args(["/c", "start", "", path.to_string_lossy().as_ref()])
-            .spawn()?;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open").arg(path).spawn()?;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        std::process::Command::new("xdg-open").arg(path).spawn()?;
-    }
-    Ok(())
 }
 
 fn is_image_file(path: &std::path::Path) -> bool {
@@ -104,22 +74,6 @@ fn mime_type_for_path(path: &std::path::Path) -> &'static str {
         _ => "application/octet-stream",
     }
 }
-
-static TOOL_NAME_COLORS: LazyLock<HashMap<&'static str, gpui::Hsla>> = LazyLock::new(|| {
-    let mut m = HashMap::new();
-    m.insert("read", gpui::rgb(0x3b82f6).into());
-    m.insert("write", gpui::rgb(0x22c55e).into());
-    m.insert("edit", gpui::rgb(0xf59e0b).into());
-    m.insert("bash", gpui::rgb(0xef4444).into());
-    m.insert("send_file", gpui::rgb(0x8b5cf6).into());
-    m
-});
-
-fn tool_name_color(name: &str) -> gpui::Hsla {
-    TOOL_NAME_COLORS.get(name).copied().unwrap_or(gpui::rgb(0x888888).into())
-}
-
-
 
 #[derive(Clone)]
 pub struct SelectModelItem {
@@ -1508,6 +1462,16 @@ impl ChatWindow {
             )
     }
 
+    /// Resolve the active workspace directory, used by `ToolCall` to resolve
+    /// relative `send_file` paths. Returns `None` when no workspace is
+    /// selected.
+    fn workspace_dir_for_send_file(&self) -> Option<PathBuf> {
+        self.selected_workspace_id
+            .as_ref()
+            .and_then(|id| self.workspaces.iter().find(|ws| ws.id == *id))
+            .map(|ws| PathBuf::from(&ws.path))
+    }
+
     fn sync_display_entities(
         &mut self,
         cx: &mut Context<Self>,
@@ -1865,16 +1829,16 @@ impl ChatWindow {
                                         },
                                     ) = (&msg.parts[call_idx], &msg.parts[result_idx])
                                     {
-                                        children.push(self.render_tool_pair(
-                                            cx,
-                                            msg_idx,
+                                        let tool = ToolCall::paired(
                                             name.clone(),
                                             args.clone(),
                                             Some(output.clone()),
                                             details.clone(),
                                             None,
+                                            self.workspace_dir_for_send_file(),
                                             assistant_text_width,
-                                        ));
+                                        );
+                                        children.push(tool.render(cx, msg_idx));
                                     } else if let (
                                         MessagePart::ToolCall { name, args, .. },
                                         MessagePart::Text { text, .. },
@@ -1882,16 +1846,16 @@ impl ChatWindow {
                                     {
                                         let markdown_entity =
                                             msg_markdown.get(result_idx).and_then(|e| e.clone());
-                                        children.push(self.render_tool_pair(
-                                            cx,
-                                            msg_idx,
+                                        let tool = ToolCall::paired(
                                             name.clone(),
                                             args.clone(),
                                             Some(text.clone()),
                                             None,
                                             markdown_entity,
+                                            self.workspace_dir_for_send_file(),
                                             assistant_text_width,
-                                        ));
+                                        );
+                                        children.push(tool.render(cx, msg_idx));
                                     }
                                     i = result_idx + 1;
                                     continue;
@@ -1919,269 +1883,6 @@ impl ChatWindow {
                         children
                     }),
             )
-    }
-
-    fn render_send_file_tool(
-        &self,
-        cx: &mut Context<Self>,
-        msg_idx: usize,
-        args: SharedString,
-        output: Option<SharedString>,
-        details: Option<serde_json::Value>,
-    ) -> AnyElement {
-        let workspace_dir = self
-            .selected_workspace_id
-            .as_ref()
-            .and_then(|id| self.workspaces.iter().find(|ws| ws.id == *id))
-            .map(|ws| PathBuf::from(&ws.path));
-        let mut file_path = details
-            .as_ref()
-            .and_then(|d| d.get("path"))
-            .and_then(|v| v.as_str())
-            .map(PathBuf::from)
-            .unwrap_or_default();
-        if file_path.as_os_str().is_empty() {
-            if let Ok(args_json) = serde_json::from_str::<serde_json::Value>(args.as_ref()) {
-                if let Some(path) = args_json.get("path").and_then(|v| v.as_str()) {
-                    file_path = PathBuf::from(path);
-                }
-            }
-        }
-        if !file_path.is_absolute() {
-            if let Some(ws) = workspace_dir {
-                file_path = ws.join(file_path);
-            }
-        }
-        let (file_name, mime_type, size) = if file_path.as_os_str().is_empty() {
-            (
-                output
-                    .as_ref()
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "Sent file".to_string()),
-                "application/octet-stream".to_string(),
-                0,
-            )
-        } else {
-            (
-                file_path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_default(),
-                details
-                    .as_ref()
-                    .and_then(|d| d.get("mime_type"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("application/octet-stream")
-                    .to_string(),
-                details
-                    .as_ref()
-                    .and_then(|d| d.get("size"))
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as usize,
-            )
-        };
-        let file_path_for_reveal = file_path.clone();
-        let file_path_for_open = file_path.clone();
-        div()
-            .flex()
-            .w_full()
-            .justify_start()
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .px_2()
-                    .py_2()
-                    .rounded_md()
-                    .bg(cx.theme().secondary)
-                    .text_color(cx.theme().secondary_foreground)
-                    .w_full()
-                    .child(
-                        Icon::empty()
-                            .path("icons/file.svg")
-                            .size(px(20.))
-                            .text_color(cx.theme().muted_foreground),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .min_w_0()
-                            .child(file_name)
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(format!("{} • {}", mime_type, format_file_size(size))),
-                            ),
-                    )
-                    .child(
-                        Button::new(("open-file", msg_idx as u64))
-                            .with_size(Size::XSmall)
-                            .label("Open")
-                            .on_click(cx.listener(move |_this, _, _window, _cx| {
-                                let _ = open_file(&file_path_for_open);
-                            })),
-                    )
-                    .child(
-                        Button::new(("reveal-file", msg_idx as u64))
-                            .with_size(Size::XSmall)
-                            .label("Reveal")
-                            .on_click(cx.listener(move |_this, _, _window, cx| {
-                                cx.reveal_path(&file_path_for_reveal);
-                            })),
-                    ),
-            )
-            .into_any_element()
-    }
-
-    fn render_tool_pair(
-        &self,
-        cx: &mut Context<Self>,
-        msg_idx: usize,
-        name: SharedString,
-        args: SharedString,
-        output: Option<SharedString>,
-        details: Option<serde_json::Value>,
-        markdown_entity: Option<Entity<TextViewState>>,
-        assistant_text_width: Pixels,
-    ) -> AnyElement {
-        if name == "send_file" {
-            return self.render_send_file_tool(cx, msg_idx, args, output, details);
-        }
-
-        let has_output =
-            markdown_entity.is_some() || output.as_ref().map_or(false, |o| !o.is_empty());
-        let output_text = output.clone();
-        let output_markdown = markdown_entity.clone();
-        let hover_width = assistant_text_width.min(px(480.));
-
-        h_flex()
-            .w_full()
-            .min_w_0()
-            .self_stretch()
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .bg(cx.theme().secondary)
-                    .text_color(cx.theme().secondary_foreground)
-                    .text_xs()
-                    .w_full()
-                    .min_w_0()
-                    .child(
-                        Icon::empty()
-                            .path("icons/wrench.svg")
-                            .size(px(12.))
-                            .text_color(cx.theme().muted_foreground),
-                    )
-                    .child(
-                        h_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .gap_1()
-                            .child(
-                                Tag::custom(
-                                    tool_name_color(name.as_ref()),
-                                    tool_name_color(name.as_ref()),
-                                    tool_name_color(name.as_ref()),
-                                )
-                                .outline()
-                                .small()
-                                .child(name.to_string()),
-                            )
-                            .child(
-                                div()
-                                    .line_clamp(2)
-                                    .flex_1()
-                                    .min_w_0()
-                                    .child(args.to_string()),
-                            ),
-                    )
-                    .when(has_output, |this| {
-                        this.child(
-                            HoverCard::new(format!("tool-output-{}", msg_idx))
-                                .anchor(Anchor::TopRight)
-                                .open_delay(std::time::Duration::from_millis(200))
-                                .close_delay(std::time::Duration::from_millis(100))
-                                .trigger(
-                                    Button::new(format!("tool-output-btn-{}", msg_idx))
-                                        .ghost()
-                                        .xsmall()
-                                        .icon(
-                                            Icon::empty()
-                                                .path("icons/notepad-text.svg")
-                                                .size(px(14.))
-                                                .text_color(cx.theme().muted_foreground),
-                                        )
-                                )
-                                .content(move |_, _, cx| {
-                                    let output_element: AnyElement = if let Some(ref md) =
-                                        output_markdown
-                                    {
-                                        div()
-                                            .flex()
-                                            .w(hover_width)
-                                            .min_w_0()
-                                            .child(
-                                                div()
-                                                    .flex_1()
-                                                    .min_w_0()
-                                                    .child(
-                                                        TextView::new(md).selectable(true).w_full(),
-                                                    ),
-                                            )
-                                            .into_any_element()
-                                    } else if let Some(ref text) = output_text {
-                                        div()
-                                            .w(hover_width)
-                                            .min_w_0()
-                                            .child(text.to_string())
-                                            .into_any_element()
-                                    } else {
-                                        div().into_any_element()
-                                    };
-
-                                    div()
-                                        .id(format!("tool-output-content-{}", msg_idx))
-                                        .max_w(px(520.))
-                                        .max_h(px(360.))
-                                        .flex()
-                                        .flex_col()
-                                        .gap_1()
-                                        .px_2()
-                                        .child(
-                                            div()
-                                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                .child("Output"),
-                                        )
-                                        .child(
-                                            div()
-                                                .w_full()
-                                                .h_px()
-                                                .bg(cx.theme().border),
-                                        )
-                                        .child(
-                                            div()
-                                                .id(format!("tool-output-scroll-{}", msg_idx))
-                                                .flex_1()
-                                                .h_full()
-                                                .overflow_y_scroll()
-                                                .pb_2()
-                                                .child(output_element),
-                                        )
-                                }),
-                        )
-                    }),
-            )
-            .into_any_element()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2219,196 +1920,20 @@ impl ChatWindow {
                 })
                 .into_any_element(),
             MessagePart::ToolCall { name, args, .. } => {
-                div()
-                    .flex()
-                    .flex_col()
-                    .w_full()
-                    .min_w_0()
-                    .self_stretch()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .bg(cx.theme().muted)
-                            .text_color(cx.theme().muted_foreground)
-                            .text_xs()
-                            .w_full()
-                            .min_w_0()
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .gap_1()
-                                    .items_center()
-                                    .child(
-                                        Icon::empty()
-                                            .path("icons/wrench.svg")
-                                            .size(px(12.))
-                                            .text_color(cx.theme().muted_foreground),
-                                    )
-                                    .child(
-                                        Tag::custom(
-                                            tool_name_color(name.as_ref()),
-                                            tool_name_color(name.as_ref()),
-                                            tool_name_color(name.as_ref()),
-                                        )
-                                        .outline()
-                                        .small()
-                                        .child(name.to_string()),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .w_full()
-                                    .opacity(0.75)
-                                    .child(args.to_string()),
-                            ),
-                    )
-                    .into_any_element()
+                ToolCall::call_only(name.clone(), args.clone()).render(cx, msg_idx)
             }
             MessagePart::ToolResult {
                 name,
                 output,
                 details,
                 ..
-            } => {
-                if name == "send_file" {
-                    let file_path = details
-                        .as_ref()
-                        .and_then(|d| d.get("path"))
-                        .and_then(|v| v.as_str())
-                        .map(PathBuf::from)
-                        .unwrap_or_default();
-                    let (file_name, mime_type, size) = if file_path.as_os_str().is_empty() {
-                        (
-                            if output.is_empty() {
-                                "Sent file".to_string()
-                            } else {
-                                output.to_string()
-                            },
-                            "application/octet-stream".to_string(),
-                            0,
-                        )
-                    } else {
-                        (
-                            file_path
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .map(|s| s.to_string())
-                                .unwrap_or_default(),
-                            details
-                                .as_ref()
-                                .and_then(|d| d.get("mime_type"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("application/octet-stream")
-                                .to_string(),
-                            details
-                                .as_ref()
-                                .and_then(|d| d.get("size"))
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0) as usize,
-                        )
-                    };
-                    let file_path_for_reveal = file_path.clone();
-                    let file_path_for_open = file_path.clone();
-                    div()
-                        .flex()
-                        .w_full()
-                        .justify_start()
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap_2()
-                                .px_3()
-                                .py_2()
-                                .rounded_md()
-                                .bg(cx.theme().secondary)
-                                .text_color(cx.theme().secondary_foreground)
-                                .w_full()
-                                .child(
-                                    Icon::empty()
-                                        .path("icons/file.svg")
-                                        .size(px(20.))
-                                        .text_color(cx.theme().muted_foreground),
-                                )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .child(file_name)
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(cx.theme().muted_foreground)
-                                                .child(format!(
-                                                    "{} • {}",
-                                                    mime_type,
-                                                    format_file_size(size)
-                                                )),
-                                        ),
-                                )
-                                .child(
-                                    Button::new(("open-file", msg_idx as u64))
-                                        .with_size(Size::XSmall)
-                                        .label("Open")
-                                        .on_click(cx.listener(move |_this, _, _window, _cx| {
-                                            let _ = open_file(&file_path_for_open);
-                                        })),
-                                )
-                                .child(
-                                    Button::new(("reveal-file", msg_idx as u64))
-                                        .with_size(Size::XSmall)
-                                        .label("Reveal")
-                                        .on_click(cx.listener(move |_this, _, _window, cx| {
-                                            cx.reveal_path(&file_path_for_reveal);
-                                        })),
-                                ),
-                        )
-                        .into_any_element()
-                } else {
-                    div()
-                        .flex()
-                        .w_full()
-                        .justify_start()
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap_1()
-                                .px_2()
-                                .py_1()
-                                .rounded_md()
-                                .bg(cx.theme().secondary)
-                                .text_color(cx.theme().secondary_foreground)
-                                .text_xs()
-                                .w_full()
-                                .child(
-                                    div()
-                                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                                        .child("Output"),
-                                )
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .h_px()
-                                        .bg(cx.theme().border),
-                                )
-                                .child(
-                                    div()
-                                        .opacity(0.75)
-                                        .child(output.to_string()),
-                                ),
-                        )
-                        .into_any_element()
-                }
-            }
+            } => ToolCall::result_only(
+                name.clone(),
+                output.clone(),
+                details.clone(),
+                self.workspace_dir_for_send_file(),
+            )
+            .render(cx, msg_idx),
         }
     }
 

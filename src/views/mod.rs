@@ -6,6 +6,7 @@ pub mod mini_app;
 pub mod pi_agent_import;
 pub mod reasoning;
 pub mod thread_list;
+pub mod tool_call;
 pub mod title_bar;
 pub mod user_panel;
 pub mod workspace_filter;
