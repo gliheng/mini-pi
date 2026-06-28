@@ -152,7 +152,11 @@ impl ChatWindow {
         let selected_thinking_level: Option<String> = if thread.is_some() {
             thread.and_then(|t| t.thinking_level.clone())
         } else {
-            Self::highest_thinking_level_for_model(&models, selected_model.as_deref())
+            cx.global::<AppStore>()
+                .config
+                .default_thinking_level
+                .clone()
+                .or(Some("off".to_string()))
         };
 
         let mut workspaces = store.list_workspaces().unwrap_or_default();
@@ -327,20 +331,8 @@ impl ChatWindow {
                             session.set_model(Some(id.clone()), cx);
                         });
                     }
-                    // When a new model is selected, set thinking level to the highest supported
-                    let models = cx.global::<AppStore>().models.clone();
-                    let items = Self::thinking_level_items_for_model(
-                        &models,
-                        this.selected_model.as_deref(),
-                    );
-                    if let Some(highest) = items.last().map(|i| i.id.clone()) {
-                        this.thinking_level = Some(highest.clone());
-                        if let Some(ref session) = this.session {
-                            session.update(cx, |session, cx| {
-                                session.set_thinking_level(Some(highest), cx);
-                            });
-                        }
-                    }
+                    // When a new model is selected, preserve the current thinking level if
+                    // it is still valid for the new model; otherwise fall back to off.
                     this.refresh_thinking_dropdown(cx);
                 }
             },
@@ -353,6 +345,12 @@ impl ChatWindow {
             |this, _dropdown, event: &SelectEvent<SearchableVec<SelectModelItem>>, cx| {
                 if let SelectEvent::Confirm(Some(id)) = event {
                     this.thinking_level = Some(id.clone());
+                    cx.update_global(|app_store: &mut AppStore, _| {
+                        app_store.config.default_thinking_level = Some(id.clone());
+                        if let Err(e) = app_store.config.save() {
+                            eprintln!("[mini-pi] failed to save config: {}", e);
+                        }
+                    });
                     if let Some(ref session) = this.session {
                         session.update(cx, |session, cx| {
                             session.set_thinking_level(Some(id.clone()), cx);
@@ -388,15 +386,6 @@ impl ChatWindow {
         ("xhigh", "Extra High"),
     ];
 
-    fn highest_thinking_level_for_model(
-        models: &[crate::config::model_config::ModelInfo],
-        model_id: Option<&str>,
-    ) -> Option<String> {
-        Self::thinking_level_items_for_model(models, model_id)
-            .last()
-            .map(|item| item.id.clone())
-    }
-
     fn thinking_level_items_for_model(
         models: &[crate::config::model_config::ModelInfo],
         model_id: Option<&str>,
@@ -429,7 +418,13 @@ impl ChatWindow {
             .as_ref()
             .filter(|id| valid_ids.contains(*id))
             .cloned()
-            .or_else(|| items.last().map(|i| i.id.clone()));
+            .or_else(|| {
+                items
+                    .iter()
+                    .find(|i| i.id == "off")
+                    .or_else(|| items.first())
+                    .map(|i| i.id.clone())
+            });
 
         if new_level != self.thinking_level {
             self.thinking_level = new_level.clone();

@@ -11,6 +11,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub default_model: Option<String>,
     #[serde(default)]
+    pub default_thinking_level: Option<String>,
+    #[serde(default)]
     pub remote_control: RemoteControlConfig,
 }
 
