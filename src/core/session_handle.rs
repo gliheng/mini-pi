@@ -10,7 +10,9 @@ use crate::config::model_config::parse_model_id;
 use crate::core::app::AppStore;
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::data::store::Store;
-use crate::rpc::pi_rpc::{BridgeEvent, ImageContent, LoadedMessage, LoadedPart, PiRpc};
+use crate::rpc::pi_rpc::{
+    BridgeEvent, ImageContent, LoadedMessage, LoadedPart, PiRpc, is_assistant_error,
+};
 use crate::ui::chat_input::CommandItem;
 use crate::utils::format::truncate_str;
 use crate::utils::llm::generate_title;
@@ -746,19 +748,43 @@ impl SessionHandle {
                         .and_then(|m| m.get("id"))
                         .and_then(|id| id.as_str())
                         .map(|s| s.to_string());
+                    let error_message = message
+                        .as_ref()
+                        .and_then(|m| m.get("errorMessage"))
+                        .and_then(|e| e.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string());
+                    let stop_reason = message.as_ref().and_then(|m| m.get("stopReason")).and_then(|s| s.as_str());
+                    let is_error = is_assistant_error(error_message.as_deref(), stop_reason);
+
                     let id = Uuid::new_v4().to_string();
+                    let mut parts = vec![];
+                    if let Some(ref error) = error_message {
+                        parts.push(MessagePart::Text {
+                            text: format!("Error: {}", error).into(),
+                            state: Some(PartState::Done),
+                        });
+                        self.state = ChatState::Error(error.clone().into());
+                    } else if is_error {
+                        parts.push(MessagePart::Text {
+                            text: "Error: assistant response failed.".into(),
+                            state: Some(PartState::Done),
+                        });
+                        self.state = ChatState::Error("Assistant response failed.".into());
+                    }
                     self.messages.push(Message {
                         id,
                         entry_id,
                         role: Role::Assistant,
-                        parts: vec![],
+                        parts,
                     });
                 }
             }
             BridgeEvent::AgentEnd { messages } => {
-                if let Some(messages) = messages {
-                    self.apply_final_agent_messages(messages);
-                }
+                let had_error = messages
+                    .as_ref()
+                    .map(|m| self.apply_final_agent_messages(m.clone()))
+                    .unwrap_or(false);
                 self.request_session_stats();
                 for msg in self.messages.iter_mut() {
                     for part in msg.parts.iter_mut() {
@@ -774,7 +800,9 @@ impl SessionHandle {
                         }
                     }
                 }
-                self.state = ChatState::Idle;
+                if !had_error {
+                    self.state = ChatState::Idle;
+                }
                 if self.refresh_entry_ids_after_streaming {
                     if let Some(ref mut rpc) = self.rpc {
                         let _ = rpc.send_get_messages(None);
@@ -1237,6 +1265,8 @@ impl SessionHandle {
     fn load_messages(&mut self, messages: Vec<LoadedMessage>, cx: &mut Context<Self>) {
         eprintln!("[mini-pi] loaded {} messages from history", messages.len());
         self.messages.clear();
+        let mut has_error = false;
+        let mut last_error_text: SharedString = SharedString::from("Assistant response failed.");
         for msg in messages {
             match msg.role.as_str() {
                 "user" => {
@@ -1298,6 +1328,38 @@ impl SessionHandle {
                             }
                         }
                     }
+                    // Preserve any errorMessage that isn't already represented by a
+                    // synthetic error text part from parse_loaded_messages.
+                    if let Some(ref error) = msg.error_message {
+                        if !error.is_empty() {
+                            let error_text: SharedString = format!("Error: {}", error).into();
+                            let already_present = parts.iter().any(|p| {
+                                matches!(p, MessagePart::Text { text, .. } if text == &error_text)
+                            });
+                            if !already_present {
+                                parts.push(MessagePart::Text {
+                                    text: error_text,
+                                    state: Some(PartState::Done),
+                                });
+                            }
+                        }
+                    } else if msg.is_error {
+                        let fallback: SharedString = "Error: assistant response failed.".into();
+                        if !parts.iter().any(|p| matches!(p, MessagePart::Text { text, .. } if text == &fallback)) {
+                            parts.push(MessagePart::Text {
+                                text: fallback,
+                                state: Some(PartState::Done),
+                            });
+                        }
+                    }
+                    if msg.is_error {
+                        has_error = true;
+                        if let Some(ref error) = msg.error_message {
+                            if !error.is_empty() {
+                                last_error_text = format!("Error: {}", error).into();
+                            }
+                        }
+                    }
                     if !parts.is_empty() {
                         self.messages.push(Message {
                             id: Uuid::new_v4().to_string(),
@@ -1326,7 +1388,11 @@ impl SessionHandle {
                 _ => {}
             }
         }
-        self.state = ChatState::Idle;
+        if has_error {
+            self.state = ChatState::Error(last_error_text);
+        } else if matches!(self.state, ChatState::Loading) {
+            self.state = ChatState::Idle;
+        }
         cx.emit(SessionEvent::Changed);
     }
 
@@ -1352,13 +1418,13 @@ impl SessionHandle {
         }
     }
 
-    fn apply_final_agent_messages(&mut self, loaded: Vec<LoadedMessage>) {
+    fn apply_final_agent_messages(&mut self, loaded: Vec<LoadedMessage>) -> bool {
         let mut assistant_messages = loaded
             .into_iter()
             .filter(|msg| msg.role == "assistant" && !msg.parts.is_empty())
             .collect::<Vec<_>>();
         let Some(final_assistant) = assistant_messages.pop() else {
-            return;
+            return false;
         };
 
         let Some(target) = self
@@ -1367,16 +1433,28 @@ impl SessionHandle {
             .rev()
             .find(|msg| matches!(msg.role, Role::Assistant))
         else {
-            return;
+            return false;
         };
 
         let final_parts = loaded_parts_to_message_parts(final_assistant.parts);
         if final_parts.is_empty() {
-            return;
+            return false;
         }
 
         if target.entry_id.is_none() {
             target.entry_id = final_assistant.id;
+        }
+
+        // If the SDK reported an error for this final assistant message, keep the
+        // session in an error state so the user sees the failure banner.
+        if final_assistant.is_error {
+            self.state = ChatState::Error(
+                final_assistant
+                    .error_message
+                    .clone()
+                    .unwrap_or_else(|| "Assistant response failed.".into())
+                    .into(),
+            );
         }
 
         // If streaming already populated parts, don't blindly replace them with the
@@ -1395,9 +1473,18 @@ impl SessionHandle {
         if target_is_empty {
             target.parts = final_parts;
         } else {
+            // For error turns, keep content already surfaced during
+            // streaming/MessageStart rather than letting a later non-empty snapshot
+            // overwrite the error text. For normal turns, merge final parts.
+            if !final_assistant.is_error {
             for final_part in final_parts {
                 match final_part {
                     MessagePart::Text { text, .. } => {
+                        // Don't overwrite already-populated text (e.g. an error
+                        // surfaced during MessageStart) with an empty final snapshot.
+                        if text.is_empty() {
+                            continue;
+                        }
                         if let Some(MessagePart::Text {
                             text: existing_text,
                             state,
@@ -1421,6 +1508,9 @@ impl SessionHandle {
                         provider_metadata,
                         ..
                     } => {
+                        if text.is_empty() {
+                            continue;
+                        }
                         if let Some(MessagePart::Reasoning {
                             text: existing_text,
                             state,
@@ -1446,6 +1536,9 @@ impl SessionHandle {
                 }
             }
         }
+        }
+
+        final_assistant.is_error
     }
 }
 
@@ -1638,5 +1731,127 @@ mod tests {
         assert_eq!(stats.tokens_total, 0);
         assert_eq!(stats.cost, 0.0);
         assert_eq!(stats.context_window, 0);
+    }
+
+    fn test_store() -> Arc<Store> {
+        let dir = std::env::temp_dir().join(format!("mini-pi-test-{}", uuid::Uuid::new_v4()));
+        Arc::new(Store::new_test(&dir).expect("test store"))
+    }
+
+    fn test_session_handle() -> SessionHandle {
+        SessionHandle {
+            thread_id: None,
+            _session_id: "test-session".into(),
+            session_file: "test-session.jsonl".into(),
+            title: "Test".into(),
+            messages: vec![],
+            state: ChatState::Idle,
+            commands: vec![],
+            selected_model: None,
+            thinking_level: None,
+            workspace: None,
+            rpc: None,
+            _event_task: None,
+            pending_fork: None,
+            refresh_entry_ids_after_streaming: false,
+            pi_restart_count: 0,
+            session_stats: None,
+            store: test_store(),
+        }
+    }
+
+    #[test]
+    fn apply_final_agent_messages_preserves_error_state_for_stop_reason_only() {
+        let mut session = test_session_handle();
+        session.messages.push(Message {
+            id: "user-1".into(),
+            entry_id: None,
+            role: Role::User,
+            parts: vec![MessagePart::Text {
+                text: "Hi".into(),
+                state: Some(PartState::Done),
+            }],
+        });
+        session.messages.push(Message {
+            id: "assistant-1".into(),
+            entry_id: None,
+            role: Role::Assistant,
+            parts: vec![MessagePart::Text {
+                text: "Error: assistant response failed.".into(),
+                state: Some(PartState::Done),
+            }],
+        });
+
+        let loaded = vec![LoadedMessage {
+            id: Some("entry-1".into()),
+            role: "assistant".into(),
+            parts: vec![LoadedPart::Text { text: "".into() }],
+            error_message: None,
+            is_error: true,
+        }];
+
+        let had_error = session.apply_final_agent_messages(loaded);
+        assert!(had_error);
+        assert!(session.has_error());
+        assert!(
+            matches!(session.state, ChatState::Error(ref msg) if msg.contains("Assistant response failed.")),
+            "expected Error state, got {:?}",
+            session.state
+        );
+        // Existing error text should not be overwritten by the empty final snapshot.
+        let assistant = session.messages.iter().find(|m| matches!(m.role, Role::Assistant)).unwrap();
+        assert_eq!(assistant.parts.len(), 1);
+        assert_eq!(
+            assistant.parts[0],
+            MessagePart::Text {
+                text: "Error: assistant response failed.".into(),
+                state: Some(PartState::Done),
+            }
+        );
+    }
+
+    #[gpui::test]
+    async fn load_messages_sets_error_state_for_errored_turn(cx: &mut gpui::TestAppContext) {
+        let store = test_store();
+        let session = cx.new(|_cx| {
+            let mut session = test_session_handle();
+            session.store = store;
+            session
+        });
+        session.update(cx, |session, cx| {
+            let loaded = vec![
+                LoadedMessage {
+                    id: Some("user-1".into()),
+                    role: "user".into(),
+                    parts: vec![LoadedPart::Text { text: "Hi".into() }],
+                    error_message: None,
+                    is_error: false,
+                },
+                LoadedMessage {
+                    id: Some("assistant-1".into()),
+                    role: "assistant".into(),
+                    parts: vec![LoadedPart::Text { text: "".into() }],
+                    error_message: Some("Failed to resolve API key".into()),
+                    is_error: true,
+                },
+            ];
+            session.load_messages(loaded, cx);
+            assert!(session.has_error());
+            assert!(
+                matches!(session.state, ChatState::Error(ref msg) if msg.contains("Failed to resolve API key")),
+                "expected Error state, got {:?}",
+                session.state
+            );
+            let assistant = session
+                .messages
+                .iter()
+                .find(|m| matches!(m.role, Role::Assistant))
+                .unwrap();
+            assert!(
+                assistant.parts.iter().any(|p| matches!(p, MessagePart::Text { text, .. } if text.contains("Failed to resolve API key"))),
+                "expected error text in assistant message, got {:?}",
+                assistant.parts
+            );
+        });
     }
 }

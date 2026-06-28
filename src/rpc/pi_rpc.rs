@@ -110,6 +110,20 @@ pub struct LoadedMessage {
     pub id: Option<String>,
     pub role: String,
     pub parts: Vec<LoadedPart>,
+    pub error_message: Option<String>,
+    pub is_error: bool,
+}
+
+pub fn is_error_stop_reason(stop_reason: Option<&str>) -> bool {
+    matches!(stop_reason, Some("error") | Some("api_error"))
+}
+
+pub fn has_non_empty_error_message(error_message: Option<&str>) -> bool {
+    error_message.map_or(false, |e| !e.is_empty())
+}
+
+pub fn is_assistant_error(error_message: Option<&str>, stop_reason: Option<&str>) -> bool {
+    has_non_empty_error_message(error_message) || is_error_stop_reason(stop_reason)
 }
 
 // ---------------------------------------------------------------------------
@@ -1158,6 +1172,8 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
                     id,
                     role: "user".to_string(),
                     parts: vec![LoadedPart::Text { text }],
+                    error_message: None,
+                    is_error: false,
                 });
             }
             "assistant" => {
@@ -1203,11 +1219,38 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
                         text: content_str.to_string(),
                     });
                 }
+
+                let error_message = msg
+                    .get("errorMessage")
+                    .and_then(|e| e.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string());
+                let stop_reason = msg.get("stopReason").and_then(|s| s.as_str());
+                let is_error = is_assistant_error(error_message.as_deref(), stop_reason);
+                let has_visible_content = parts.iter().any(|p| match p {
+                    LoadedPart::Text { text } | LoadedPart::Thinking { text } => !text.is_empty(),
+                    LoadedPart::ToolCall { args, .. } => !args.is_empty(),
+                    LoadedPart::ToolResult { output, .. } => !output.is_empty(),
+                });
+                if is_error && !has_visible_content {
+                    if let Some(ref error) = error_message {
+                        parts = vec![LoadedPart::Text {
+                            text: format!("Error: {}", error),
+                        }];
+                    } else {
+                        parts.push(LoadedPart::Text {
+                            text: "Error: assistant response failed.".to_string(),
+                        });
+                    }
+                }
+
                 if !parts.is_empty() {
                     loaded.push(LoadedMessage {
                         id,
                         role: "assistant".to_string(),
                         parts,
+                        error_message,
+                        is_error,
                     });
                 }
             }
@@ -1227,6 +1270,8 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
                         name: tool_name.to_string(),
                         output: truncate_str(&output, 5000),
                     }],
+                    error_message: None,
+                    is_error: false,
                 });
             }
             "bashExecution" => {
@@ -1248,6 +1293,8 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
                             truncate_str(output, 5000)
                         ),
                     }],
+                    error_message: None,
+                    is_error: false,
                 });
             }
             _ => {
@@ -1377,6 +1424,121 @@ mod tests {
             }
             other => panic!("expected AgentEnd with messages, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn parse_loaded_messages_with_error_message() {
+        let val = serde_json::json!([
+            {
+                "id": "msg-1",
+                "role": "assistant",
+                "content": [{ "type": "text", "text": "" }],
+                "stopReason": "error",
+                "errorMessage": "Failed to resolve API key"
+            }
+        ]);
+        let messages = parse_loaded_messages(&val).expect("should parse");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "assistant");
+        assert!(messages[0].is_error);
+        assert_eq!(
+            messages[0].error_message.as_deref(),
+            Some("Failed to resolve API key")
+        );
+        assert!(
+            matches!(&messages[0].parts[0], LoadedPart::Text { text } if text == "Error: Failed to resolve API key"),
+            "expected error text part, got {:?}",
+            messages[0].parts
+        );
+    }
+
+    #[test]
+    fn parse_loaded_messages_with_error_stop_reason_no_message() {
+        let val = serde_json::json!([
+            {
+                "id": "msg-1",
+                "role": "assistant",
+                "content": [],
+                "stopReason": "error"
+            }
+        ]);
+        let messages = parse_loaded_messages(&val).expect("should parse");
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].is_error);
+        assert!(
+            matches!(&messages[0].parts[0], LoadedPart::Text { text } if text == "Error: assistant response failed."),
+            "expected fallback error text part, got {:?}",
+            messages[0].parts
+        );
+    }
+
+    #[test]
+    fn parse_loaded_messages_with_api_error_stop_reason() {
+        let val = serde_json::json!([
+            {
+                "id": "msg-1",
+                "role": "assistant",
+                "content": [],
+                "stopReason": "api_error"
+            }
+        ]);
+        let messages = parse_loaded_messages(&val).expect("should parse");
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].is_error);
+        assert_eq!(messages[0].error_message, None);
+        assert!(
+            matches!(&messages[0].parts[0], LoadedPart::Text { text } if text == "Error: assistant response failed."),
+            "expected fallback error text part, got {:?}",
+            messages[0].parts
+        );
+    }
+
+    #[test]
+    fn parse_loaded_messages_ignores_empty_error_message() {
+        let val = serde_json::json!([
+            {
+                "id": "msg-1",
+                "role": "assistant",
+                "content": [{ "type": "text", "text": "hello" }],
+                "errorMessage": ""
+            }
+        ]);
+        let messages = parse_loaded_messages(&val).expect("should parse");
+        assert_eq!(messages.len(), 1);
+        assert!(!messages[0].is_error);
+        assert_eq!(messages[0].error_message, None);
+        assert!(
+            matches!(&messages[0].parts[0], LoadedPart::Text { text } if text == "hello"),
+            "expected original text part, got {:?}",
+            messages[0].parts
+        );
+    }
+
+    #[test]
+    fn parse_loaded_messages_preserves_error_with_visible_content() {
+        let val = serde_json::json!([
+            {
+                "id": "msg-1",
+                "role": "assistant",
+                "content": [{ "type": "text", "text": "partial" }],
+                "stopReason": "error",
+                "errorMessage": "Something went wrong"
+            }
+        ]);
+        let messages = parse_loaded_messages(&val).expect("should parse");
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].is_error);
+        assert_eq!(
+            messages[0].error_message.as_deref(),
+            Some("Something went wrong")
+        );
+        // Visible content is preserved; error_message is surfaced separately.
+        assert_eq!(messages[0].parts.len(), 1);
+        assert!(
+            matches!(&messages[0].parts[0], LoadedPart::Text { text } if text == "partial"),
+            "expected original text part, got {:?}",
+            messages[0].parts
+        );
     }
 
     #[test]

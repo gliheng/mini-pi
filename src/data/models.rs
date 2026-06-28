@@ -13,7 +13,7 @@ pub enum PartState {
     Done,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum MessagePart {
     Text {
         text: SharedString,
@@ -49,7 +49,7 @@ pub struct Message {
     pub parts: Vec<MessagePart>,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum ChatState {
     Idle,
     Loading,

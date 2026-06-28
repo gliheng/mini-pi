@@ -111,6 +111,24 @@ fn row_to_workspace(row: &Row) -> rusqlite::Result<WorkspaceMeta> {
 }
 
 impl Store {
+    #[cfg(test)]
+    pub fn new_test(dir: &std::path::Path) -> Result<Self, StoreError> {
+        std::fs::create_dir_all(dir).map_err(StoreError::Io)?;
+        std::fs::create_dir_all(dir.join("sessions")).map_err(StoreError::Io)?;
+
+        let db_path = dir.join("mini-pi.db");
+        let conn = Connection::open(&db_path).map_err(StoreError::Rusqlite)?;
+        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")
+            .map_err(StoreError::Rusqlite)?;
+
+        let store = Self {
+            conn: Mutex::new(conn),
+            sessions_dir: dir.join("sessions"),
+        };
+        store.run_migrations()?;
+        Ok(store)
+    }
+
     pub fn open() -> Result<Self, StoreError> {
         let dir = dirs::home_dir()
             .ok_or(StoreError::HomeDir)?
