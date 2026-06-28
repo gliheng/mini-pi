@@ -1878,7 +1878,7 @@ impl ChatWindow {
                                     pairs.iter().find(|(call_idx, _)| *call_idx == i)
                                 {
                                     if let (
-                                        MessagePart::ToolCall { name, args, .. },
+                                        MessagePart::ToolCall { name, args, state, .. },
                                         MessagePart::ToolResult {
                                             output, details, ..
                                         },
@@ -1892,10 +1892,11 @@ impl ChatWindow {
                                             None,
                                             self.workspace_dir_for_send_file(),
                                             assistant_text_width,
+                                            state.clone(),
                                         );
                                         children.push(tool.render(cx, msg_idx));
                                     } else if let (
-                                        MessagePart::ToolCall { name, args, .. },
+                                        MessagePart::ToolCall { name, args, state, .. },
                                         MessagePart::Text { text, .. },
                                     ) = (&msg.parts[call_idx], &msg.parts[result_idx])
                                     {
@@ -1909,6 +1910,7 @@ impl ChatWindow {
                                             markdown_entity,
                                             self.workspace_dir_for_send_file(),
                                             assistant_text_width,
+                                            state.clone(),
                                         );
                                         children.push(tool.render(cx, msg_idx));
                                     }
@@ -1974,18 +1976,20 @@ impl ChatWindow {
                     this.child(reasoning_entity.unwrap())
                 })
                 .into_any_element(),
-            MessagePart::ToolCall { name, args, .. } => {
-                ToolCall::call_only(name.clone(), args.clone()).render(cx, msg_idx)
+            MessagePart::ToolCall { name, args, state, .. } => {
+                ToolCall::call_only(name.clone(), args.clone(), state.clone()).render(cx, msg_idx)
             }
             MessagePart::ToolResult {
                 name,
                 output,
                 details,
+                state,
                 ..
             } => ToolCall::result_only(
                 name.clone(),
                 output.clone(),
                 details.clone(),
+                state.clone(),
                 self.workspace_dir_for_send_file(),
             )
             .render(cx, msg_idx),

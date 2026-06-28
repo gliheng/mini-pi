@@ -12,6 +12,8 @@ use gpui_component::{
     ActiveTheme as _, Icon, Sizable as _, Size, h_flex, hover_card::HoverCard,
 };
 
+use crate::data::models::PartState;
+use crate::ui::loader::spinner_with;
 use crate::views::chat_window::ChatWindow;
 
 /// Where to resolve relative `send_file` paths against. Passed in from the
@@ -127,6 +129,7 @@ pub struct ToolCall {
     markdown_entity: Option<gpui::Entity<TextViewState>>,
     workspace_dir: WorkspaceDir,
     assistant_text_width: Pixels,
+    state: Option<PartState>,
 }
 
 impl ToolCall {
@@ -141,6 +144,7 @@ impl ToolCall {
         markdown_entity: Option<gpui::Entity<TextViewState>>,
         workspace_dir: WorkspaceDir,
         assistant_text_width: Pixels,
+        state: Option<PartState>,
     ) -> Self {
         Self {
             kind: ToolCallKind::Paired,
@@ -151,11 +155,16 @@ impl ToolCall {
             markdown_entity,
             workspace_dir,
             assistant_text_width,
+            state,
         }
     }
 
     /// A standalone `ToolCall` part with no paired result.
-    pub fn call_only(name: SharedString, args: SharedString) -> Self {
+    pub fn call_only(
+        name: SharedString,
+        args: SharedString,
+        state: Option<PartState>,
+    ) -> Self {
         Self {
             kind: ToolCallKind::CallOnly,
             name,
@@ -165,6 +174,7 @@ impl ToolCall {
             markdown_entity: None,
             workspace_dir: None,
             assistant_text_width: px(0.),
+            state,
         }
     }
 
@@ -173,6 +183,7 @@ impl ToolCall {
         name: SharedString,
         output: SharedString,
         details: Option<serde_json::Value>,
+        state: Option<PartState>,
         workspace_dir: WorkspaceDir,
     ) -> Self {
         Self {
@@ -184,6 +195,7 @@ impl ToolCall {
             markdown_entity: None,
             workspace_dir,
             assistant_text_width: px(0.),
+            state,
         }
     }
 
@@ -256,7 +268,9 @@ impl ToolCall {
                             )
                             .child(
                                 div()
-                                    .line_clamp(2)
+                                    .whitespace_nowrap()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
                                     .flex_1()
                                     .min_w_0()
                                     .child(title),
@@ -378,6 +392,7 @@ impl ToolCall {
         let name = self.name.clone();
         let args = self.args.clone();
         let title = format_tool_title(name.as_ref(), args.as_ref());
+        let is_streaming = self.state == Some(PartState::Streaming);
         div()
             .flex()
             .flex_col()
@@ -401,29 +416,51 @@ impl ToolCall {
                         h_flex()
                             .w_full()
                             .gap_1()
-                            .items_center()
+                            .items_start()
                             .child(
                                 Icon::empty()
                                     .path("icons/wrench.svg")
                                     .size(px(12.))
-                                    .text_color(cx.theme().muted_foreground),
+                                    .text_color(cx.theme().muted_foreground)
+                                    .mt(px(1.)),
                             )
                             .child(
-                                Tag::custom(
-                                    tool_name_color(name.as_ref()),
-                                    tool_name_color(name.as_ref()),
-                                    tool_name_color(name.as_ref()),
-                                )
-                                .outline()
-                                .small()
-                                .child(name.to_string()),
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .items_start()
+                                    .gap_1()
+                                    .child(
+                                        Tag::custom(
+                                            tool_name_color(name.as_ref()),
+                                            tool_name_color(name.as_ref()),
+                                            tool_name_color(name.as_ref()),
+                                        )
+                                        .outline()
+                                        .small()
+                                        .child(name.to_string()),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .mt(px(1.))
+                                            .opacity(0.75)
+                                            .child(title),
+                                    )
+                                    .when(is_streaming, |this| {
+                                        this.child(
+                                            div()
+                                                .mt(px(1.))
+                                                .child(spinner_with(
+                                                    12.0,
+                                                    u32::from(cx.theme().muted_foreground.to_rgb()) >> 8,
+                                                )),
+                                        )
+                                    }),
                             ),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .opacity(0.75)
-                            .child(title),
                     ),
             )
             .into_any_element()
@@ -435,6 +472,12 @@ impl ToolCall {
         }
 
         let output = self.output.clone().unwrap_or_default();
+        let header = if self.name.is_empty() || self.name == "unknown" {
+            "Output".to_string()
+        } else {
+            format!("{} Output", self.name)
+        };
+
         div()
             .flex()
             .w_full()
@@ -454,7 +497,7 @@ impl ToolCall {
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("Output"),
+                            .child(header),
                     )
                     .child(
                         div()
