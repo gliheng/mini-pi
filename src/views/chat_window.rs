@@ -362,7 +362,11 @@ impl ChatWindow {
                             );
                         });
                     }
-                    SessionEvent::ExtensionUiRequest { id, method, payload } => {
+                    SessionEvent::ExtensionUiRequest {
+                        id,
+                        method,
+                        payload,
+                    } => {
                         this.pending_extension_request =
                             Some((id.clone(), method.clone(), payload.clone()));
                     }
@@ -917,7 +921,11 @@ impl ChatWindow {
                 if options.is_empty() {
                     if let Some(ref session) = self.session {
                         session.update(cx, |s, cx| {
-                            s.respond_extension_ui(&id, &serde_json::json!({ "cancelled": true }), cx);
+                            s.respond_extension_ui(
+                                &id,
+                                &serde_json::json!({ "cancelled": true }),
+                                cx,
+                            );
                         });
                     }
                 } else {
@@ -1035,8 +1043,7 @@ impl ChatWindow {
                     .unwrap_or("")
                     .to_string();
                 if let Some(text) = payload.get("statusText").and_then(|t| t.as_str()) {
-                    self.extension_status
-                        .insert(key, SharedString::from(text));
+                    self.extension_status.insert(key, SharedString::from(text));
                 } else {
                     self.extension_status.remove(&key);
                 }
@@ -1116,9 +1123,7 @@ impl ChatWindow {
                     .unwrap_or_else(|| serde_json::json!({ "cancelled": true }));
                 (id, response)
             }
-            ExtensionDialog::Confirm { id, .. } => {
-                (id, serde_json::json!({ "confirmed": true }))
-            }
+            ExtensionDialog::Confirm { id, .. } => (id, serde_json::json!({ "confirmed": true })),
             ExtensionDialog::Input { id, input, .. } => {
                 let value = input.read(cx).value();
                 (id, serde_json::json!({ "value": value }))
@@ -1509,12 +1514,15 @@ impl ChatWindow {
                 el.child(
                     div().flex().justify_center().child(
                         div()
+                            .w_full()
+                            .max_w(px(520.))
                             .px_3()
                             .py_1()
                             .rounded_md()
                             .bg(cx.theme().danger)
                             .text_color(cx.theme().danger_foreground)
                             .text_xs()
+                            .whitespace_normal()
                             .child(status.unwrap_or_default()),
                     ),
                 )
@@ -2084,9 +2092,7 @@ impl ChatWindow {
                             .when(is_selected, |s| {
                                 s.bg(cx.theme().accent).text_color(cx.theme().foreground)
                             })
-                            .when(!is_selected, |s| {
-                                s.hover(|h| h.bg(cx.theme().accent))
-                            })
+                            .when(!is_selected, |s| s.hover(|h| h.bg(cx.theme().accent)))
                             .text_sm()
                             .child(opt.clone())
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -2296,8 +2302,9 @@ impl ChatWindow {
                                 }
                             }
                             "down" => {
-                                if let Some(ExtensionDialog::Select { selected, options, .. }) =
-                                    &mut this.extension_dialog
+                                if let Some(ExtensionDialog::Select {
+                                    selected, options, ..
+                                }) = &mut this.extension_dialog
                                 {
                                     if *selected + 1 < options.len() {
                                         *selected += 1;
