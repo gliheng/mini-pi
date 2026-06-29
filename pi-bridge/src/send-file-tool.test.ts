@@ -1,54 +1,46 @@
-import { describe, it } from "node:test";
-import assert from "node:assert";
+import { describe, test, expect } from "bun:test";
 import { isPathInsideWorkspace, detectMimeType } from "./send-file-tool.js";
 
 describe("send-file-tool", () => {
   describe("isPathInsideWorkspace", () => {
-    it("allows a file inside the workspace", () => {
-      assert.strictEqual(
-        isPathInsideWorkspace("/workspace/report.txt", "/workspace"),
+    test("allows a file inside the workspace", () => {
+      expect(isPathInsideWorkspace("/workspace/report.txt", "/workspace")).toBe(
         true
       );
     });
 
-    it("allows a nested file inside the workspace", () => {
-      assert.strictEqual(
-        isPathInsideWorkspace("/workspace/docs/readme.md", "/workspace"),
-        true
-      );
+    test("allows a nested file inside the workspace", () => {
+      expect(
+        isPathInsideWorkspace("/workspace/docs/readme.md", "/workspace")
+      ).toBe(true);
     });
 
-    it("rejects a file outside the workspace", () => {
-      assert.strictEqual(
-        isPathInsideWorkspace("/etc/passwd", "/workspace"),
-        false
-      );
+    test("rejects a file outside the workspace", () => {
+      expect(isPathInsideWorkspace("/etc/passwd", "/workspace")).toBe(false);
     });
 
-    it("rejects a path that is a sibling prefix of the workspace", () => {
-      assert.strictEqual(
-        isPathInsideWorkspace("/workspace-evil/file.txt", "/workspace"),
-        false
-      );
+    test("rejects a path that is a sibling prefix of the workspace", () => {
+      expect(
+        isPathInsideWorkspace("/workspace-evil/file.txt", "/workspace")
+      ).toBe(false);
     });
 
-    it("rejects traversal outside the workspace", () => {
-      assert.strictEqual(
-        isPathInsideWorkspace("/workspace/../outside.txt", "/workspace"),
-        false
-      );
+    test("rejects traversal outside the workspace", () => {
+      expect(
+        isPathInsideWorkspace("/workspace/../outside.txt", "/workspace")
+      ).toBe(false);
     });
   });
 
   describe("detectMimeType", () => {
-    it("detects common mime types by extension", () => {
-      assert.strictEqual(detectMimeType("file.txt"), "text/plain");
-      assert.strictEqual(detectMimeType("file.png"), "image/png");
-      assert.strictEqual(detectMimeType("file.pdf"), "application/pdf");
+    test("detects common mime types by extension", () => {
+      expect(detectMimeType("file.txt")).toBe("text/plain");
+      expect(detectMimeType("file.png")).toBe("image/png");
+      expect(detectMimeType("file.pdf")).toBe("application/pdf");
     });
 
-    it("falls back to octet-stream for unknown extensions", () => {
-      assert.strictEqual(detectMimeType("file.unknown"), "application/octet-stream");
+    test("falls back to octet-stream for unknown extensions", () => {
+      expect(detectMimeType("file.unknown")).toBe("application/octet-stream");
     });
   });
 });

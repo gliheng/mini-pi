@@ -14,6 +14,7 @@
         "border": "#292a24",
         "danger.background": "#e07b5c",
         "foreground": "#f7f7f7",
+        "ring": "#333333",
         "input.border": "#333333",
         "list.active.background": "#2BCF1315",
         "list.active.border": "#2BCF13",
@@ -159,13 +160,14 @@
       "colors": {
         "accent.background": "#e8e6e1",
         "accent.foreground": "#2a2a2a",
-        "background": "#faf8f3",
+        "background": "#fefaf8",
         "border": "#d9d7d2",
         "danger.background": "#C70231",
         "foreground": "#2a2a2a",
+        "ring": "#c9c7c2",
         "input.border": "#c9c7c2",
-        "list.active.background": "#2BCF1315",
-        "list.active.border": "#2BCF13",
+        "list.active.background": "#22c55e15",
+        "list.active.border": "#22c55e",
         "list.hover.background": "#e8e6e154",
         "list.even.background": "#f2f0eb55",
         "muted.background": "#e8e6e155",
@@ -173,8 +175,8 @@
         "panel.background": "#f0ece4",
         "popover.background": "#faf8f3",
         "popover.foreground": "#2a2a2a",
-        "primary.active.background": "#7fff6e99",
-        "primary.background": "#7fff6e",
+        "primary.active.background": "#4ade8099",
+        "primary.background": "#4ade80",
         "primary.foreground": "#101010",
         "scrollbar.background": "#f0ece400",
         "scrollbar.thumb.background": "#b8b4ae",
@@ -192,8 +194,8 @@
         "title_bar.background": "#f0ece4",
         "base.red": "#C70231",
         "base.red.light": "#e07b5c",
-        "base.green": "#2BCF13",
-        "base.green.light": "#6ce05c",
+        "base.green": "#22c55e",
+        "base.green.light": "#4ade80",
         "base.blue": "#3449d1",
         "base.blue.light": "#5c6ee0",
         "base.cyan": "#0798ab",
@@ -211,7 +213,7 @@
         "editor.active_line_number": "#2a2a2a",
         "editor.invisible": "#9e9a9466",
         "conflict": "#C70231",
-        "created": "#2BCF13",
+        "created": "#22c55e",
         "deleted": "#C70231",
         "error": "#C70231",
         "hidden": "#9e9a94",
@@ -221,7 +223,7 @@
         "modified": "#3449d1",
         "predictive": "#9e9a94",
         "renamed": "#3449d1",
-        "success": "#2BCF13",
+        "success": "#22c55e",
         "unreachable": "#9e9a94",
         "warning": "#c7a302",
         "syntax": {
@@ -266,13 +268,13 @@
             "color": "#C70231"
           },
           "string": {
-            "color": "#2BCF13"
+            "color": "#22c55e"
           },
           "string.escape": {
-            "color": "#2BCF13"
+            "color": "#22c55e"
           },
           "string.regex": {
-            "color": "#2BCF13"
+            "color": "#22c55e"
           },
           "string.special": {
             "color": "#c7a302"

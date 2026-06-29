@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-gpui = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe" }
+gpui = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", features = ["test-support"] }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 unicode-segmentation = "1.12"
 raw-window-handle = "0.6.2"
@@ -27,6 +27,7 @@ url = "2"
 percent-encoding = "2"
 fs2 = "0.4"
 linkify = "0.9"
+mime_guess = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "net"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-tungstenite = "0.26"
@@ -44,18 +45,13 @@ flate2 = "1"
 
 [package.metadata.bundle]
 name = "Mini Pi"
-identifier = "works.earendil.mini-pi"
-icon = ["assets/icon.icns"]
+identifier = "one.raven-ai.mini-pi"
+icon = ["scripts/installer/app.icns"]
 version = "0.1.0"
 category = "Developer Tool"
 short_description = "A desktop chat interface for the pi coding agent"
 long_description = "Mini Pi is a native chat-window wrapper around the pi coding agent SDK."
 resources = ["assets", "pi-bridge"]
-
-[dev-dependencies]
-resvg = "0.47"
-ico = "0.5"
-icns = { version = "0.4", default-features = false, features = ["pngio"] }
 
 [lints.rust]
 unexpected_cfgs = "allow"

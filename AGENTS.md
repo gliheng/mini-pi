@@ -6,7 +6,7 @@ A desktop GUI chat application that wraps the `pi` AI coding agent SDK. Built wi
 
 `mini-pi` provides a native chat-window interface for interacting with the `pi` coding agent SDK. Users can create chat threads, select AI models, manage workspaces (project directories), authenticate via Supabase to sync agent configuration across devices, and optionally control the app remotely from a phone over a Cloudflare Tunnel.
 
-The application runs a Node.js/WebSocket bridge (`pi-bridge/`) that loads `@earendil-works/pi-coding-agent` and exposes the SDK over a single multiplexed WebSocket connection. Chat sessions are persisted locally in SQLite and as JSONL files, while agent configuration can be synced to a Supabase storage bucket.
+The application runs a Bun/WebSocket bridge (`pi-bridge/`) that loads `@earendil-works/pi-coding-agent` and exposes the SDK over a single multiplexed WebSocket connection. Chat sessions are persisted locally in SQLite and as JSONL files, while agent configuration can be synced to a Supabase storage bucket.
 
 On first run, if `~/.pi/agent/` contains JSON files, the app offers to import them into `~/.mini-pi/agent/`.
 
@@ -73,16 +73,15 @@ src/views/
   reasoning.rs          # Collapsible thinking/reasoning display using gpui_component::Collapsible
   pi_agent_import.rs    # First-run import prompt from ~/.pi/agent/
 assets/                 # SVG icons loaded at runtime
-assets/prompts/         # System prompt files (e.g. title_generator.txt)
 docs/                   # Internal reference: GPUI guides, design review, markdown improvement plan, TODO
-examples/               # Standalone markdown renderer example and test markdown file
+scripts/                # Build scripts: macOS/Windows installers and generate_icons.py
 ```
 
 ## Build, Run and Test
 
 ```bash
-# Install the SDK bridge dependencies and compile it to JavaScript
-cd pi-bridge && npm install && npm run build && cd ..
+# Install the SDK bridge dependencies (Bun only)
+cd pi-bridge && bun install && cd ..
 
 # Standard cargo workflow
 cargo build
@@ -102,7 +101,7 @@ Self-contained installers are built from the scripts in `scripts/`:
 - `scripts/build-windows.ps1` produces `target/mini-pi-<version>-x64.msi`.
 - `scripts/build-macos.sh` produces `target/mini-pi-<version>-x64.dmg`.
 
-Both scripts bundle a private Node.js runtime and the compiled `pi-bridge` SDK, so end users do not need Node.js or bun installed. They are also driven by `.github/workflows/release.yml` on version tags.
+Both scripts compile `pi-bridge` into a single standalone executable using `bun build --compile`, so end users do not need Bun or Node.js installed. They are also driven by `.github/workflows/release.yml` on version tags.
 
 ### Packaging layout
 
@@ -117,7 +116,7 @@ Both scripts bundle a private Node.js runtime and the compiled `pi-bridge` SDK, 
    - **macOS:** Xcode + Xcode Command Line Tools (`xcode-select --install`)
    - **Linux:** Vulkan drivers, `libxcb`, `libxkbcommon`, `libfontconfig`, `libssl`
    - **Windows:** Vulkan SDK or DirectX
-3. **Node.js** (with `npm`) or **bun** must be installed, and `pi-bridge/node_modules` must be present (`cd pi-bridge && npm install`). The app spawns the bridge automatically and connects to it over a local WebSocket.
+3. **Bun** is the only supported runtime for the SDK bridge; `pi-bridge/node_modules` must be present for development (`cd pi-bridge && bun install`). The app spawns the bridge automatically and connects to it over a local WebSocket.
 4. *(Optional)* **cloudflared** is used for the phone remote-control feature. If it is not installed on the system, the app offers to download the official binary into `~/.mini-pi/bin/` when the user enables remote control. You can also install it manually with `brew install cloudflared` or from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/.
 5. *(Optional)* **Cloudflare AI Gateway** environment variables for auto-generated thread titles:
    - `CLOUDFLARE_API_KEY`
@@ -209,7 +208,7 @@ Dropdowns handle `up`, `down`, `enter`, and `escape` internally. The chat input'
 
 ## External SDK Dependency
 
-This application is a thin GUI wrapper around the `@earendil-works/pi-coding-agent` SDK, run inside a local Node.js bridge. Without Node.js/bun and the installed `pi-bridge/node_modules`, chat functionality will fail at runtime when `PiBridge::spawn` is called. The wire protocol is documented by the `BridgeEvent` enum and the multiplexed JSON messages in `src/rpc/pi_rpc.rs`.
+This application is a thin GUI wrapper around the `@earendil-works/pi-coding-agent` SDK, run inside a local pi-bridge process. Release builds ship a compiled bridge executable; for development, Bun and installed `pi-bridge/node_modules` are required. Chat functionality will fail at runtime when `PiBridge::spawn` is called if no bridge executable or Bun runtime is available. The wire protocol is documented by the `BridgeEvent` enum and the multiplexed JSON messages in `src/rpc/pi_rpc.rs`.
 
 ## Security Considerations
 
@@ -230,7 +229,7 @@ This application is a thin GUI wrapper around the `@earendil-works/pi-coding-age
 - `docs/design-review.md` — Design review (in Chinese) that lists known architecture issues such as PiRpc process monitoring, sync file locking, stale window handles, and Store `Connection` thread safety.
 - `docs/markdown-improvement-plan.md` — Planned markdown renderer improvements and known rendering bugs.
 - `docs/TODO.md` — Short checklist of upcoming features.
-- `examples/markdown_renderer.rs` + `examples/markdown_test.md` — Standalone markdown renderer example.
+
 
 ## Notes for Agents
 
@@ -238,9 +237,9 @@ This application is a thin GUI wrapper around the `@earendil-works/pi-coding-age
 - The model list is loaded dynamically at startup from the SDK bridge via `ModelRegistry.getAvailable()` and stored in `AppStore.models`. `src/config/model_config.rs` exposes the helpers (`all_models`, `get_model_name`, `model_display_name`, `parse_model_id`) that take a `&[ModelInfo]` slice. Model IDs use a `<provider>:<model>` format parsed by `parse_model_id`.
 - When adding database changes, append a new migration tuple to `MIGRATIONS` in `src/data/store.rs`.
 - Assets are loaded at runtime via `core::assets::Assets`. The asset root is resolved from the executable path (`src/utils/paths::app_root`), so packaged releases keep `assets/` next to the binary (Windows) or inside `Mini Pi.app/Contents/Resources` (macOS). During development the helper falls back to `CARGO_MANIFEST_DIR`.
-- The `pi-bridge/` directory is resolved the same way. Release builds ship a bundled Node binary and `pi-bridge/dist/index.js` (produced by `npm run build`); during development the bridge can still be run with bun/tsx/npx.
+- The `pi-bridge/` directory is resolved the same way. Release builds ship a compiled `pi-bridge`/`pi-bridge.exe` executable produced by `bun build --compile`; during development the bridge is run with `bun run src/index.ts`.
 - The app is primarily developed and tested on macOS. Windows-specific and Linux-specific code exists (e.g. `CREATE_NO_WINDOW`, client-side titlebar controls, `wmctrl`) but may need verification.
-- The `pi-bridge/` directory must have its dependencies installed (`npm install` or `bun install`) and compiled (`npm run build`) before running the app outside an installer.
+- The `pi-bridge/` directory must have its dependencies installed with `bun install` before running the app outside an installer.
 - The wire protocol between Rust and the bridge uses a single WebSocket connection; every message includes a `sessionId` so multiple chat sessions can share one connection.
 - Model IDs in `src/config/model_config.rs` must resolve through the SDK's `ModelRegistry`/`getModel`. Provider names like `cloudflare-ai-gateway` may not be recognized by the SDK and may need to be mapped to SDK-supported providers (`anthropic`, `openai`, etc.).
 - Several known issues are documented in `docs/design-review.md`; review it before making large changes to process management, sync, or window lifecycle.

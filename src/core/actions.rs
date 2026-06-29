@@ -11,5 +11,8 @@ actions!(
         SignUp,
         ConfirmInlineEdit,
         CancelInlineEdit,
+        StopStreaming,
+        ShowMainWindow,
+        About,
     ]
 );

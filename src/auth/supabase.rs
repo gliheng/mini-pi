@@ -38,14 +38,15 @@ fn ensure_success(
     let msg = serde_json::from_str::<serde_json::Value>(&body)
         .ok()
         .and_then(|v| {
-            v.get("error_description")
+            v.get("message")
+                .or(v.get("error_description"))
                 .or(v.get("msg"))
                 .or(v.get("error"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
                 .or_else(|| v.as_str().map(|s| s.to_string()))
         })
-        .unwrap_or_else(|| format!("request failed (status {})", status_code));
+        .unwrap_or_else(|| body.clone());
     Err(SupabaseAuthError::Api {
         msg,
         status: status_code,
@@ -303,21 +304,16 @@ pub fn upload_file(
     data: &[u8],
 ) -> Result<(), SupabaseAuthError> {
     let bucket_path = format!("{}/{}", user_id, file_path);
-    let encoded = percent_encoding::percent_encode(
-        bucket_path.as_bytes(),
-        percent_encoding::NON_ALPHANUMERIC,
-    );
 
     let body = data.to_vec();
+    let url = format!("{}/storage/v1/object/pi-sync/{}", SUPABASE_URL, bucket_path);
 
     let resp = client()
-        .post(format!(
-            "{}/storage/v1/object/pi-sync/{}",
-            SUPABASE_URL, encoded
-        ))
+        .post(url)
         .header("apikey", anon_key())
         .header("Authorization", format!("Bearer {}", access_token))
         .header("Content-Type", content_type)
+        .header("x-upsert", "true")
         .body(body)
         .send()?;
     ensure_success(resp)?;
@@ -328,19 +324,27 @@ pub fn list_files(
     access_token: &str,
     user_id: &str,
 ) -> Result<Vec<StorageFile>, SupabaseAuthError> {
+    let url = format!("{}/storage/v1/object/list/pi-sync", SUPABASE_URL);
+    let body_json = serde_json::json!({
+        "prefix": format!("{}/", user_id),
+        "limit": 1000,
+    });
+
     let resp = client()
-        .post(format!("{}/storage/v1/object/list/pi-sync", SUPABASE_URL))
+        .post(url)
         .header("apikey", anon_key())
         .header("Authorization", format!("Bearer {}", access_token))
         .header("Content-Type", "application/json")
-        .json(&serde_json::json!({
-            "prefix": format!("{}/", user_id),
-            "limit": 1000,
-        }))
+        .json(&body_json)
         .send()?;
 
+    let resp = ensure_success(resp)?;
     let body = resp.text().map_err(SupabaseAuthError::Http)?;
-    let files: Vec<StorageFile> = serde_json::from_str(&body)?;
+    let files: Vec<StorageFile> =
+        serde_json::from_str(&body).map_err(|e| SupabaseAuthError::Api {
+            msg: format!("failed to parse file list: {} (body: {})", e, body),
+            status: 200,
+        })?;
     Ok(files)
 }
 
@@ -350,16 +354,10 @@ pub fn download_file(
     file_path: &str,
 ) -> Result<Vec<u8>, SupabaseAuthError> {
     let bucket_path = format!("{}/{}", user_id, file_path);
-    let encoded = percent_encoding::percent_encode(
-        bucket_path.as_bytes(),
-        percent_encoding::NON_ALPHANUMERIC,
-    );
+    let url = format!("{}/storage/v1/object/pi-sync/{}", SUPABASE_URL, bucket_path);
 
     let resp = client()
-        .get(format!(
-            "{}/storage/v1/object/pi-sync/{}",
-            SUPABASE_URL, encoded
-        ))
+        .get(url)
         .header("apikey", anon_key())
         .header("Authorization", format!("Bearer {}", access_token))
         .send()?;
@@ -375,16 +373,10 @@ pub fn delete_file(
     file_path: &str,
 ) -> Result<(), SupabaseAuthError> {
     let bucket_path = format!("{}/{}", user_id, file_path);
-    let encoded = percent_encoding::percent_encode(
-        bucket_path.as_bytes(),
-        percent_encoding::NON_ALPHANUMERIC,
-    );
+    let url = format!("{}/storage/v1/object/pi-sync/{}", SUPABASE_URL, bucket_path);
 
     let resp = client()
-        .delete(format!(
-            "{}/storage/v1/object/pi-sync/{}",
-            SUPABASE_URL, encoded
-        ))
+        .delete(url)
         .header("apikey", anon_key())
         .header("Authorization", format!("Bearer {}", access_token))
         .send()?;
@@ -394,10 +386,10 @@ pub fn delete_file(
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct StorageFile {
-    pub name: String,
-    pub id: String,
-    pub updated_at: String,
-    pub created_at: String,
+    pub name: Option<String>,
+    pub id: Option<String>,
+    pub updated_at: Option<String>,
+    pub created_at: Option<String>,
     pub last_accessed_at: Option<String>,
     pub metadata: Option<serde_json::Value>,
 }

@@ -1,128 +1,146 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyWindowHandle, BorrowAppContext, Bounds, Context, FocusHandle, IntoElement, ParentElement,
-    Render, ScrollHandle, ScrollWheelEvent, SharedString, Styled, Window, div, prelude::*, px,
-    size, svg,
+    Anchor, AnyWindowHandle, App, Bounds, ClickEvent, Context, ElementId, FocusHandle, Focusable,
+    IntoElement, MouseButton, ParentElement, Render, RenderOnce, SharedString, Styled, Window, div,
+    prelude::*, px, size, svg,
 };
 
 use crate::auth::state;
 use crate::core::actions::CloseWindow;
 use crate::core::app::{AppStore, custom_window_options};
-use crate::data::store::{PaginatedThreads, Store, ThreadMeta};
-use crate::ui::loader::loader;
+use crate::data::store::{PaginatedThreads, Store, ThreadMeta, WorkspaceMeta};
 use crate::utils::format::format_relative_time;
 use crate::views::chat_app::open_chat_window;
 use crate::views::create_thread_button::{CreateThreadButton, CreateThreadButtonEvent};
 use crate::views::pi_agent_import::{PiAgentImport, PiAgentImportEvent};
-use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
-use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_component::{ActiveTheme, Icon, Sizable as _, Size};
+use crate::views::workspace_filter::{WorkspaceFilterPopover, WorkspaceFilterTag};
+use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _, Toggle};
+use gpui_component::{
+    ActiveTheme, Icon, IconName, IndexPath, Selectable, Sizable as _, Size, h_flex,
+    input::{Input, InputEvent, InputState},
+    list::{List, ListDelegate, ListEvent, ListState},
+    popover::Popover,
+};
 
-pub struct ThreadItem {
+#[derive(IntoElement)]
+struct ThreadListItem {
+    ix: IndexPath,
     thread: Arc<ThreadMeta>,
+    store: Arc<Store>,
+    list_state: gpui::Entity<ListState<ThreadListDelegate>>,
+    selected: bool,
     hovered: bool,
     confirming: bool,
-    store: Arc<Store>,
+    is_streaming: bool,
+    has_new_activity: bool,
 }
 
-impl ThreadItem {
-    pub fn new(thread: ThreadMeta, store: Arc<Store>) -> Self {
-        Self {
-            thread: Arc::new(thread),
-            hovered: false,
-            confirming: false,
-            store,
-        }
+impl Selectable for ThreadListItem {
+    fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
+    fn is_selected(&self) -> bool {
+        self.selected
     }
 }
 
-impl Render for ThreadItem {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl RenderOnce for ThreadListItem {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let Self {
+            ix,
+            thread,
+            store,
+            list_state,
+            selected,
+            hovered,
+            confirming,
+            is_streaming,
+            has_new_activity,
+        } = self;
+
         let theme = cx.theme().clone();
-        let thread_id = self.thread.id.clone();
-        let title: SharedString = if self.thread.title.is_empty() {
+        let thread_id = thread.id.clone();
+        let pinned = thread.pinned;
+
+        let title: SharedString = if thread.title.is_empty() {
             "New Thread".into()
         } else {
-            self.thread.title.clone().into()
+            // Collapse whitespace including newlines so the title always
+            // renders as one line with proper ellipsis truncation.
+            let mut cleaned = String::with_capacity(thread.title.len());
+            let mut in_space = false;
+            for ch in thread.title.chars() {
+                if ch.is_whitespace() && !in_space {
+                    cleaned.push(' ');
+                    in_space = true;
+                } else if !ch.is_whitespace() {
+                    cleaned.push(ch);
+                    in_space = false;
+                }
+            }
+            cleaned.trim().to_string().into()
         };
-        let preview: SharedString = if self.thread.preview.is_empty() {
+        let preview: SharedString = if thread.preview.is_empty() {
             "No messages yet".into()
         } else {
-            self.thread.preview.clone().into()
+            // Collapse multiple whitespace including newlines into a single
+            // space so the preview always renders as one line.
+            let mut cleaned = String::with_capacity(thread.preview.len());
+            let mut in_space = false;
+            for ch in thread.preview.chars() {
+                if ch.is_whitespace() && !in_space {
+                    cleaned.push(' ');
+                    in_space = true;
+                } else if !ch.is_whitespace() {
+                    cleaned.push(ch);
+                    in_space = false;
+                }
+            }
+            cleaned.trim().to_string().into()
         };
-        let time_label: SharedString = if self.thread.updated_at.is_empty() {
+        let time_label: SharedString = if thread.updated_at.is_empty() {
             "".into()
         } else {
-            format_relative_time(&self.thread.updated_at).into()
+            format_relative_time(&thread.updated_at).into()
         };
-        let pinned = self.thread.pinned;
-        let confirming = self.confirming;
-        let hovered = self.hovered;
-        let is_streaming = cx
-            .global::<AppStore>()
-            .streaming_thread_ids
-            .contains(&thread_id);
-        let has_new_activity = self
-            .thread
-            .metadata
-            .as_ref()
-            .and_then(|md| md.get("has_new_activity").and_then(|v| v.as_bool()))
-            .unwrap_or(false);
+
+        let list_state_hover = list_state.clone();
+        let list_state_delete = list_state.clone();
+        let list_state_cancel = list_state.clone();
+
+        let store_pin = store.clone();
+        let store_delete = store.clone();
+
+        let pin_thread_id = thread_id.clone();
+        let delete_thread_id = thread_id.clone();
+        let confirm_thread_id = thread_id.clone();
+        let cancel_thread_id = thread_id.clone();
 
         div()
-            .id(SharedString::from(format!("thread-{}", thread_id)))
+            .id(ElementId::from(SharedString::from(format!(
+                "thread-item-{}",
+                thread_id
+            ))))
             .px_3()
             .py_2()
             .border_b_1()
             .border_color(theme.border)
-            .hover(|style| style.bg(theme.secondary_hover))
+            .when(selected, |el| el.bg(theme.list_active))
+            .when(!selected && hovered, |el| el.bg(theme.secondary_hover))
             .cursor_pointer()
-            .w_full()
             .flex()
             .flex_row()
             .items_center()
             .gap_2()
-            .on_click(cx.listener(move |this, _, _, cx| {
-                let thread_id = this.thread.id.clone();
-                let thread_meta = (*this.thread).clone();
-                let store = this.store.clone();
-                let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
-
-                let existing_window: Option<AnyWindowHandle> =
-                    cx.update_global::<AppStore, _>(|app_store, _| {
-                        app_store.thread_windows.get(&thread_id).copied()
-                    });
-
-                if let Some(handle) = existing_window {
-                    let still_open = handle.update(
-                        cx,
-                        |_view: gpui::AnyView, window: &mut Window, _app: &mut gpui::App| {
-                            window.activate_window();
-                        },
-                    );
-                    if still_open.is_ok() {
-                        return;
-                    }
-                    cx.update_global::<AppStore, _>(|app_store, _| {
-                        app_store.thread_windows.remove(&thread_id);
-                    });
-                }
-
-                let handle = open_chat_window(
-                    cx,
-                    Some(&thread_meta),
-                    store.clone(),
-                    custom_window_options(Some(bounds)),
-                );
-                cx.update_global::<AppStore, _>(|app_store, _| {
-                    app_store.thread_windows.insert(thread_id, handle.into());
+            .on_hover(move |is_hovered: &bool, _window: &mut Window, cx: &mut App| {
+                cx.update_entity(&list_state_hover, |state, cx| {
+                    state.delegate_mut().set_hovered(ix, *is_hovered);
+                    cx.notify();
                 });
-            }))
-            .on_hover(cx.listener(move |this, hovered: &bool, _, _cx| {
-                this.hovered = *hovered;
-                _cx.notify();
-            }))
+            })
             .child(
                 div()
                     .flex_1()
@@ -183,7 +201,7 @@ impl Render for ThreadItem {
                                         div()
                                             .text_xs()
                                             .text_color(theme.green)
-                                            .child("Thinking..."),
+                                            .child("Thinking"),
                                     ),
                             )
                         })
@@ -207,7 +225,7 @@ impl Render for ThreadItem {
                     })
                     .when(!confirming && hovered, |el| {
                         el.child(
-                            Button::new(SharedString::from(format!("pin-btn-{}", thread_id)))
+                            Button::new(SharedString::from(format!("pin-btn-{}", pin_thread_id)))
                                 .with_size(Size::XSmall)
                                 .custom(
                                     ButtonCustomVariant::new(cx)
@@ -218,18 +236,22 @@ impl Render for ThreadItem {
                                 )
                                 .icon(
                                     Icon::empty()
-                                        .path(if pinned { "unpin.svg" } else { "pin.svg" })
+                                        .path(if pinned {
+                                            "icons/unpin.svg"
+                                        } else {
+                                            "icons/pin.svg"
+                                        })
                                         .size(px(14.))
                                         .text_color(theme.muted_foreground),
                                 )
-                                .on_click(cx.listener(move |this, _, _, cx| {
+                                .on_click(move |_event: &ClickEvent, _window: &mut Window, cx: &mut App| {
                                     cx.stop_propagation();
-                                    let _ = this.store.toggle_pin(&this.thread.id);
-                                    cx.update_global(|_: &mut AppStore, _| {});
-                                })),
+                                    let _ = store_pin.toggle_pin(&pin_thread_id);
+                                    cx.update_global::<AppStore, _>(|_, _| {});
+                                }),
                         )
                         .child(
-                            Button::new(SharedString::from(format!("remove-btn-{}", thread_id)))
+                            Button::new(SharedString::from(format!("remove-btn-{}", delete_thread_id)))
                                 .with_size(Size::XSmall)
                                 .custom(
                                     ButtonCustomVariant::new(cx)
@@ -240,15 +262,17 @@ impl Render for ThreadItem {
                                 )
                                 .icon(
                                     Icon::empty()
-                                        .path("close.svg")
+                                        .path("icons/close.svg")
                                         .size(px(14.))
                                         .text_color(theme.muted_foreground),
                                 )
-                                .on_click(cx.listener(move |this, _, _, cx| {
+                                .on_click(move |_event: &ClickEvent, _window: &mut Window, cx: &mut App| {
                                     cx.stop_propagation();
-                                    this.confirming = true;
-                                    cx.notify();
-                                })),
+                                    cx.update_entity(&list_state_delete, |state, cx| {
+                                        state.delegate_mut().confirming_id = Some(delete_thread_id.clone());
+                                        cx.notify();
+                                    });
+                                }),
                         )
                     })
                     .when(confirming, |el| {
@@ -262,30 +286,32 @@ impl Render for ThreadItem {
                                 .child(
                                     Button::new(SharedString::from(format!(
                                         "confirm-delete-btn-{}",
-                                        thread_id
+                                        confirm_thread_id
                                     )))
                                     .label("Yes")
                                     .with_size(Size::XSmall)
                                     .danger()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                    .on_click(move |_event: &ClickEvent, _window: &mut Window, cx: &mut App| {
                                         cx.stop_propagation();
-                                        let _ = this.store.delete_thread(&this.thread.id);
-                                        this.confirming = false;
-                                        cx.update_global(|_: &mut AppStore, _| {});
-                                    })),
+                                        let _ = store_delete.delete_thread(&confirm_thread_id);
+                                        cx.update_global::<AppStore, _>(|_, _| {});
+                                    }),
                                 )
                                 .child(
                                     Button::new(SharedString::from(format!(
                                         "cancel-delete-btn-{}",
-                                        thread_id
+                                        cancel_thread_id
                                     )))
                                     .label("No")
                                     .with_size(Size::XSmall)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                    .on_click(move |_event: &ClickEvent, _window: &mut Window, cx: &mut App| {
                                         cx.stop_propagation();
-                                        this.confirming = false;
-                                        cx.notify();
-                                    })),
+                                        cx.update_entity(&list_state_cancel, |state, cx| {
+                                            state.delegate_mut().confirming_id = None;
+                                            cx.notify();
+                                        })
+                                        ;
+                                    }),
                                 ),
                         )
                     }),
@@ -293,30 +319,328 @@ impl Render for ThreadItem {
     }
 }
 
+struct ThreadListDelegate {
+    store: Arc<Store>,
+    query: String,
+    workspace_filter: Option<String>,
+    pinned: Vec<Arc<ThreadMeta>>,
+    unpinned: Vec<Arc<ThreadMeta>>,
+    selected_index: Option<IndexPath>,
+    hovered_index: Option<IndexPath>,
+    confirming_id: Option<String>,
+    page: usize,
+    per_page: usize,
+    total: usize,
+    eof: bool,
+}
+
+impl ThreadListDelegate {
+    fn new(store: Arc<Store>) -> Self {
+        Self {
+            store,
+            query: String::new(),
+            workspace_filter: None,
+            pinned: Vec::new(),
+            unpinned: Vec::new(),
+            selected_index: None,
+            hovered_index: None,
+            confirming_id: None,
+            page: 1,
+            per_page: 20,
+            total: 0,
+            eof: false,
+        }
+    }
+
+    fn set_hovered(&mut self, ix: IndexPath, hovered: bool) {
+        if hovered {
+            self.hovered_index = Some(ix);
+        } else if self.hovered_index == Some(ix) {
+            self.hovered_index = None;
+        }
+    }
+
+    fn section_for(&self, section: usize) -> Option<(&[Arc<ThreadMeta>], &'static str)> {
+        let mut i = 0;
+        if !self.pinned.is_empty() {
+            if i == section {
+                return Some((&self.pinned, "Pinned threads"));
+            }
+            i += 1;
+        }
+        if !self.unpinned.is_empty() {
+            if i == section {
+                return Some((&self.unpinned, "Threads"));
+            }
+        }
+        None
+    }
+
+    fn thread_at(&self, ix: IndexPath) -> Option<Arc<ThreadMeta>> {
+        self.section_for(ix.section)
+            .and_then(|(threads, _)| threads.get(ix.row))
+            .cloned()
+    }
+
+    fn set_threads(&mut self, threads: &[ThreadMeta], cx: &mut Context<ListState<Self>>) {
+        self.pinned.clear();
+        self.unpinned.clear();
+        self.append_threads(threads, cx);
+    }
+
+    fn append_threads(&mut self, threads: &[ThreadMeta], _cx: &mut Context<ListState<Self>>) {
+        for thread in threads {
+            let arc = Arc::new(thread.clone());
+            let target = if arc.pinned {
+                &mut self.pinned
+            } else {
+                &mut self.unpinned
+            };
+            if !target.iter().any(|t| t.id == arc.id) {
+                target.push(arc);
+            }
+        }
+    }
+
+    fn refresh(&mut self, query: &str, cx: &mut Context<ListState<Self>>) {
+        self.query = query.to_string();
+        self.confirming_id = None;
+        self.hovered_index = None;
+        self.selected_index = None;
+
+        if query.is_empty() && self.workspace_filter.is_none() {
+            self.page = 1;
+            self.eof = false;
+            match self.store.list_threads_paginated(1, self.per_page.max(1)) {
+                Ok(paginated) => self.set_paginated(paginated, cx),
+                Err(_) => {
+                    self.pinned.clear();
+                    self.unpinned.clear();
+                    self.total = 0;
+                    self.eof = true;
+                }
+            }
+        } else {
+            self.page = 1;
+            self.eof = true;
+            match self
+                .store
+                .search_threads(query, self.workspace_filter.as_deref())
+            {
+                Ok(threads) => {
+                    self.total = threads.len();
+                    self.per_page = threads.len().max(1);
+                    self.set_threads(&threads, cx);
+                }
+                Err(_) => {
+                    self.pinned.clear();
+                    self.unpinned.clear();
+                    self.total = 0;
+                }
+            }
+        }
+
+        cx.notify();
+    }
+
+    fn set_paginated(&mut self, paginated: PaginatedThreads, cx: &mut Context<ListState<Self>>) {
+        self.page = paginated.page;
+        self.per_page = paginated.per_page;
+        self.total = paginated.total;
+        self.eof = paginated.page * paginated.per_page >= paginated.total;
+        self.set_threads(&paginated.threads, cx);
+    }
+}
+
+impl ListDelegate for ThreadListDelegate {
+    type Item = ThreadListItem;
+
+    fn sections_count(&self, _cx: &App) -> usize {
+        let mut count = 0;
+        if !self.pinned.is_empty() {
+            count += 1;
+        }
+        if !self.unpinned.is_empty() {
+            count += 1;
+        }
+        count.max(1)
+    }
+
+    fn items_count(&self, section: usize, _cx: &App) -> usize {
+        self.section_for(section)
+            .map(|(threads, _)| threads.len())
+            .unwrap_or(0)
+    }
+
+    fn perform_search(
+        &mut self,
+        query: &str,
+        _window: &mut Window,
+        cx: &mut Context<ListState<Self>>,
+    ) -> gpui::Task<()> {
+        self.refresh(query.trim(), cx);
+        gpui::Task::ready(())
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: Option<IndexPath>,
+        _window: &mut Window,
+        cx: &mut Context<ListState<Self>>,
+    ) {
+        self.selected_index = ix;
+        cx.notify();
+    }
+
+    fn render_section_header(
+        &mut self,
+        section: usize,
+        _window: &mut Window,
+        cx: &mut Context<ListState<Self>>,
+    ) -> Option<impl IntoElement> {
+        let (_, label) = self.section_for(section)?;
+        Some(
+            div().px_3().py_1().bg(cx.theme().muted).child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(label),
+            ),
+        )
+    }
+
+    fn render_item(
+        &mut self,
+        ix: IndexPath,
+        _window: &mut Window,
+        cx: &mut Context<ListState<Self>>,
+    ) -> Option<Self::Item> {
+        let thread = self.thread_at(ix)?;
+        let is_streaming = cx
+            .global::<AppStore>()
+            .streaming_thread_ids
+            .contains(&thread.id);
+        let has_new_activity = thread
+            .metadata
+            .as_ref()
+            .and_then(|md| md.get("has_new_activity").and_then(|v| v.as_bool()))
+            .unwrap_or(false);
+        let confirming = self.confirming_id.as_ref() == Some(&thread.id);
+
+        Some(ThreadListItem {
+            ix,
+            thread,
+            store: self.store.clone(),
+            list_state: cx.entity(),
+            selected: self.selected_index == Some(ix),
+            hovered: self.hovered_index == Some(ix),
+            confirming,
+            is_streaming,
+            has_new_activity,
+        })
+    }
+
+    fn render_empty(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<ListState<Self>>,
+    ) -> impl IntoElement {
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                svg()
+                    .path("icons/pi.svg")
+                    .text_color(cx.theme().border)
+                    .size(px(180.)),
+            )
+    }
+
+    fn has_more(&self, _cx: &App) -> bool {
+        !self.eof && self.query.is_empty()
+    }
+
+    fn load_more(&mut self, _window: &mut Window, cx: &mut Context<ListState<Self>>) {
+        if !self.query.is_empty() || self.eof {
+            return;
+        }
+
+        let next_page = self.page + 1;
+        let per_page = self.per_page.max(1);
+        if let Ok(paginated) = self.store.list_threads_paginated(next_page, per_page) {
+            self.page = paginated.page;
+            self.per_page = paginated.per_page;
+            self.total = paginated.total;
+            self.eof = paginated.page * paginated.per_page >= paginated.total;
+            self.append_threads(&paginated.threads, cx);
+        }
+        cx.notify();
+    }
+}
+
 pub struct ThreadList {
     pub import_prompt: gpui::Entity<PiAgentImport>,
     pub create_thread_button: gpui::Entity<CreateThreadButton>,
     pub focus_handle: FocusHandle,
-    pub thread_items: Vec<gpui::Entity<ThreadItem>>,
+    list_state: gpui::Entity<ListState<ThreadListDelegate>>,
+    pub search_input: gpui::Entity<InputState>,
     pub store: Arc<Store>,
     pub show_import_prompt: bool,
-    pub scroll_handle: ScrollHandle,
-    pub page: usize,
-    pub per_page: usize,
-    pub total_pages: usize,
-    pub total: usize,
-    pub loading_more: bool,
-    pub search_input: gpui::Entity<InputState>,
-    pub _subscription: gpui::Subscription,
+    pub workspaces: Vec<WorkspaceMeta>,
+    pub search_focused: bool,
+    pub _global_subscription: gpui::Subscription,
     pub _import_prompt_subscription: gpui::Subscription,
     pub _create_thread_subscription: gpui::Subscription,
+    pub _list_subscription: gpui::Subscription,
+    pub _search_focus_subscription: gpui::Subscription,
     pub _search_input_subscription: gpui::Subscription,
 }
 
 impl ThreadList {
     pub fn new(window: &mut Window, cx: &mut Context<Self>, store: Arc<Store>) -> Self {
-        let subscription = cx.observe_global::<AppStore>(move |this, cx| {
-            this.load_threads(cx);
+        let delegate = ThreadListDelegate::new(store.clone());
+        let list_state = cx.new(|cx| ListState::new(delegate, window, cx).searchable(false));
+
+        let search_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search threads..."));
+        let search_input_subscription = cx.subscribe_in(
+            &search_input,
+            window,
+            |this, _state, event: &InputEvent, _window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.refresh_threads(cx);
+                    cx.notify();
+                }
+            },
+        );
+
+        let workspaces = store.list_workspaces().unwrap_or_default();
+
+        let search_focus_handle = search_input.read(cx).focus_handle(cx);
+        let search_focus_subscription = cx.on_focus(&search_focus_handle, window, |this, _, cx| {
+            this.workspaces = this.store.list_workspaces().unwrap_or_default();
+            let has_active_filter = this
+                .list_state
+                .read(cx)
+                .delegate()
+                .workspace_filter
+                .is_some();
+            this.search_focused = !has_active_filter;
+            cx.notify();
+        });
+
+        let global_subscription = cx.observe_global::<AppStore>(move |this, cx| {
+            this.refresh_threads(cx);
+        });
+
+        let list_subscription = cx.subscribe(&list_state, |this, _, event: &ListEvent, cx| {
+            if let ListEvent::Confirm(ix) = event {
+                if let Some(thread) = this.list_state.read(cx).delegate().thread_at(*ix) {
+                    this.open_thread_window(&thread, cx);
+                }
+            }
         });
 
         let import_prompt = cx.new(|_| PiAgentImport::new());
@@ -346,18 +670,6 @@ impl ThreadList {
             },
         );
 
-        let search_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Search threads..."));
-        let _search_input_subscription = cx.subscribe_in(
-            &search_input,
-            window,
-            |this, _, event: &InputEvent, _window, cx| {
-                if matches!(event, InputEvent::Change) {
-                    this.load_threads(cx);
-                }
-            },
-        );
-
         let is_first = state::is_first_run();
         let has_pi_settings = import_prompt.read(cx).has_files();
         let show_import_prompt = is_first && has_pi_settings;
@@ -366,211 +678,111 @@ impl ThreadList {
             import_prompt,
             create_thread_button,
             focus_handle: cx.focus_handle(),
-            thread_items: Vec::new(),
+            list_state: list_state.clone(),
+            search_input,
             store,
             show_import_prompt,
-            scroll_handle: ScrollHandle::new(),
-            page: 1,
-            per_page: 20,
-            total_pages: 0,
-            total: 0,
-            loading_more: false,
-            search_input,
-            _subscription: subscription,
+            workspaces,
+            search_focused: false,
+            _global_subscription: global_subscription,
             _import_prompt_subscription: import_prompt_subscription,
             _create_thread_subscription: create_thread_subscription,
-            _search_input_subscription,
+            _list_subscription: list_subscription,
+            _search_focus_subscription: search_focus_subscription,
+            _search_input_subscription: search_input_subscription,
         };
-        thread_list.load_threads(cx);
+
+        thread_list.refresh_threads(cx);
         thread_list
     }
 
-    fn search_query(&self, cx: &Context<Self>) -> String {
-        self.search_input
-            .read(cx)
-            .value()
-            .to_string()
-            .trim()
-            .to_lowercase()
+    fn refresh_threads(&mut self, cx: &mut Context<Self>) {
+        let query = self.search_input.read(cx).value().to_string();
+        self.list_state.update(cx, |state, cx| {
+            state.delegate_mut().refresh(&query, cx);
+        });
     }
 
-    fn is_searching(&self, cx: &Context<Self>) -> bool {
-        !self.search_query(cx).is_empty()
-    }
-
-    fn all_threads_loaded(&self, cx: &Context<Self>) -> bool {
-        !self.is_searching(cx) && self.total_pages > 0 && self.page >= self.total_pages
+    fn set_workspace_filter(
+        &mut self,
+        workspace: Option<&WorkspaceMeta>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace_id = workspace.map(|ws| ws.id.clone());
+        self.list_state.update(cx, |state, _cx| {
+            state.delegate_mut().workspace_filter = workspace_id;
+        });
+        self.refresh_threads(cx);
+        self.search_focused = false;
+        cx.notify();
     }
 
     fn open_new_thread_window(&mut self, cx: &mut Context<Self>) {
         let store = cx.global::<AppStore>().store.clone();
-        let _sessions_dir = store.sessions_dir().clone();
         let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
         open_chat_window(cx, None, store.clone(), custom_window_options(Some(bounds)));
     }
 
-    fn load_threads(&mut self, cx: &mut Context<Self>) {
-        self.page = 1;
-        self.loading_more = false;
-
-        let query = self.search_query(cx);
-        if !query.is_empty() {
-            match self.store.search_threads(&query) {
-                Ok(threads) => {
-                    self.total = threads.len();
-                    self.total_pages = 0;
-                    self.sync_thread_items(&threads, cx);
-                }
-                Err(_) => {
-                    self.thread_items.clear();
-                    self.total = 0;
-                    self.total_pages = 0;
-                }
-            }
-            cx.notify();
-            return;
-        }
-
-        let per_page = self.per_page.max(1);
-        match self.store.list_threads_paginated(1, per_page) {
-            Ok(PaginatedThreads {
-                threads,
-                page,
-                per_page,
-                total,
-            }) => {
-                self.page = page;
-                self.per_page = per_page;
-                self.total = total;
-                self.total_pages = if total == 0 {
-                    0
-                } else {
-                    (total + per_page - 1) / per_page
-                };
-                self.sync_thread_items(&threads, cx);
-            }
-            Err(_) => {
-                self.thread_items.clear();
-                self.total = 0;
-                self.total_pages = 0;
-            }
-        }
-        cx.notify();
-    }
-
-    fn load_more_threads(&mut self, cx: &mut Context<Self>) {
-        if self.is_searching(cx)
-            || self.loading_more
-            || self.total_pages == 0
-            || self.page >= self.total_pages
-        {
-            return;
-        }
-        self.loading_more = true;
-        cx.notify();
-
-        let next_page = self.page + 1;
-        let per_page = self.per_page.max(1);
+    fn open_thread_window(&mut self, thread: &ThreadMeta, cx: &mut Context<Self>) {
+        let thread_id = thread.id.clone();
+        let thread_meta = thread.clone();
         let store = self.store.clone();
 
-        cx.spawn(async move |this, cx| {
-            let result = store.list_threads_paginated(next_page, per_page);
-            let _ = this.update(cx, |this, cx| {
-                this.loading_more = false;
-                match result {
-                    Ok(PaginatedThreads {
-                        threads,
-                        page,
-                        per_page,
-                        total,
-                    }) => {
-                        this.page = page;
-                        this.per_page = per_page;
-                        this.total = total;
-                        this.total_pages = if total == 0 {
-                            0
-                        } else {
-                            (total + per_page - 1) / per_page
-                        };
-                        this.append_threads(&threads, cx);
-                    }
-                    Err(_) => {}
-                }
-                cx.notify();
+        let existing_window: Option<AnyWindowHandle> =
+            cx.update_global::<AppStore, _>(|app_store, _| {
+                app_store.thread_windows.get(&thread_id).copied()
             });
-        })
-        .detach();
-    }
 
-    fn append_threads(&mut self, threads: &[ThreadMeta], cx: &mut Context<Self>) {
-        for thread in threads {
-            if !self
-                .thread_items
-                .iter()
-                .any(|item| item.read(cx).thread.id == thread.id)
-            {
-                let item = cx.new(|_| ThreadItem::new(thread.clone(), self.store.clone()));
-                self.thread_items.push(item);
+        if let Some(handle) = existing_window {
+            let still_open = handle.update(
+                cx,
+                |_view: gpui::AnyView, window: &mut Window, _app: &mut gpui::App| {
+                    window.activate_window();
+                },
+            );
+            if still_open.is_ok() {
+                return;
             }
+            cx.update_global::<AppStore, _>(|app_store, _| {
+                app_store.thread_windows.remove(&thread_id);
+            });
         }
-    }
 
-    fn check_scroll_for_more(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.all_threads_loaded(cx) {
-            return;
-        }
-        let max_y = self.scroll_handle.max_offset().y;
-        if max_y <= px(0.) {
-            return;
-        }
-        let offset_y = self.scroll_handle.offset().y;
-        let threshold = px(80.);
-        if offset_y.abs() >= max_y - threshold {
-            self.load_more_threads(cx);
-        }
-    }
-
-    fn sync_thread_items(&mut self, threads: &[ThreadMeta], cx: &mut Context<Self>) {
-        self.thread_items
-            .retain(|item| threads.iter().any(|t| t.id == item.read(cx).thread.id));
-        for thread in threads {
-            if !self
-                .thread_items
-                .iter()
-                .any(|item| item.read(cx).thread.id == thread.id)
-            {
-                let item = cx.new(|_| ThreadItem::new(thread.clone(), self.store.clone()));
-                self.thread_items.push(item);
-            }
-        }
-        for item in &self.thread_items {
-            if let Some(thread) = threads.iter().find(|t| t.id == item.read(cx).thread.id) {
-                item.update(cx, |item, _| item.thread = Arc::new(thread.clone()));
-            }
-        }
-        // Reorder to match the database sort: pinned first, then updated_at descending
-        let order: std::collections::HashMap<String, usize> = threads
-            .iter()
-            .enumerate()
-            .map(|(i, t)| (t.id.clone(), i))
-            .collect();
-        self.thread_items.sort_by_key(|item| {
-            order
-                .get(&item.read(cx).thread.id)
-                .copied()
-                .unwrap_or(usize::MAX)
+        let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
+        let handle = open_chat_window(
+            cx,
+            Some(&thread_meta),
+            store.clone(),
+            custom_window_options(Some(bounds)),
+        );
+        cx.update_global::<AppStore, _>(|app_store, _| {
+            app_store.thread_windows.insert(thread_id, handle.into());
         });
     }
 }
 
 impl Render for ThreadList {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let (pinned, unpinned): (Vec<_>, Vec<_>) = self
-            .thread_items
-            .iter()
-            .cloned()
-            .partition(|item| item.read(cx).thread.pinned);
+        let window_width = window.bounds().size.width;
+        let filter_panel_width = (window_width - px(24.)).max(px(100.));
+        let active_workspace_id = self.list_state.read(cx).delegate().workspace_filter.clone();
+        let active_workspace = active_workspace_id
+            .as_ref()
+            .and_then(|id| self.workspaces.iter().find(|ws| ws.id == *id));
+
+        let workspace_filter_tag = active_workspace.map(|ws| {
+            let ws = ws.clone();
+            WorkspaceFilterTag::new(ws, {
+                let listener = cx.listener(|this, _: &(), window, cx| {
+                    this.set_workspace_filter(None, window, cx);
+                });
+                move |window, cx| {
+                    listener(&(), window, cx);
+                }
+            })
+        });
 
         div()
             .track_focus(&self.focus_handle)
@@ -583,98 +795,87 @@ impl Render for ThreadList {
             .min_h(px(0.))
             .bg(theme.background)
             .child(
-                div()
-                    .id("thread-search-bar")
-                    .px_3()
+                h_flex()
+                    .px_2()
                     .py_2()
+                    .gap_2()
+                    .items_center()
                     .border_b_1()
                     .border_color(theme.border)
-                    .bg(theme.muted)
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
                     .child(
-                        svg()
-                            .path("search.svg")
-                            .size(px(16.))
-                            .text_color(theme.muted_foreground),
+                        div().flex_1().child(
+                            Popover::new("workspace-filter-popover")
+                                .anchor(Anchor::TopCenter)
+                                .mouse_button(MouseButton::Right)
+                                .open(self.search_focused)
+                                .on_open_change(cx.listener(|this, open, _, cx| {
+                                    this.search_focused = *open;
+                                    cx.notify();
+                                }))
+                                .p_1()
+                                .overlay_closable(false)
+                                .max_h(px(200.))
+                                .trigger(
+                                    Input::new(&self.search_input)
+                                        .w_full()
+                                        .appearance(false)
+                                        .prefix(
+                                            Icon::new(IconName::Search)
+                                                .text_color(theme.muted_foreground),
+                                        )
+                                        .when(active_workspace_id.is_none(), |this| {
+                                            this.suffix(
+                                                div()
+                                                    .text_color(theme.muted_foreground)
+                                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                                        cx.stop_propagation();
+                                                    })
+                                                    .child(
+                                                        Toggle::new("workspace-filter-trigger")
+                                                            .icon(
+                                                                Icon::empty()
+                                                                    .path("icons/filter.svg")
+                                                                    .size(px(14.)),
+                                                            )
+                                                            .cursor_default()
+                                                            .with_size(Size::XSmall)
+                                                            .checked(self.search_focused)
+                                                            .on_click(cx.listener(
+                                                                |this, checked: &bool, _, cx| {
+                                                                    this.search_focused = *checked;
+                                                                    cx.stop_propagation();
+                                                                    cx.notify();
+                                                                },
+                                                            )),
+                                                    ),
+                                            )
+                                        })
+                                        .cleanable(true),
+                                )
+                                .child(div().w(filter_panel_width).child(
+                                    WorkspaceFilterPopover::new(self.workspaces.clone(), {
+                                        let listener = cx.listener(
+                                            |this,
+                                             workspace: &Option<WorkspaceMeta>,
+                                             window,
+                                             cx| {
+                                                this.set_workspace_filter(
+                                                    workspace.as_ref(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            },
+                                        );
+                                        move |workspace: Option<WorkspaceMeta>, window, cx| {
+                                            listener(&workspace, window, cx);
+                                        }
+                                    }),
+                                )),
+                        ),
                     )
-                    .child(Input::new(&self.search_input).appearance(false).w_full()),
+                    .when_some(workspace_filter_tag, |this, tag| this.child(tag)),
             )
-            .child(
-                div()
-                    .id("thread-list")
-                    .flex_1()
-                    .min_h(px(0.))
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll_handle)
-                    .on_scroll_wheel(cx.listener(|this, _event: &ScrollWheelEvent, window, cx| {
-                        this.check_scroll_for_more(window, cx);
-                    }))
-                    .flex()
-                    .flex_col()
-                    .when(!pinned.is_empty(), |el| {
-                        el.child(
-                            div().px_3().py_1().bg(theme.muted).child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme.muted_foreground)
-                                    .child("Pinned threads"),
-                            ),
-                        )
-                        .children(pinned.iter().cloned())
-                    })
-                    .when(!unpinned.is_empty(), |el| {
-                        el.child(
-                            div().px_3().py_1().bg(theme.muted).child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme.muted_foreground)
-                                    .child("Threads"),
-                            ),
-                        )
-                        .children(unpinned.iter().cloned())
-                    })
-                    .when(self.thread_items.is_empty(), |el| {
-                        el.items_center().justify_center().child(
-                            svg()
-                                .path("logo.svg")
-                                .text_color(theme.border)
-                                .size(px(180.)),
-                        )
-                    })
-                    .when(self.loading_more, |el| {
-                        el.child(
-                            div()
-                                .id("thread-list-loader")
-                                .py_4()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child(loader()),
-                        )
-                    })
-                    .when(
-                        self.all_threads_loaded(cx) && !self.thread_items.is_empty(),
-                        |el| {
-                            el.child(
-                                div()
-                                    .id("thread-list-end")
-                                    .py_4()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(theme.muted_foreground)
-                                            .child("No more threads"),
-                                    ),
-                            )
-                        },
-                    ),
-            )
+            .child(List::new(&self.list_state).flex_1().w_full())
             .child(
                 div()
                     .px_3()

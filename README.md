@@ -23,7 +23,7 @@ Download the latest `mini-pi-x64.msi` from the [Releases](../../releases) page a
 
 ```bash
 # Install bridge dependencies
-cd pi-bridge && npm install && npm run build && cd ..
+cd pi-bridge && bun install && cd ..
 
 # Run in development
 cargo run
@@ -46,11 +46,11 @@ pwsh -ExecutionPolicy Bypass -File scripts\build-windows.ps1
 ./scripts/build-macos.sh
 ```
 
-Both scripts build a release binary, bundle a private Node.js runtime and the `pi-bridge` SDK, and produce an installer in `target/`.
+Both scripts build a release binary, compile `pi-bridge` into a standalone executable with Bun, and produce an installer in `target/`.
 
 ## Development prerequisites
 
 - Rust stable >= 1.92
-- Node.js >= 20 (for the SDK bridge)
+- Bun (to compile the SDK bridge for release installers)
 - Windows: WiX v3.11.2 is downloaded automatically by the build script
 - macOS: `cargo-bundle` and `create-dmg` are installed automatically by the build script

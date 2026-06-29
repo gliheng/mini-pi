@@ -128,6 +128,7 @@ export default defineNuxtConfig({
     workbox: {
       globPatterns: ['**/*.{js,css,html,png,svg,ico,webmanifest,woff2}'],
       navigateFallback: '/offline',
+      navigateFallbackDenylist: [/^\/api\//, /^\/vendor\//],
       maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
       runtimeCaching: [
         {
@@ -154,6 +155,10 @@ export default defineNuxtConfig({
               statuses: [0, 200]
             }
           }
+        },
+        {
+          urlPattern: ({ url }) => url.origin !== self.location.origin,
+          handler: 'NetworkOnly'
         },
         {
           urlPattern: /\/api\/.*/i,

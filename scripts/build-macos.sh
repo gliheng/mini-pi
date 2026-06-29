@@ -3,12 +3,18 @@ set -euo pipefail
 
 VERSION="${1:-0.1.0}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# cargo-bundle and create-dmg write large staging images under $TMPDIR;
+# /var/folders can be space-constrained on the sealed system volume, so force
+# them to use a project-local temp directory.
+export TMPDIR="$ROOT/target/build-tmp"
+mkdir -p "$TMPDIR"
+
 PACKAGE="$ROOT/target/package/mini-pi"
 TOOLS="$ROOT/tools"
 BUNDLE_DIR="$ROOT/target/release/bundle/osx"
 APP_NAME="Mini Pi"
 APP_BUNDLE="$BUNDLE_DIR/$APP_NAME.app"
-DMG_OUT="$ROOT/target/mini-pi-$VERSION-x64.dmg"
 
 mkdir -p "$TOOLS"
 
@@ -17,58 +23,83 @@ if ! command -v cargo-bundle &>/dev/null; then
   cargo install cargo-bundle
 fi
 
-echo "Building release app bundle..."
-cargo bundle --release
+if ! command -v create-dmg &>/dev/null; then
+  echo "Installing create-dmg..."
+  if command -v brew &>/dev/null; then
+    brew install create-dmg
+  else
+    echo "create-dmg is required for a styled DMG. Install it from https://github.com/create-dmg/create-dmg" >&2
+    exit 1
+  fi
+fi
 
-echo "Preparing production pi-bridge dependencies..."
+echo "Building release app bundle..."
+# Only build the .app bundle here. cargo-bundle defaults to building both
+# osx and dmg on macOS, which (1) bundles the app twice and (2) often fails
+# its internal DMG step with a too-small staging image. We build the styled
+# DMG ourselves below with create-dmg.
+cargo bundle --release --format osx
+
+ARCH="$(uname -m)"
+DMG_OUT="$ROOT/target/mini-pi-$VERSION-$ARCH.dmg"
+
+BUN_VERSION="1.2.22"
+if [ "$ARCH" = "arm64" ]; then
+  BUN_ZIP="bun-darwin-aarch64.zip"
+else
+  BUN_ZIP="bun-darwin-x64.zip"
+fi
+BUN_URL="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/${BUN_ZIP}"
+BUN_DIR="$TOOLS/bun-${BUN_VERSION}-${ARCH}"
+
+if [ ! -f "$TOOLS/$BUN_ZIP" ]; then
+  echo "Downloading Bun v${BUN_VERSION} for ${ARCH}..."
+  curl -L -o "$TOOLS/$BUN_ZIP" "$BUN_URL"
+fi
+if [ ! -d "$BUN_DIR" ]; then
+  mkdir -p "$BUN_DIR"
+  unzip -o "$TOOLS/$BUN_ZIP" -d "$BUN_DIR"
+fi
+BUN_BIN="$BUN_DIR/${BUN_ZIP%.zip}/bun"
+
+echo "Preparing production pi-bridge..."
 rm -rf "$PACKAGE"
 mkdir -p "$PACKAGE/pi-bridge"
 cp "$ROOT/pi-bridge/package.json" "$PACKAGE/pi-bridge/"
-cp "$ROOT/pi-bridge/package-lock.json" "$PACKAGE/pi-bridge/"
-cp -R "$ROOT/pi-bridge/dist" "$PACKAGE/pi-bridge/"
-(cd "$PACKAGE/pi-bridge" && npm ci --omit=dev)
+cp "$ROOT/pi-bridge/tsconfig.json" "$PACKAGE/pi-bridge/"
+cp -R "$ROOT/pi-bridge/src" "$PACKAGE/pi-bridge/"
+(cd "$PACKAGE/pi-bridge" && "$BUN_BIN" install --production)
 
-echo "Injecting production pi-bridge into app bundle..."
-cp -R "$PACKAGE/pi-bridge/node_modules" "$APP_BUNDLE/Contents/Resources/pi-bridge/"
+echo "Compiling pi-bridge into a standalone executable..."
+(cd "$PACKAGE/pi-bridge" && "$BUN_BIN" build --compile src/index.ts --outfile pi-bridge)
 
-ARCH="$(uname -m)"
-NODE_VERSION="20.15.1"
-if [ "$ARCH" = "arm64" ]; then
-  NODE_TARBALL="node-v${NODE_VERSION}-darwin-arm64.tar.gz"
-else
-  NODE_TARBALL="node-v${NODE_VERSION}-darwin-x64.tar.gz"
-fi
-NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/${NODE_TARBALL}"
-NODE_DIR="$TOOLS/${NODE_TARBALL%.tar.gz}"
-DMG_OUT="$ROOT/target/mini-pi-$VERSION-$ARCH.dmg"
-
-if [ ! -f "$TOOLS/$NODE_TARBALL" ]; then
-  echo "Downloading Node.js v${NODE_VERSION} for ${ARCH}..."
-  curl -L -o "$TOOLS/$NODE_TARBALL" "$NODE_URL"
-fi
-if [ ! -d "$NODE_DIR" ]; then
-  tar -xzf "$TOOLS/$NODE_TARBALL" -C "$TOOLS"
-fi
-
-echo "Bundling Node runtime..."
-cp "$NODE_DIR/bin/node" "$APP_BUNDLE/Contents/Resources/pi-bridge/node"
+echo "Injecting pi-bridge executable into app bundle..."
+rm -rf "$APP_BUNDLE/Contents/Resources/pi-bridge"
+mkdir -p "$APP_BUNDLE/Contents/Resources/pi-bridge"
+cp "$PACKAGE/pi-bridge/pi-bridge" "$APP_BUNDLE/Contents/Resources/pi-bridge/pi-bridge"
 
 DMG_TMP="$ROOT/target/mini-pi-dmg"
 rm -rf "$DMG_TMP"
 mkdir -p "$DMG_TMP"
 cp -R "$APP_BUNDLE" "$DMG_TMP/"
 
+# Remove any existing DMG so hdiutil/create-dmg don't complain.
+rm -f "$DMG_OUT"
+
 if command -v create-dmg &>/dev/null; then
   echo "Creating DMG with create-dmg..."
   create-dmg \
     --volname "$APP_NAME" \
-    --window-size 800 400 \
+    --background "$ROOT/scripts/installer/dmg-background.png" \
+    --window-size 560 400 \
     --icon-size 100 \
-    --app-drop-link 600 185 \
+    --icon "$APP_NAME.app" 140 200 \
+    --app-drop-link 420 200 \
     "$DMG_OUT" \
     "$DMG_TMP"
 else
   echo "create-dmg not found; falling back to hdiutil..."
+  ln -sf /Applications "$DMG_TMP/Applications"
   hdiutil create -srcfolder "$DMG_TMP" -volname "$APP_NAME" -fs HFS+ -format UDZO "$DMG_OUT"
 fi
 

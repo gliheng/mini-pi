@@ -1,3 +1,4 @@
+pub mod about;
 pub mod chat_app;
 pub mod chat_window;
 pub mod create_thread_button;
@@ -6,5 +7,7 @@ pub mod pi_agent_import;
 pub mod reasoning;
 pub mod thread_list;
 pub mod title_bar;
+pub mod tool_call;
 pub mod user_panel;
+pub mod workspace_filter;
 pub mod workspace_manager;

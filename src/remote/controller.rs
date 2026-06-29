@@ -101,18 +101,18 @@ struct AiSubmitStream {
 enum AiPartState {
     Text {
         id: String,
-        sent_len: usize,
+        text: String,
         done: bool,
     },
     Reasoning {
         id: String,
-        sent_len: usize,
+        text: String,
         done: bool,
     },
     Tool {
         id: String,
         name: String,
-        sent_args_len: usize,
+        args: String,
         input_available: bool,
         output_available: bool,
     },
@@ -217,7 +217,7 @@ impl AiSubmitStream {
                 }
                 self.part_states.push(AiPartState::Text {
                     id,
-                    sent_len: 0,
+                    text: String::new(),
                     done: false,
                 });
             }
@@ -228,7 +228,7 @@ impl AiSubmitStream {
                 }
                 self.part_states.push(AiPartState::Reasoning {
                     id,
-                    sent_len: 0,
+                    text: String::new(),
                     done: false,
                 });
             }
@@ -246,7 +246,7 @@ impl AiSubmitStream {
                 self.part_states.push(AiPartState::Tool {
                     id,
                     name: name.to_string(),
-                    sent_args_len: 0,
+                    args: String::new(),
                     input_available: false,
                     output_available: false,
                 });
@@ -264,7 +264,7 @@ impl AiSubmitStream {
                 self.part_states.push(AiPartState::Tool {
                     id,
                     name,
-                    sent_args_len: 0,
+                    args: String::new(),
                     input_available: true,
                     output_available: false,
                 });
@@ -279,51 +279,52 @@ impl AiSubmitStream {
         };
 
         match (state, part) {
-            (AiPartState::Text { id, sent_len, done }, MessagePart::Text { text, state }) => {
+            (AiPartState::Text { id, text: _, done }, MessagePart::Text { text, state }) => {
                 let text = text.to_string();
-                if let Some(delta) = unsent_suffix(&text, sent_len) {
-                    if !self.send_chunk(json!({
-                        "type": "text-delta",
-                        "id": id,
-                        "delta": delta,
-                    })) {
+                let is_done = done || matches!(state, Some(PartState::Done));
+                if is_done && !done {
+                    if !text.is_empty()
+                        && !self.send_chunk(json!({
+                            "type": "text-delta",
+                            "id": id,
+                            "delta": text,
+                        }))
+                    {
+                        return false;
+                    }
+                    if !self.send_chunk(json!({ "type": "text-end", "id": id })) {
                         return false;
                     }
                 }
-                let is_done = done || matches!(state, Some(PartState::Done));
-                if is_done && !done && !self.send_chunk(json!({ "type": "text-end", "id": id })) {
-                    return false;
-                }
                 self.part_states[index] = AiPartState::Text {
                     id,
-                    sent_len: text.len(),
+                    text,
                     done: is_done,
                 };
             }
             (
-                AiPartState::Reasoning { id, sent_len, done },
+                AiPartState::Reasoning { id, text: _, done },
                 MessagePart::Reasoning { text, state, .. },
             ) => {
                 let text = text.to_string();
-                if let Some(delta) = unsent_suffix(&text, sent_len) {
-                    if !self.send_chunk(json!({
-                        "type": "reasoning-delta",
-                        "id": id,
-                        "delta": delta,
-                    })) {
+                let is_done = done || matches!(state, Some(PartState::Done));
+                if is_done && !done {
+                    if !text.is_empty()
+                        && !self.send_chunk(json!({
+                            "type": "reasoning-delta",
+                            "id": id,
+                            "delta": text,
+                        }))
+                    {
+                        return false;
+                    }
+                    if !self.send_chunk(json!({ "type": "reasoning-end", "id": id })) {
                         return false;
                     }
                 }
-                let is_done = done || matches!(state, Some(PartState::Done));
-                if is_done
-                    && !done
-                    && !self.send_chunk(json!({ "type": "reasoning-end", "id": id }))
-                {
-                    return false;
-                }
                 self.part_states[index] = AiPartState::Reasoning {
                     id,
-                    sent_len: text.len(),
+                    text,
                     done: is_done,
                 };
             }
@@ -331,7 +332,7 @@ impl AiSubmitStream {
                 AiPartState::Tool {
                     id,
                     name,
-                    sent_args_len,
+                    args: _,
                     input_available,
                     output_available,
                 },
@@ -348,31 +349,30 @@ impl AiSubmitStream {
                     name
                 };
                 let args = args.to_string();
-                if let Some(delta) = unsent_suffix(&args, sent_args_len) {
-                    if !self.send_chunk(json!({
-                        "type": "tool-input-delta",
-                        "toolCallId": id,
-                        "inputTextDelta": delta,
-                    })) {
+                let input_done = input_available || matches!(state, Some(PartState::Done));
+                if input_done && !input_available {
+                    if !args.is_empty()
+                        && !self.send_chunk(json!({
+                            "type": "tool-input-delta",
+                            "toolCallId": id,
+                            "inputTextDelta": args,
+                        }))
+                    {
                         return false;
                     }
-                }
-                let input_done = input_available || matches!(state, Some(PartState::Done));
-                if input_done
-                    && !input_available
-                    && !self.send_chunk(json!({
+                    if !self.send_chunk(json!({
                         "type": "tool-input-available",
                         "toolCallId": id,
                         "toolName": name,
                         "input": parse_tool_input(&args),
-                    }))
-                {
-                    return false;
+                    })) {
+                        return false;
+                    }
                 }
                 self.part_states[index] = AiPartState::Tool {
                     id,
                     name,
-                    sent_args_len: args.len(),
+                    args,
                     input_available: input_done,
                     output_available,
                 };
@@ -381,7 +381,7 @@ impl AiSubmitStream {
                 AiPartState::Tool {
                     id,
                     name,
-                    sent_args_len,
+                    args,
                     input_available,
                     output_available,
                 },
@@ -399,7 +399,7 @@ impl AiSubmitStream {
                 self.part_states[index] = AiPartState::Tool {
                     id,
                     name,
-                    sent_args_len,
+                    args,
                     input_available,
                     output_available: true,
                 };
@@ -441,24 +441,74 @@ impl AiSubmitStream {
     fn close_open_parts(&mut self) -> bool {
         for index in 0..self.part_states.len() {
             match self.part_states[index].clone() {
-                AiPartState::Text { id, sent_len, done } if !done => {
+                AiPartState::Text { id, text, done } if !done => {
+                    if !text.is_empty()
+                        && !self.send_chunk(json!({
+                            "type": "text-delta",
+                            "id": id,
+                            "delta": text,
+                        }))
+                    {
+                        return false;
+                    }
                     if !self.send_chunk(json!({ "type": "text-end", "id": id })) {
                         return false;
                     }
                     self.part_states[index] = AiPartState::Text {
                         id,
-                        sent_len,
+                        text,
                         done: true,
                     };
                 }
-                AiPartState::Reasoning { id, sent_len, done } if !done => {
+                AiPartState::Reasoning { id, text, done } if !done => {
+                    if !text.is_empty()
+                        && !self.send_chunk(json!({
+                            "type": "reasoning-delta",
+                            "id": id,
+                            "delta": text,
+                        }))
+                    {
+                        return false;
+                    }
                     if !self.send_chunk(json!({ "type": "reasoning-end", "id": id })) {
                         return false;
                     }
                     self.part_states[index] = AiPartState::Reasoning {
                         id,
-                        sent_len,
+                        text,
                         done: true,
+                    };
+                }
+                AiPartState::Tool {
+                    id,
+                    name,
+                    args,
+                    input_available,
+                    output_available,
+                } if !input_available => {
+                    if !args.is_empty()
+                        && !self.send_chunk(json!({
+                            "type": "tool-input-delta",
+                            "toolCallId": id,
+                            "inputTextDelta": args,
+                        }))
+                    {
+                        return false;
+                    }
+                    if !self.send_chunk(json!({
+                        "type": "tool-input-available",
+                        "toolCallId": id,
+                        "toolName": name,
+                        "input": parse_tool_input(&args),
+                    })) {
+                        return false;
+                    }
+                    self.part_states[index] = AiPartState::Tool {
+                        id,
+                        name,
+                        args,
+                        input_available: true,
+                        output_available,
                     };
                 }
                 _ => {}
@@ -479,14 +529,6 @@ fn stable_tool_call_id(tool_call_id: &gpui::SharedString, index: usize) -> Strin
 
 fn parse_tool_input(input: &str) -> Value {
     serde_json::from_str(input).unwrap_or_else(|_| json!(input))
-}
-
-fn unsent_suffix(value: &str, sent_len: usize) -> Option<String> {
-    if sent_len < value.len() && value.is_char_boundary(sent_len) {
-        Some(value[sent_len..].to_string())
-    } else {
-        None
-    }
 }
 
 impl RemoteController {
@@ -1007,6 +1049,7 @@ impl RemoteController {
             None,
             None,
             Some(Some(&metadata)),
+            false,
         ) {
             return json!({ "error": e.to_string() });
         }
@@ -1055,6 +1098,7 @@ impl RemoteController {
                     None,
                     None,
                     None,
+                    false,
                 ) {
                     return json!({ "error": e.to_string() });
                 }
@@ -1313,6 +1357,7 @@ impl RemoteController {
             None,
             None,
             Some(Some(&md)),
+            false,
         )
     }
 
@@ -1579,6 +1624,7 @@ mod tests {
                 text: SharedString::from(text.to_string()),
                 state,
             }],
+            media: Vec::new(),
         }
     }
 
@@ -1588,6 +1634,7 @@ mod tests {
             entry_id: None,
             role: Role::Assistant,
             parts: vec![],
+            media: Vec::new(),
         }
     }
 
@@ -1647,7 +1694,10 @@ mod tests {
             }
         }
 
-        assert_eq!(deltas, vec!["abcd"]);
+        assert!(
+            deltas.is_empty(),
+            "text deltas should be coalesced until the part is done"
+        );
     }
 
     #[test]
@@ -1748,6 +1798,7 @@ mod tests {
                 text: SharedString::from("old streaming text"),
                 state: Some(PartState::Streaming),
             }],
+            media: Vec::new(),
         };
         let new_empty = assistant_empty("new");
         let new_with_text = assistant_with_text("new", "hello", Some(PartState::Streaming));
@@ -1796,6 +1847,7 @@ mod tests {
                     details: None,
                 },
             ],
+            media: Vec::new(),
         };
         let second_empty = assistant_empty("second");
         let second_with_text =

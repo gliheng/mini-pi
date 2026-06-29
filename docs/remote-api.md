@@ -266,10 +266,12 @@ X-Accel-Buffering: no
 
 The response body is a data-only Server-Sent Events stream using the AI SDK UI message chunk protocol.
 
+To save bandwidth, the server coalesces `text-delta`, `reasoning-delta`, and `tool-input-delta` events for each part and emits a single merged delta when that part finishes, instead of streaming every small change.
+
 ```
 data: {"type":"start","messageId":"msg-uuid-4"}
 data: {"type":"text-start","id":"text-0"}
-data: {"type":"text-delta","id":"text-0","delta":"Here is"}
+data: {"type":"text-delta","id":"text-0","delta":"Here is the refactored function using Result."}
 data: {"type":"text-end","id":"text-0"}
 data: {"type":"finish-step"}
 data: {"type":"finish","finishReason":"stop"}

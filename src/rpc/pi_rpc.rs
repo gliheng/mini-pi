@@ -100,6 +100,7 @@ pub enum BridgeEvent {
 #[derive(Debug, Clone)]
 pub enum LoadedPart {
     Text { text: String },
+    Image { data: String, mime_type: String },
     Thinking { text: String },
     ToolCall { name: String, args: String },
     ToolResult { name: String, output: String },
@@ -110,6 +111,20 @@ pub struct LoadedMessage {
     pub id: Option<String>,
     pub role: String,
     pub parts: Vec<LoadedPart>,
+    pub error_message: Option<String>,
+    pub is_error: bool,
+}
+
+pub fn is_error_stop_reason(stop_reason: Option<&str>) -> bool {
+    matches!(stop_reason, Some("error") | Some("api_error"))
+}
+
+pub fn has_non_empty_error_message(error_message: Option<&str>) -> bool {
+    error_message.map_or(false, |e| !e.is_empty())
+}
+
+pub fn is_assistant_error(error_message: Option<&str>, stop_reason: Option<&str>) -> bool {
+    has_non_empty_error_message(error_message) || is_error_stop_reason(stop_reason)
 }
 
 // ---------------------------------------------------------------------------
@@ -468,7 +483,7 @@ impl PiRpc {
     pub fn send_prompt_ext(
         &mut self,
         message: &str,
-        images: Option<&[ImageContent]>,
+        media: Option<&[ImageContent]>,
         streaming_behavior: Option<&str>,
         request_id: Option<&str>,
     ) -> Result<(), PiRpcError> {
@@ -477,7 +492,7 @@ impl PiRpc {
             "message": message,
         });
         add_request_id(&mut cmd, request_id);
-        add_images(&mut cmd, images);
+        add_media(&mut cmd, media);
         if let Some(behavior) = streaming_behavior {
             cmd["streamingBehavior"] = serde_json::json!(behavior);
         }
@@ -487,7 +502,7 @@ impl PiRpc {
     pub fn send_steer(
         &mut self,
         message: &str,
-        images: Option<&[ImageContent]>,
+        media: Option<&[ImageContent]>,
         request_id: Option<&str>,
     ) -> Result<(), PiRpcError> {
         let mut cmd = serde_json::json!({
@@ -495,14 +510,14 @@ impl PiRpc {
             "message": message,
         });
         add_request_id(&mut cmd, request_id);
-        add_images(&mut cmd, images);
+        add_media(&mut cmd, media);
         self.send(&cmd)
     }
 
     pub fn send_follow_up(
         &mut self,
         message: &str,
-        images: Option<&[ImageContent]>,
+        media: Option<&[ImageContent]>,
         request_id: Option<&str>,
     ) -> Result<(), PiRpcError> {
         let mut cmd = serde_json::json!({
@@ -510,7 +525,7 @@ impl PiRpc {
             "message": message,
         });
         add_request_id(&mut cmd, request_id);
-        add_images(&mut cmd, images);
+        add_media(&mut cmd, media);
         self.send(&cmd)
     }
 
@@ -551,6 +566,12 @@ impl PiRpc {
 
     pub fn send_get_commands(&mut self, request_id: Option<&str>) -> Result<(), PiRpcError> {
         let mut cmd = serde_json::json!({ "type": "get_commands" });
+        add_request_id(&mut cmd, request_id);
+        self.send(&cmd)
+    }
+
+    pub fn send_get_session_stats(&mut self, request_id: Option<&str>) -> Result<(), PiRpcError> {
+        let mut cmd = serde_json::json!({ "type": "get_session_stats" });
         add_request_id(&mut cmd, request_id);
         self.send(&cmd)
     }
@@ -719,70 +740,60 @@ impl PiRpc {
 // ---------------------------------------------------------------------------
 
 fn find_runtime(bridge_dir: &PathBuf) -> Result<(String, Vec<String>), PiRpcError> {
-    // In release builds we ship a bundled Node binary plus compiled bridge JS.
-    let dist_js = bridge_dir.join("dist").join("index.js");
-    if dist_js.exists() {
-        let node_candidates: Vec<PathBuf> = if cfg!(windows) {
+    // Release builds compile the bridge into a single executable with
+    // `bun build --compile`. No separate runtime or node_modules is needed.
+    let compiled_names: [&str; 2] = if cfg!(windows) {
+        ["pi-bridge.exe", "pi-bridge"]
+    } else {
+        ["pi-bridge", "pi-bridge.exe"]
+    };
+    for name in compiled_names.iter() {
+        let exe = bridge_dir.join(name);
+        if exe.exists() {
+            return Ok((exe.to_string_lossy().to_string(), vec![]));
+        }
+    }
+
+    // Development fallback: a bundled bun binary that runs src/index.ts.
+    let src_ts = bridge_dir.join("src").join("index.ts");
+    if src_ts.exists() {
+        let bun_candidates: Vec<PathBuf> = if cfg!(windows) {
             vec![
-                bridge_dir.join("node.exe"),
+                bridge_dir.join("bun.exe"),
                 bridge_dir
                     .parent()
-                    .map(|p| p.join("node.exe"))
+                    .map(|p| p.join("bun.exe"))
                     .unwrap_or_default(),
             ]
         } else {
             vec![
-                bridge_dir.join("node"),
+                bridge_dir.join("bun"),
                 bridge_dir
                     .parent()
-                    .map(|p| p.join("node"))
+                    .map(|p| p.join("bun"))
                     .unwrap_or_default(),
             ]
         };
-        for node in node_candidates {
-            if node.exists() {
+        for bun in bun_candidates {
+            if bun.exists() {
                 return Ok((
-                    node.to_string_lossy().to_string(),
-                    vec!["dist/index.js".to_string()],
+                    bun.to_string_lossy().to_string(),
+                    vec!["run".to_string(), "src/index.ts".to_string()],
                 ));
             }
         }
-    }
 
-    // Prefer bun because it can run TypeScript directly.
-    if Command::new("bun").arg("--version").output().is_ok() {
-        return Ok((
-            "bun".to_string(),
-            vec!["run".to_string(), "src/index.ts".to_string()],
-        ));
-    }
-
-    // Use the local tsx binary if npm install was run.
-    #[cfg(windows)]
-    let tsx_names: [&str; 2] = ["tsx.cmd", "tsx"];
-    #[cfg(not(windows))]
-    let tsx_names: [&str; 1] = ["tsx"];
-
-    for name in tsx_names.iter() {
-        let tsx = bridge_dir.join("node_modules").join(".bin").join(name);
-        if tsx.exists() {
+        // Fallback to a system-installed bun.
+        if Command::new("bun").arg("--version").output().is_ok() {
             return Ok((
-                tsx.to_string_lossy().to_string(),
-                vec!["src/index.ts".to_string()],
+                "bun".to_string(),
+                vec!["run".to_string(), "src/index.ts".to_string()],
             ));
         }
     }
 
-    // Last resort: npx tsx (requires network if tsx is missing).
-    if Command::new("npx").arg("--version").output().is_ok() {
-        return Ok((
-            "npx".to_string(),
-            vec!["tsx".to_string(), "src/index.ts".to_string()],
-        ));
-    }
-
     Err(PiRpcError::Spawn(
-        "no JavaScript runtime found (tried bundled node, bun, tsx, npx).".to_string(),
+        "no bun runtime found (tried compiled pi-bridge, bundled bun, system bun).".to_string(),
     ))
 }
 
@@ -818,21 +829,21 @@ fn add_request_id(cmd: &mut serde_json::Value, request_id: Option<&str>) {
     }
 }
 
-fn add_images(cmd: &mut serde_json::Value, images: Option<&[ImageContent]>) {
-    if let Some(imgs) = images
-        && !imgs.is_empty()
+fn add_media(cmd: &mut serde_json::Value, media: Option<&[ImageContent]>) {
+    if let Some(items) = media
+        && !items.is_empty()
     {
-        let img_vals: Vec<serde_json::Value> = imgs
+        let vals: Vec<serde_json::Value> = items
             .iter()
-            .map(|img| {
+            .map(|item| {
                 serde_json::json!({
                     "type": "image",
-                    "data": img.data,
-                    "mimeType": img.mime_type,
+                    "data": item.data,
+                    "mimeType": item.mime_type,
                 })
             })
             .collect();
-        cmd["images"] = serde_json::json!(img_vals);
+        cmd["images"] = serde_json::json!(vals);
     }
 }
 
@@ -843,7 +854,7 @@ fn parse_bridge_message(text: &str) -> Option<(String, BridgeEvent)> {
             log!(
                 "failed to parse JSON: {} (line: {})",
                 e,
-                truncate_str(text, 100)
+                truncate_str(text, 5000)
             );
             return None;
         }
@@ -872,7 +883,7 @@ fn parse_pi_line_value(val: &serde_json::Value) -> Option<BridgeEvent> {
     log!(
         "raw event type={}, data={}",
         event_type,
-        truncate_str(&serde_json::to_string(val).unwrap_or_default(), 200)
+        truncate_str(&serde_json::to_string(val).unwrap_or_default(), 5000)
     );
 
     match event_type {
@@ -1025,7 +1036,7 @@ fn parse_pi_line_value(val: &serde_json::Value) -> Option<BridgeEvent> {
             Some(BridgeEvent::ToolEnd {
                 call_id,
                 tool_name,
-                output: truncate_str(&output, 500),
+                output: truncate_str(&output, 5000),
                 is_error,
                 details,
             })
@@ -1146,9 +1157,21 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
             "user" => {
                 let content = msg.get("content");
                 let mut text = String::new();
+                let mut parts: Vec<LoadedPart> = vec![];
                 if let Some(arr) = content.and_then(|c| c.as_array()) {
                     for block in arr {
-                        if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
+                        let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                        if block_type == "image" {
+                            if let (Some(data), Some(mime_type)) = (
+                                block.get("data").and_then(|d| d.as_str()),
+                                block.get("mimeType").and_then(|m| m.as_str()),
+                            ) {
+                                parts.push(LoadedPart::Image {
+                                    data: data.to_string(),
+                                    mime_type: mime_type.to_string(),
+                                });
+                            }
+                        } else if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
                             if !text.is_empty() {
                                 text.push('\n');
                             }
@@ -1158,10 +1181,15 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
                 } else if let Some(s) = content.and_then(|c| c.as_str()) {
                     text = s.to_string();
                 }
+                if !text.is_empty() {
+                    parts.insert(0, LoadedPart::Text { text });
+                }
                 loaded.push(LoadedMessage {
                     id,
                     role: "user".to_string(),
-                    parts: vec![LoadedPart::Text { text }],
+                    parts,
+                    error_message: None,
+                    is_error: false,
                 });
             }
             "assistant" => {
@@ -1196,7 +1224,7 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
                                     .unwrap_or_default();
                                 parts.push(LoadedPart::ToolCall {
                                     name: name.to_string(),
-                                    args: truncate_str(&args_str, 200),
+                                    args: truncate_str(&args_str, 5000),
                                 });
                             }
                             _ => {}
@@ -1207,11 +1235,39 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
                         text: content_str.to_string(),
                     });
                 }
+
+                let error_message = msg
+                    .get("errorMessage")
+                    .and_then(|e| e.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string());
+                let stop_reason = msg.get("stopReason").and_then(|s| s.as_str());
+                let is_error = is_assistant_error(error_message.as_deref(), stop_reason);
+                let has_visible_content = parts.iter().any(|p| match p {
+                    LoadedPart::Text { text } | LoadedPart::Thinking { text } => !text.is_empty(),
+                    LoadedPart::Image { .. } => true,
+                    LoadedPart::ToolCall { args, .. } => !args.is_empty(),
+                    LoadedPart::ToolResult { output, .. } => !output.is_empty(),
+                });
+                if is_error && !has_visible_content {
+                    if let Some(ref error) = error_message {
+                        parts = vec![LoadedPart::Text {
+                            text: format!("Error: {}", error),
+                        }];
+                    } else {
+                        parts.push(LoadedPart::Text {
+                            text: "Error: assistant response failed.".to_string(),
+                        });
+                    }
+                }
+
                 if !parts.is_empty() {
                     loaded.push(LoadedMessage {
                         id,
                         role: "assistant".to_string(),
                         parts,
+                        error_message,
+                        is_error,
                     });
                 }
             }
@@ -1229,8 +1285,10 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
                     role: "tool".to_string(),
                     parts: vec![LoadedPart::ToolResult {
                         name: tool_name.to_string(),
-                        output: format!("{}: {}", tool_name, truncate_str(&output, 500)),
+                        output: truncate_str(&output, 5000),
                     }],
+                    error_message: None,
+                    is_error: false,
                 });
             }
             "bashExecution" => {
@@ -1249,9 +1307,11 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
                             "`{}` (exit {})\n{}",
                             command,
                             exit_code,
-                            truncate_str(output, 500)
+                            truncate_str(output, 5000)
                         ),
                     }],
+                    error_message: None,
+                    is_error: false,
                 });
             }
             _ => {
@@ -1381,6 +1441,153 @@ mod tests {
             }
             other => panic!("expected AgentEnd with messages, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn parse_loaded_messages_with_error_message() {
+        let val = serde_json::json!([
+            {
+                "id": "msg-1",
+                "role": "assistant",
+                "content": [{ "type": "text", "text": "" }],
+                "stopReason": "error",
+                "errorMessage": "Failed to resolve API key"
+            }
+        ]);
+        let messages = parse_loaded_messages(&val).expect("should parse");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "assistant");
+        assert!(messages[0].is_error);
+        assert_eq!(
+            messages[0].error_message.as_deref(),
+            Some("Failed to resolve API key")
+        );
+        assert!(
+            matches!(&messages[0].parts[0], LoadedPart::Text { text } if text == "Error: Failed to resolve API key"),
+            "expected error text part, got {:?}",
+            messages[0].parts
+        );
+    }
+
+    #[test]
+    fn parse_loaded_messages_with_error_stop_reason_no_message() {
+        let val = serde_json::json!([
+            {
+                "id": "msg-1",
+                "role": "assistant",
+                "content": [],
+                "stopReason": "error"
+            }
+        ]);
+        let messages = parse_loaded_messages(&val).expect("should parse");
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].is_error);
+        assert!(
+            matches!(&messages[0].parts[0], LoadedPart::Text { text } if text == "Error: assistant response failed."),
+            "expected fallback error text part, got {:?}",
+            messages[0].parts
+        );
+    }
+
+    #[test]
+    fn parse_loaded_messages_with_api_error_stop_reason() {
+        let val = serde_json::json!([
+            {
+                "id": "msg-1",
+                "role": "assistant",
+                "content": [],
+                "stopReason": "api_error"
+            }
+        ]);
+        let messages = parse_loaded_messages(&val).expect("should parse");
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].is_error);
+        assert_eq!(messages[0].error_message, None);
+        assert!(
+            matches!(&messages[0].parts[0], LoadedPart::Text { text } if text == "Error: assistant response failed."),
+            "expected fallback error text part, got {:?}",
+            messages[0].parts
+        );
+    }
+
+    #[test]
+    fn parse_loaded_messages_ignores_empty_error_message() {
+        let val = serde_json::json!([
+            {
+                "id": "msg-1",
+                "role": "assistant",
+                "content": [{ "type": "text", "text": "hello" }],
+                "errorMessage": ""
+            }
+        ]);
+        let messages = parse_loaded_messages(&val).expect("should parse");
+        assert_eq!(messages.len(), 1);
+        assert!(!messages[0].is_error);
+        assert_eq!(messages[0].error_message, None);
+        assert!(
+            matches!(&messages[0].parts[0], LoadedPart::Text { text } if text == "hello"),
+            "expected original text part, got {:?}",
+            messages[0].parts
+        );
+    }
+
+    #[test]
+    fn parse_loaded_messages_preserves_error_with_visible_content() {
+        let val = serde_json::json!([
+            {
+                "id": "msg-1",
+                "role": "assistant",
+                "content": [{ "type": "text", "text": "partial" }],
+                "stopReason": "error",
+                "errorMessage": "Something went wrong"
+            }
+        ]);
+        let messages = parse_loaded_messages(&val).expect("should parse");
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].is_error);
+        assert_eq!(
+            messages[0].error_message.as_deref(),
+            Some("Something went wrong")
+        );
+        // Visible content is preserved; error_message is surfaced separately.
+        assert_eq!(messages[0].parts.len(), 1);
+        assert!(
+            matches!(&messages[0].parts[0], LoadedPart::Text { text } if text == "partial"),
+            "expected original text part, got {:?}",
+            messages[0].parts
+        );
+    }
+
+    #[test]
+    fn parse_loaded_messages_preserves_user_images() {
+        let val = serde_json::json!([
+            {
+                "id": "msg-1",
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "describe this" },
+                    { "type": "image", "data": "base64data", "mimeType": "image/png" }
+                ]
+            }
+        ]);
+        let messages = parse_loaded_messages(&val).expect("should parse");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].parts.len(), 2);
+        assert!(
+            matches!(&messages[0].parts[0], LoadedPart::Text { text } if text == "describe this"),
+            "expected text part, got {:?}",
+            messages[0].parts
+        );
+        assert!(
+            matches!(
+                &messages[0].parts[1],
+                LoadedPart::Image { data, mime_type }
+                if data == "base64data" && mime_type == "image/png"
+            ),
+            "expected image part, got {:?}",
+            messages[0].parts
+        );
     }
 
     #[test]

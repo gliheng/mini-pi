@@ -111,6 +111,24 @@ fn row_to_workspace(row: &Row) -> rusqlite::Result<WorkspaceMeta> {
 }
 
 impl Store {
+    #[cfg(test)]
+    pub fn new_test(dir: &std::path::Path) -> Result<Self, StoreError> {
+        std::fs::create_dir_all(dir).map_err(StoreError::Io)?;
+        std::fs::create_dir_all(dir.join("sessions")).map_err(StoreError::Io)?;
+
+        let db_path = dir.join("mini-pi.db");
+        let conn = Connection::open(&db_path).map_err(StoreError::Rusqlite)?;
+        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")
+            .map_err(StoreError::Rusqlite)?;
+
+        let store = Self {
+            conn: Mutex::new(conn),
+            sessions_dir: dir.join("sessions"),
+        };
+        store.run_migrations()?;
+        Ok(store)
+    }
+
     pub fn open() -> Result<Self, StoreError> {
         let dir = dirs::home_dir()
             .ok_or(StoreError::HomeDir)?
@@ -298,21 +316,58 @@ impl Store {
         })
     }
 
-    pub fn search_threads(&self, query: &str) -> Result<Vec<ThreadMeta>, StoreError> {
-        let q = format!("%{}%", query.to_lowercase());
+    /// Search threads by title. When `workspace_id` is provided, only threads
+    /// whose metadata contains that workspace id are returned. An empty query
+    /// returns all threads (optionally filtered by workspace).
+    pub fn search_threads(
+        &self,
+        query: &str,
+        workspace_id: Option<&str>,
+    ) -> Result<Vec<ThreadMeta>, StoreError> {
         let conn = self.conn.lock();
-        let mut stmt = conn
-            .prepare(&format!(
-                "SELECT {THREAD_SELECT_COLUMNS} FROM threads \
-                 WHERE lower(title) LIKE ?1 OR lower(preview) LIKE ?1 \
-                 ORDER BY pinned DESC, updated_at DESC"
-            ))
-            .map_err(StoreError::Rusqlite)?;
-        let rows = stmt
-            .query_map(params![q], row_to_thread)
-            .map_err(StoreError::Rusqlite)?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(StoreError::Rusqlite)
+        let threads: Vec<ThreadMeta> = if query.is_empty() {
+            let mut stmt = conn
+                .prepare(&format!(
+                    "SELECT {THREAD_SELECT_COLUMNS} FROM threads \
+                     ORDER BY pinned DESC, updated_at DESC"
+                ))
+                .map_err(StoreError::Rusqlite)?;
+            let rows = stmt
+                .query_map([], row_to_thread)
+                .map_err(StoreError::Rusqlite)?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(StoreError::Rusqlite)?
+        } else {
+            let q = format!("%{}%", query.to_lowercase());
+            let mut stmt = conn
+                .prepare(&format!(
+                    "SELECT {THREAD_SELECT_COLUMNS} FROM threads \
+                     WHERE lower(title) LIKE ?1 \
+                     ORDER BY pinned DESC, updated_at DESC"
+                ))
+                .map_err(StoreError::Rusqlite)?;
+            let rows = stmt
+                .query_map(params![q], row_to_thread)
+                .map_err(StoreError::Rusqlite)?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(StoreError::Rusqlite)?
+        };
+        drop(conn);
+
+        if let Some(workspace_id) = workspace_id {
+            Ok(threads
+                .into_iter()
+                .filter(|t| {
+                    t.metadata
+                        .as_ref()
+                        .and_then(|md| md.get("workspace_id"))
+                        .and_then(|v| v.as_str())
+                        == Some(workspace_id)
+                })
+                .collect())
+        } else {
+            Ok(threads)
+        }
     }
 
     pub fn get_thread(&self, id: &str) -> Result<Option<ThreadMeta>, StoreError> {
@@ -323,8 +378,9 @@ impl Store {
     /// Update any subset of a thread's mutable fields in a single
     /// transactional `UPDATE`. Passing `Some(v)` sets the field to `v`,
     /// `Some(None)` clears it (for nullable fields), and `None` leaves the
-    /// column as-is. `updated_at` is bumped once and only when at least one
-    /// field actually changed.
+    /// column as-is. `updated_at` is only bumped when `bump_updated_at` is
+    /// `true` so that metadata-only changes (e.g. clearing the "new activity"
+    /// flag) do not reorder the thread list.
     pub fn update_thread(
         &self,
         id: &str,
@@ -335,6 +391,7 @@ impl Store {
         thinking_level: Option<Option<&str>>,
         pinned: Option<bool>,
         metadata: Option<Option<&serde_json::Value>>,
+        bump_updated_at: bool,
     ) -> Result<(), StoreError> {
         let mut conn = self.conn.lock();
         let tx = conn.transaction().map_err(StoreError::Rusqlite)?;
@@ -353,7 +410,7 @@ impl Store {
                 thinking_level = CASE WHEN ?8 IS 1 THEN ?9 ELSE thinking_level END,
                 pinned         = COALESCE(?10, pinned),
                 metadata       = CASE WHEN ?11 IS 1 THEN ?12 ELSE metadata END,
-                updated_at     = datetime('now')
+                updated_at     = CASE WHEN ?13 IS 1 THEN datetime('now') ELSE updated_at END
              WHERE id = ?1",
             params![
                 id,
@@ -368,6 +425,7 @@ impl Store {
                 pinned.map(|p| p as i32),
                 metadata_str.is_some() as i32,
                 metadata_str.flatten(),
+                bump_updated_at as i32,
             ],
         )
         .map_err(StoreError::Rusqlite)?;

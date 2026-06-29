@@ -132,13 +132,6 @@ an explicit one-shot on first run (alongside `import_from_pi_agent`).
 
 ## pi-bridge / RPC
 
-### #21. `find_runtime` priority ordering is wrong for dev
-`src/rpc/pi_rpc.rs:752` prefers `bun`, then `tsx`, then `npx tsx`. However
-if `bun` exists but `pi-bridge` was installed via `npm install` (per
-AGENTS.md), bun running `src/index.ts` may not resolve transitive `.node`
-native deps from `node_modules`. Try the local `node_modules/.bin/tsx`
-first, then bun, then npx.
-
 ### #22. `read_bridge_port` blocks with no timeout
 `src/rpc/pi_rpc.rs:789` reads bridge stdout synchronously with no
 deadline. If `pi-bridge` writes nothing, the app hangs forever silently.

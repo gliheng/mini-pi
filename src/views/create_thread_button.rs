@@ -112,16 +112,13 @@ impl Render for CreateThreadButton {
             base_gradient
         };
 
-        let base_shadows = vec![
-            BoxShadow {
-                color: Into::<Hsla>::into(primary).alpha(0.25),
-                offset: point(px(0.), px(4.)),
-                blur_radius: px(10.),
-                spread_radius: px(0.),
-                inset: false,
-            },
-            Self::glow_shadow(primary, 0.35, 16., 0.),
-        ];
+        let base_shadows = vec![BoxShadow {
+            color: Into::<Hsla>::into(primary).alpha(0.25),
+            offset: point(px(0.), px(0.)),
+            blur_radius: px(0.),
+            spread_radius: px(0.),
+            inset: false,
+        }];
 
         let hover_shadows = vec![
             BoxShadow {
@@ -186,7 +183,7 @@ impl Render for CreateThreadButton {
                     .border_color(primary_foreground.alpha(0.2))
                     .child(
                         svg()
-                            .path("logo.svg")
+                            .path("icons/pi.svg")
                             .text_color(primary_foreground)
                             .size(px(14.)),
                     ),

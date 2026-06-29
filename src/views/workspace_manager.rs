@@ -1,9 +1,9 @@
 use gpui::{
     App, ClickEvent, Context, EventEmitter, InteractiveElement, IntoElement, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, Window, div, px, rgb,
+    SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
-use gpui_component::{Icon, Sizable as _, Size, WindowExt as _};
+use gpui_component::{ActiveTheme as _, Icon, Sizable as _, Size, WindowExt as _};
 
 use crate::data::store::WorkspaceMeta;
 
@@ -33,6 +33,7 @@ impl WorkspaceManager {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let entity = cx.entity();
+        let theme = cx.theme().clone();
         let filtered: Vec<_> = self
             .workspaces
             .iter()
@@ -52,7 +53,7 @@ impl WorkspaceManager {
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(0x666666))
+                        .text_color(theme.muted_foreground)
                         .child("No workspaces yet"),
                 )
                 .child(
@@ -61,15 +62,14 @@ impl WorkspaceManager {
                         .with_size(Size::Small)
                         .custom(
                             ButtonCustomVariant::new(cx)
-                                .color(rgb(0x333333).into())
-                                .foreground(rgb(0xcccccc).into())
-                                .hover(rgb(0x444444).into())
-                                .active(rgb(0x555555).into()),
+                                .color(theme.primary.into())
+                                .foreground(theme.primary_foreground.into())
+                                .hover(theme.primary_hover.into())
+                                .active(theme.primary_active.into()),
                         )
                         .on_click({
                             let entity = entity.clone();
-                            move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                                window.close_dialog(cx);
+                            move |_: &ClickEvent, _window: &mut Window, cx: &mut App| {
                                 entity.update(cx, |_this, cx| {
                                     cx.emit(WorkspaceManagerEvent::AddRequested);
                                 });
@@ -78,6 +78,8 @@ impl WorkspaceManager {
                 )
                 .into_any_element()
         } else {
+            let theme_for_rows = theme.clone();
+            let entity_for_rows = entity.clone();
             div()
                 .id("workspace-modal-list")
                 .flex()
@@ -85,6 +87,26 @@ impl WorkspaceManager {
                 .gap_1()
                 .p_3()
                 .overflow_y_scroll()
+                .child(
+                    Button::new("modal-add-workspace-btn")
+                        .label("+ Add Workspace")
+                        .with_size(Size::Small)
+                        .custom(
+                            ButtonCustomVariant::new(cx)
+                                .color(theme.primary.into())
+                                .foreground(theme.primary_foreground.into())
+                                .hover(theme.primary_hover.into())
+                                .active(theme.primary_active.into()),
+                        )
+                        .on_click({
+                            let entity = entity.clone();
+                            move |_: &ClickEvent, _window: &mut Window, cx: &mut App| {
+                                entity.update(cx, |_this, cx| {
+                                    cx.emit(WorkspaceManagerEvent::AddRequested);
+                                });
+                            }
+                        }),
+                )
                 .children(filtered.into_iter().map(move |ws| {
                     let ws_id = ws.id.clone();
                     let ws_id_for_delete = ws.id.clone();
@@ -97,8 +119,8 @@ impl WorkspaceManager {
                         .px_3()
                         .py_2()
                         .rounded_md()
-                        .bg(rgb(0x252525))
-                        .hover(|style| style.bg(rgb(0x2a2a2a)))
+                        .bg(theme_for_rows.secondary)
+                        .hover(|style| style.bg(theme_for_rows.secondary_hover))
                         .child(
                             div()
                                 .flex()
@@ -108,13 +130,13 @@ impl WorkspaceManager {
                                 .child(
                                     div()
                                         .text_xs()
-                                        .text_color(rgb(0xcccccc))
+                                        .text_color(theme_for_rows.foreground)
                                         .child(ws.name.clone()),
                                 )
                                 .child(
                                     div()
                                         .text_xs()
-                                        .text_color(rgb(0x666666))
+                                        .text_color(theme_for_rows.muted_foreground)
                                         .child(ws.path.clone()),
                                 ),
                         )
@@ -124,18 +146,18 @@ impl WorkspaceManager {
                                 .custom(
                                     ButtonCustomVariant::new(cx)
                                         .color(gpui::rgba(0x00000000).into())
-                                        .foreground(rgb(0x888888).into())
-                                        .hover(rgb(0x333333).into())
-                                        .active(rgb(0x444444).into()),
+                                        .foreground(theme_for_rows.muted_foreground.into())
+                                        .hover(theme_for_rows.secondary_hover.into())
+                                        .active(theme_for_rows.secondary_active.into()),
                                 )
                                 .icon(
                                     Icon::empty()
-                                        .path("close.svg")
+                                        .path("icons/close.svg")
                                         .size(px(12.))
-                                        .text_color(rgb(0x888888)),
+                                        .text_color(theme_for_rows.muted_foreground),
                                 )
                                 .on_click({
-                                    let entity = entity.clone();
+                                    let entity = entity_for_rows.clone();
                                     move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
                                         window.close_dialog(cx);
                                         entity.update(cx, |_this, cx| {
