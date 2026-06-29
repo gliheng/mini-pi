@@ -700,7 +700,10 @@ mod tests {
             )
             .header("Origin", "https://example.com")
             .header("Access-Control-Request-Method", "POST")
-            .header("Access-Control-Request-Headers", "authorization,content-type")
+            .header(
+                "Access-Control-Request-Headers",
+                "authorization,content-type",
+            )
             .send()
             .expect("request should succeed");
 
@@ -857,6 +860,11 @@ mod tests {
         assert!(body.contains("\"type\":\"text-delta\""));
         assert!(body.contains("\"id\":\"text-0\""));
         assert!(body.contains("\"delta\":\"hello\""));
+        assert_eq!(
+            body.matches("\"type\":\"text-delta\"").count(),
+            1,
+            "text deltas should be coalesced into a single event"
+        );
         assert!(body.contains("data: [DONE]"));
     }
 
