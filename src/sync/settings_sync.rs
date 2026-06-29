@@ -112,6 +112,7 @@ fn content_type_for(path: &str) -> &str {
 
 fn is_sync_whitelisted(relative_path: &str) -> bool {
     relative_path == "auth.json"
+        || relative_path == "models.json"
         || relative_path == "settings.json"
         || relative_path.starts_with("extensions/")
 }
@@ -143,8 +144,7 @@ pub fn pull_from_remote(
 ) -> Result<SyncMeta, String> {
     with_sync_lock(|| {
         let agent_dir = state::agent_dir();
-        let remote_files =
-            supabase::list_files(access_token, user_id).map_err(map_sync_error)?;
+        let remote_files = supabase::list_files(access_token, user_id).map_err(map_sync_error)?;
 
         let mut meta = initial_meta;
 
@@ -258,8 +258,7 @@ pub fn sync_changes(
             }
         }
 
-        let remote_files =
-            supabase::list_files(access_token, user_id).map_err(map_sync_error)?;
+        let remote_files = supabase::list_files(access_token, user_id).map_err(map_sync_error)?;
         let remote_set: std::collections::HashSet<String> = remote_files
             .iter()
             .filter_map(|f| {
