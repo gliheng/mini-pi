@@ -1,9 +1,5 @@
 import type { WebSocket } from "ws";
-import type {
-  DefaultResourceLoader,
-  ModelRegistry,
-} from "@earendil-works/pi-coding-agent";
-import { DefaultResourceLoader as DefaultResourceLoaderCtor } from "@earendil-works/pi-coding-agent";
+import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import type { Logger, SessionState, CommandWireInfo, ModelWireInfo } from "./types.js";
@@ -270,10 +266,7 @@ export async function handleGetMessages(ctx: CommandContext): Promise<void> {
 
 export async function handleGetCommands(ctx: CommandContext): Promise<void> {
   const { ws, sessionId, state, msg } = ctx;
-  const loader = new DefaultResourceLoaderCtor({
-    cwd: state.cwd,
-    agentDir: state.agentDir,
-  }) as DefaultResourceLoader;
+  const loader = state.runtime.session.resourceLoader;
   await loader.reload();
   const promptsResult = (loader.getPrompts?.() as { prompts?: unknown[] }) ?? { prompts: [] };
   const skillsResult = (loader.getSkills?.() as { skills?: unknown[] }) ?? { skills: [] };

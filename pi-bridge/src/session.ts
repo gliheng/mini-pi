@@ -1,7 +1,6 @@
 import type {
   AgentSessionRuntime,
   CreateAgentSessionRuntimeFactory,
-  ModelRegistry,
   SessionManager,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
@@ -19,11 +18,19 @@ import { createSendFileTool } from "./send-file-tool.js";
 
 function createRuntimeFactory(
   cwd: string,
-  customTools: ToolDefinition[] = []
+  customTools: ToolDefinition[] = [],
 ): CreateAgentSessionRuntimeFactory {
-  return async ({ cwd: factoryCwd, sessionManager, sessionStartEvent }) => {
+  return async ({
+    cwd: factoryCwd,
+    agentDir,
+    sessionManager,
+    sessionStartEvent,
+  }) => {
     const effectiveCwd = factoryCwd || cwd;
-    const services = await createAgentSessionServices({ cwd: effectiveCwd });
+    const services = await createAgentSessionServices({
+      cwd: effectiveCwd,
+      agentDir,
+    });
     return {
       ...(await createAgentSessionFromServices({
         services,
@@ -46,18 +53,18 @@ function parseModelId(model: string): [string, string] | null {
 }
 
 export interface SessionManagerDeps {
-  modelRegistry: ModelRegistry;
+  agentDir: string;
   logger: Logger;
 }
 
 export class SessionStore {
   readonly #sessions = new Map<string, SessionState>();
   readonly #sendFileTool = createSendFileTool();
-  readonly #modelRegistry: ModelRegistry;
+  readonly #agentDir: string;
   readonly #logger: Logger;
 
   constructor(deps: SessionManagerDeps) {
-    this.#modelRegistry = deps.modelRegistry;
+    this.#agentDir = deps.agentDir;
     this.#logger = deps.logger;
   }
 
@@ -73,10 +80,16 @@ export class SessionStore {
     yield* this.#sessions.entries();
   }
 
-  subscribe(ws: WebSocket, sessionId: string, runtime: AgentSessionRuntime): () => void {
-    const unsubscribe = runtime.session.subscribe((event: Record<string, unknown>) => {
-      forwardEvent(ws, sessionId, event);
-    });
+  subscribe(
+    ws: WebSocket,
+    sessionId: string,
+    runtime: AgentSessionRuntime,
+  ): () => void {
+    const unsubscribe = runtime.session.subscribe(
+      (event: Record<string, unknown>) => {
+        forwardEvent(ws, sessionId, event);
+      },
+    );
     return unsubscribe;
   }
 
@@ -89,22 +102,34 @@ export class SessionStore {
       sessionPath?: string;
       model?: string;
       thinkingLevel?: string;
-    }
+    },
   ): Promise<SessionState> {
     const sessionId = opts.sessionId;
     const cwd = opts.cwd || process.cwd();
-    const agentDir = opts.agentDir || getAgentDir();
+    const agentDir = opts.agentDir || this.#agentDir || getAgentDir();
 
-    this.#logger.info("create_session:", sessionId, opts.sessionPath, cwd, opts.model);
+    this.#logger.info(
+      "create_session:",
+      sessionId,
+      opts.sessionPath,
+      cwd,
+      opts.model,
+    );
 
     const sessionManager = this.#createSessionManager(cwd, opts.sessionPath);
     this.#logger.info("creating runtime...");
-    const runtime = await createAgentSessionRuntime(createRuntimeFactory(cwd, [this.#sendFileTool]), {
-      cwd,
-      agentDir,
-      sessionManager,
-    });
-    this.#logger.info("runtime created, sessionFile:", runtime.session.sessionFile);
+    const runtime = await createAgentSessionRuntime(
+      createRuntimeFactory(cwd, [this.#sendFileTool]),
+      {
+        cwd,
+        agentDir,
+        sessionManager,
+      },
+    );
+    this.#logger.info(
+      "runtime created, sessionFile:",
+      runtime.session.sessionFile,
+    );
 
     await this.#applyModel(runtime, opts.model);
     this.#applyThinkingLevel(runtime, opts.thinkingLevel);
@@ -121,7 +146,10 @@ export class SessionStore {
     return state;
   }
 
-  #createSessionManager(cwd: string, sessionPath: string | undefined): SessionManager {
+  #createSessionManager(
+    cwd: string,
+    sessionPath: string | undefined,
+  ): SessionManager {
     if (sessionPath) {
       try {
         this.#logger.info("opening session:", sessionPath);
@@ -130,7 +158,11 @@ export class SessionStore {
         return sm;
       } catch (e: unknown) {
         const err = e instanceof Error ? e.message : String(e);
-        this.#logger.info("failed to open session, creating new:", sessionPath, err);
+        this.#logger.info(
+          "failed to open session, creating new:",
+          sessionPath,
+          err,
+        );
         return SessionManagerCtor.create(cwd);
       }
     }
@@ -144,7 +176,10 @@ export class SessionStore {
     return SessionManagerCtor.inMemory();
   }
 
-  async #applyModel(runtime: AgentSessionRuntime, model?: string): Promise<void> {
+  async #applyModel(
+    runtime: AgentSessionRuntime,
+    model?: string,
+  ): Promise<void> {
     if (!model) return;
     const parsed = parseModelId(model);
     if (!parsed) {
@@ -153,7 +188,7 @@ export class SessionStore {
     }
     const [provider, modelId] = parsed;
     try {
-      const resolved = this.#modelRegistry.find(provider, modelId);
+      const resolved = runtime.session.modelRegistry.find(provider, modelId);
       if (resolved) {
         await runtime.session.setModel(resolved);
       } else {

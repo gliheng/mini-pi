@@ -1,9 +1,10 @@
+import path from "node:path";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import type { AddressInfo } from "node:net";
 import * as net from "node:net";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type {
   BridgeConfig,
   ConnectedClient,
@@ -34,7 +35,6 @@ const CreateSessionSchema = Type.Object({
 
 export interface BridgeServerDeps {
   config: BridgeConfig;
-  modelRegistry: ModelRegistry;
   logger: Logger;
 }
 
@@ -48,9 +48,20 @@ export class BridgeServer {
 
   constructor(deps: BridgeServerDeps) {
     this.#config = deps.config;
-    this.#modelRegistry = deps.modelRegistry;
     this.#logger = deps.logger;
-    this.#store = new SessionStore({ modelRegistry: deps.modelRegistry, logger: deps.logger });
+
+    const agentDir = this.#config.agentDir;
+    const authStorage = AuthStorage.create(path.join(agentDir, "auth.json"));
+    const modelRegistry = ModelRegistry.create(
+      authStorage,
+      path.join(agentDir, "models.json"),
+    );
+    this.#modelRegistry = modelRegistry;
+
+    this.#store = new SessionStore({
+      agentDir,
+      logger: deps.logger,
+    });
   }
 
   async start(): Promise<void> {
@@ -130,7 +141,7 @@ export class BridgeServer {
             modelRegistry: this.#modelRegistry,
             logger: this.#logger,
           },
-          state
+          state,
         );
         return;
       }
@@ -143,14 +154,30 @@ export class BridgeServer {
       const state = this.#store.get(sessionId);
       if (!state) {
         this.#logger.warn("session not found for command:", type, sessionId);
-        sendResponse(ws, sessionId, type, msg.id, false, undefined, "session not found");
+        sendResponse(
+          ws,
+          sessionId,
+          type,
+          msg.id,
+          false,
+          undefined,
+          "session not found",
+        );
         return;
       }
 
       const handler = sessionCommands.get(type);
       if (!handler) {
         this.#logger.warn("unknown command:", type);
-        sendResponse(ws, sessionId, type, msg.id, false, undefined, "unknown command");
+        sendResponse(
+          ws,
+          sessionId,
+          type,
+          msg.id,
+          false,
+          undefined,
+          "unknown command",
+        );
         return;
       }
 
@@ -174,7 +201,10 @@ export class BridgeServer {
     }
   }
 
-  async #handleCreateSession(ws: WebSocket, msg: InboundMessage): Promise<void> {
+  async #handleCreateSession(
+    ws: WebSocket,
+    msg: InboundMessage,
+  ): Promise<void> {
     if (!Value.Check(CreateSessionSchema, msg)) {
       sendError(ws, "invalid create_session message");
       return;
@@ -235,7 +265,7 @@ function createMessageQueues(): MessageQueues {
 function enqueueMessage(
   client: ConnectedClient,
   msg: WireMessage,
-  handler: MessageHandler
+  handler: MessageHandler,
 ): void {
   const run = async (): Promise<void> => {
     try {
@@ -258,7 +288,10 @@ function enqueueMessage(
     client.queues.global = createPromise;
     if (sid) {
       const prevSession = client.queues.sessions.get(sid) ?? Promise.resolve();
-      client.queues.sessions.set(sid, prevSession.then(() => createPromise));
+      client.queues.sessions.set(
+        sid,
+        prevSession.then(() => createPromise),
+      );
     }
     return;
   }
