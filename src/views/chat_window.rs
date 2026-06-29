@@ -2,13 +2,12 @@ use std::{path::PathBuf, sync::Arc};
 
 use base64::Engine as _;
 use gpui::{
-    Anchor, AnyElement, AnyWindowHandle, ClipboardEntry, ClipboardItem, Context, Entity,
-    FocusHandle, Image, ImageFormat, ImageSource, InteractiveElement, IntoElement, KeyDownEvent,
-    Length, MouseButton, ParentElement, PathPromptOptions, Pixels, Render, ScrollHandle,
-    SharedString, Styled, Window, div, img, prelude::*, px, rems, svg,
+    Anchor, AnyElement, AnyWindowHandle, ClipboardItem, Context, Entity, FocusHandle, Image,
+    ImageFormat, ImageSource, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
+    ParentElement, PathPromptOptions, Pixels, Render, ScrollHandle, SharedString, Styled, Window,
+    div, img, prelude::*, px, svg,
 };
 
-use crate::config::model_config::all_models;
 use crate::core::actions::{
     CancelInlineEdit, CloseWindow, ConfirmInlineEdit, SendMessage, StopStreaming,
 };
@@ -17,196 +16,24 @@ use crate::core::session_handle::{SessionEvent, SessionHandle, SessionStats, Wor
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::data::store::{Store, ThreadMeta, WorkspaceMeta};
 use crate::rpc::pi_rpc::ImageContent;
-use crate::ui::chat_input::ChatInput;
+use crate::ui::chat_input::{ChatInput, ChatInputEvent, PendingAttachment};
 use crate::ui::loader::{loader, text_loader};
 use crate::utils::color::{workspace_color, workspace_foreground};
-use crate::utils::voice::{VoiceRecorder, VoiceState, start_recording, transcribe};
 use crate::views::reasoning::Reasoning;
 use crate::views::tool_call::ToolCall;
 use crate::views::workspace_manager::{WorkspaceManager, WorkspaceManagerEvent};
-use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants};
-use gpui_component::input::{Enter, IndentInline, Input, MoveDown, MoveUp, Paste};
+use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::input::Input;
 use gpui_component::notification::Notification;
-use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
 use gpui_component::tag::Tag;
 use gpui_component::text::{TextView, TextViewState};
 use gpui_component::{
-    ActiveTheme as _, Disableable as _, Icon, IndexPath, Sizable as _, Size, WindowExt as _,
+    ActiveTheme as _, Icon, Sizable as _, Size, WindowExt as _,
     h_flex, hover_card::HoverCard, scroll::Scrollbar, status_bar::StatusBar,
 };
 
 type ReasoningEntities = Vec<Vec<Option<Entity<Reasoning>>>>;
 type MarkdownEntities = Vec<Vec<Option<Entity<TextViewState>>>>;
-
-#[derive(Clone, Debug)]
-pub enum PendingAttachment {
-    Image {
-        path: PathBuf,
-        name: String,
-        mime_type: String,
-        base64: String,
-    },
-    Text {
-        path: PathBuf,
-        name: String,
-        content: String,
-    },
-}
-
-fn is_supported_image_mime(mime: &mime_guess::Mime) -> bool {
-    mime.type_() == "image" && matches!(mime.subtype().as_str(), "png" | "jpeg" | "gif" | "webp")
-}
-
-fn is_text_mime(mime: &mime_guess::Mime) -> bool {
-    if mime.type_() == "text" {
-        return true;
-    }
-    matches!(
-        (mime.type_().as_str(), mime.subtype().as_str()),
-        ("application", "json")
-            | ("application", "xml")
-            | ("application", "javascript")
-            | ("application", "x-javascript")
-            | ("application", "typescript")
-    )
-}
-
-const TEXT_FILE_EXTENSIONS: &[&str] = &[
-    "txt",
-    "md",
-    "markdown",
-    "json",
-    "yaml",
-    "yml",
-    "toml",
-    "csv",
-    "tsv",
-    "log",
-    "rs",
-    "py",
-    "js",
-    "ts",
-    "jsx",
-    "tsx",
-    "mjs",
-    "cjs",
-    "html",
-    "htm",
-    "css",
-    "scss",
-    "sass",
-    "less",
-    "sql",
-    "sh",
-    "bash",
-    "zsh",
-    "fish",
-    "c",
-    "cpp",
-    "cc",
-    "cxx",
-    "h",
-    "hpp",
-    "hh",
-    "go",
-    "java",
-    "kt",
-    "kts",
-    "swift",
-    "rb",
-    "php",
-    "cs",
-    "fs",
-    "fsx",
-    "ml",
-    "clj",
-    "cljs",
-    "scala",
-    "r",
-    "lua",
-    "pl",
-    "pm",
-    "vim",
-    "ex",
-    "exs",
-    "erl",
-    "hrl",
-    "elm",
-    "hs",
-    "lhs",
-    "cl",
-    "lisp",
-    "scm",
-    "rkt",
-    "dart",
-    "groovy",
-    "jl",
-    "m",
-    "wl",
-    "xml",
-    "xsl",
-    "xsd",
-    "graphql",
-    "gql",
-    "prisma",
-    "proto",
-    "env",
-    "ini",
-    "conf",
-    "cfg",
-    "properties",
-    "gitignore",
-    "dockerfile",
-    "tf",
-    "hcl",
-    "nomad",
-    "pkl",
-    "nix",
-    "vue",
-    "svelte",
-    "astro",
-];
-
-fn has_text_extension(path: &std::path::Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| TEXT_FILE_EXTENSIONS.contains(&e.to_lowercase().as_str()))
-        .unwrap_or(false)
-}
-
-fn is_image_file(path: &std::path::Path) -> bool {
-    mime_guess::from_path(path)
-        .first()
-        .map(|m| is_supported_image_mime(&m))
-        .unwrap_or(false)
-}
-
-fn is_supported_attachment_path(path: &std::path::Path) -> bool {
-    if is_image_file(path) {
-        return true;
-    }
-    if has_text_extension(path) {
-        return true;
-    }
-    match mime_guess::from_path(path).first() {
-        Some(mime) => is_text_mime(&mime),
-        None => true,
-    }
-}
-
-fn extension_for_image_format(format: ImageFormat) -> &'static str {
-    match format {
-        ImageFormat::Png => "png",
-        ImageFormat::Jpeg => "jpg",
-        ImageFormat::Webp => "webp",
-        ImageFormat::Gif => "gif",
-        ImageFormat::Svg => "svg",
-        ImageFormat::Bmp => "bmp",
-        ImageFormat::Tiff => "tiff",
-        ImageFormat::Ico => "ico",
-        ImageFormat::Pnm => "pnm",
-    }
-}
 
 fn image_format_for_mime(mime: &str) -> Option<ImageFormat> {
     match mime.to_lowercase().as_str() {
@@ -232,24 +59,6 @@ fn image_source_from_base64(data: &str, mime: &str) -> Option<ImageSource> {
     ))))
 }
 
-#[derive(Clone)]
-pub struct SelectModelItem {
-    id: String,
-    name: SharedString,
-}
-
-impl SelectItem for SelectModelItem {
-    type Value = String;
-
-    fn title(&self) -> SharedString {
-        self.name.clone()
-    }
-
-    fn value(&self) -> &Self::Value {
-        &self.id
-    }
-}
-
 pub struct ChatWindow {
     pub thread_id: Option<String>,
     pub session_file: String,
@@ -261,12 +70,6 @@ pub struct ChatWindow {
     pub store: Arc<Store>,
     pub session: Option<Entity<SessionHandle>>,
     pub session_subscription: Option<gpui::Subscription>,
-    pub at_mention_scroll_handle: ScrollHandle,
-    pub command_scroll_handle: ScrollHandle,
-    pub selected_model: Option<String>,
-    pub thinking_level: Option<String>,
-    pub model_dropdown: gpui::Entity<SelectState<SearchableVec<SelectModelItem>>>,
-    pub thinking_dropdown: gpui::Entity<SelectState<SearchableVec<SelectModelItem>>>,
     pub reasoning_displays: ReasoningEntities,
     pub markdown_displays: MarkdownEntities,
     /// (msg_idx, part_idx, last_text_len) for the single currently-streaming
@@ -281,10 +84,7 @@ pub struct ChatWindow {
     pub editing_message_id: Option<String>,
     pub inline_edit_input: Option<gpui::Entity<ChatInput>>,
     pub window_handle: AnyWindowHandle,
-    pub voice_state: VoiceState,
-    pub voice_recorder: Option<VoiceRecorder>,
     pub session_stats: Option<SessionStats>,
-    pub pending_attachments: Vec<PendingAttachment>,
 }
 
 impl ChatWindow {
@@ -303,7 +103,6 @@ impl ChatWindow {
                 }
             })
             .unwrap_or_else(|| "New Thread".into());
-        let chat_input = cx.new(|cx| ChatInput::new(window, cx, "Type a message..."));
 
         let thread_id = thread.map(|t| t.id.clone());
         let selected_model: Option<String> = thread
@@ -356,50 +155,6 @@ impl ChatWindow {
             })
             .or_else(|| workspaces.first().map(|ws| ws.id.clone()));
 
-        // Build model dropdown items
-        let model_items: Vec<SelectModelItem> = all_models(&models)
-            .iter()
-            .map(|m| SelectModelItem {
-                id: m.id.clone(),
-                name: m.name.clone().into(),
-            })
-            .collect();
-        let model_selected_index = selected_model
-            .as_ref()
-            .and_then(|id| model_items.iter().position(|m| &m.id == id))
-            .map(|row| IndexPath::default().row(row));
-        let model_dropdown = cx.new(|cx| {
-            SelectState::new(
-                SearchableVec::new(model_items),
-                model_selected_index,
-                window,
-                cx,
-            )
-            .searchable(true)
-        });
-
-        // Build thinking level dropdown items based on the selected model's map
-        let thinking_items =
-            Self::thinking_level_items_for_model(&models, selected_model.as_deref());
-        let thinking_selected_index = selected_thinking_level
-            .as_ref()
-            .and_then(|id| thinking_items.iter().position(|m| &m.id == id))
-            .map(|row| IndexPath::default().row(row));
-        let thinking_dropdown = cx.new(|cx| {
-            SelectState::new(
-                SearchableVec::new(thinking_items),
-                thinking_selected_index,
-                window,
-                cx,
-            )
-        });
-        let workspace_manager = cx.new(|_| WorkspaceManager::new(workspaces.clone()));
-        let window_handle = window.window_handle();
-        let voice_state = VoiceState::Idle;
-        let voice_recorder = None;
-        let session_stats = None;
-        let pending_attachments = Vec::new();
-
         let workspace_info = selected_workspace_id
             .as_ref()
             .and_then(|id| workspaces.iter().find(|ws| ws.id == *id))
@@ -409,7 +164,21 @@ impl ChatWindow {
                 name: ws.name.clone(),
             });
 
-        let mut window = Self {
+        let chat_input = cx.new(|cx| {
+            ChatInput::new_composer(
+                window,
+                cx,
+                "Type a message...",
+                &models,
+                selected_model.clone(),
+                selected_thinking_level.clone(),
+            )
+        });
+
+        let workspace_manager = cx.new(|_| WorkspaceManager::new(workspaces.clone()));
+        let window_handle = window.window_handle();
+
+        let mut chat_window = Self {
             thread_id,
             session_file: String::new(),
             title: title.clone(),
@@ -420,16 +189,10 @@ impl ChatWindow {
             store: store.clone(),
             session: None,
             session_subscription: None,
-            selected_model,
-            thinking_level: selected_thinking_level,
-            model_dropdown: model_dropdown.clone(),
-            thinking_dropdown: thinking_dropdown.clone(),
             reasoning_displays: vec![],
             markdown_displays: vec![],
             streaming_md_pos: None,
             scroll_handle: ScrollHandle::new(),
-            at_mention_scroll_handle: ScrollHandle::new(),
-            command_scroll_handle: ScrollHandle::new(),
             scroll_locked: true,
             workspaces,
             selected_workspace_id,
@@ -437,10 +200,7 @@ impl ChatWindow {
             editing_message_id: None,
             inline_edit_input: None,
             window_handle,
-            voice_state,
-            voice_recorder,
-            session_stats,
-            pending_attachments,
+            session_stats: None,
         };
 
         let default_model = cx.global::<AppStore>().config.default_model.clone();
@@ -457,31 +217,29 @@ impl ChatWindow {
                 None,
                 cx,
             );
-            window.attach_session(session, cx);
+            chat_window.attach_session(session, cx);
         }
 
         // Set initial workspace on chat input
         if let Some(ref ws) = workspace_info {
-            window.chat_input.update(cx, |ci, cx| {
+            chat_window.chat_input.update(cx, |ci, cx| {
                 ci.set_workspace(ws.id.clone(), ws.path.clone(), ws.name.clone(), cx);
             });
         }
 
-        // Subscribe to chat input events (re-render on changes)
-        cx.subscribe(
-            &window.chat_input,
-            |_this, _input, _event: &crate::ui::chat_input::ChatInputEvent, cx| {
-                cx.notify();
-            },
-        )
-        .detach();
-
-        // Subscribe to model dropdown selection events
-        cx.subscribe(
-            &model_dropdown,
-            |this, _dropdown, event: &SelectEvent<SearchableVec<SelectModelItem>>, cx| {
-                if let SelectEvent::Confirm(Some(id)) = event {
-                    this.selected_model = Some(id.clone());
+        // Subscribe to chat input events
+        cx.subscribe_in(
+            &chat_window.chat_input,
+            window,
+            |this, _input, event: &ChatInputEvent, window, cx| match event {
+                ChatInputEvent::Change => cx.notify(),
+                ChatInputEvent::Submit => {
+                    this.send_message(&SendMessage, window, cx);
+                }
+                ChatInputEvent::Stop => {
+                    this.stop_streaming(&StopStreaming, window, cx);
+                }
+                ChatInputEvent::ModelChanged(id) => {
                     cx.update_global(|app_store: &mut AppStore, _| {
                         app_store.config.default_model = Some(id.clone());
                         if let Err(e) = app_store.config.save() {
@@ -493,20 +251,9 @@ impl ChatWindow {
                             session.set_model(Some(id.clone()), cx);
                         });
                     }
-                    // When a new model is selected, preserve the current thinking level if
-                    // it is still valid for the new model; otherwise fall back to off.
-                    this.refresh_thinking_dropdown(cx);
+                    cx.notify();
                 }
-            },
-        )
-        .detach();
-
-        // Subscribe to thinking dropdown selection events
-        cx.subscribe(
-            &thinking_dropdown,
-            |this, _dropdown, event: &SelectEvent<SearchableVec<SelectModelItem>>, cx| {
-                if let SelectEvent::Confirm(Some(id)) = event {
-                    this.thinking_level = Some(id.clone());
+                ChatInputEvent::ThinkingChanged(id) => {
                     cx.update_global(|app_store: &mut AppStore, _| {
                         app_store.config.default_thinking_level = Some(id.clone());
                         if let Err(e) = app_store.config.save() {
@@ -536,82 +283,7 @@ impl ChatWindow {
         )
         .detach();
 
-        window
-    }
-
-    const DEFAULT_THINKING_LEVELS: [(&'static str, &'static str); 6] = [
-        ("off", "Off"),
-        ("minimal", "Minimal"),
-        ("low", "Low"),
-        ("medium", "Medium"),
-        ("high", "High"),
-        ("xhigh", "Extra High"),
-    ];
-
-    fn thinking_level_items_for_model(
-        models: &[crate::config::model_config::ModelInfo],
-        model_id: Option<&str>,
-    ) -> Vec<SelectModelItem> {
-        let map = model_id
-            .and_then(|id| models.iter().find(|m| m.id == id))
-            .and_then(|m| m.thinking_level_map.as_ref());
-
-        Self::DEFAULT_THINKING_LEVELS
-            .iter()
-            .filter(|(id, _)| match map {
-                Some(m) => !matches!(m.get(*id), Some(None)),
-                None => true,
-            })
-            .map(|(id, label)| SelectModelItem {
-                id: (*id).to_string(),
-                name: (*label).into(),
-            })
-            .collect()
-    }
-
-    fn refresh_thinking_dropdown(&mut self, cx: &mut Context<Self>) {
-        let models = cx.global::<AppStore>().models.clone();
-        let items = Self::thinking_level_items_for_model(&models, self.selected_model.as_deref());
-        let valid_ids: std::collections::HashSet<String> =
-            items.iter().map(|i| i.id.clone()).collect();
-
-        let new_level = self
-            .thinking_level
-            .as_ref()
-            .filter(|id| valid_ids.contains(*id))
-            .cloned()
-            .or_else(|| {
-                items
-                    .iter()
-                    .find(|i| i.id == "off")
-                    .or_else(|| items.first())
-                    .map(|i| i.id.clone())
-            });
-
-        if new_level != self.thinking_level {
-            self.thinking_level = new_level.clone();
-            if let Some(ref session) = self.session {
-                if let Some(ref level) = new_level {
-                    session.update(cx, |session, cx| {
-                        session.set_thinking_level(Some(level.clone()), cx);
-                    });
-                }
-            }
-        }
-
-        let selected_value = self.thinking_level.clone();
-        let items = SearchableVec::new(items);
-        let _ = cx.update_window(self.window_handle, |_, window, cx| {
-            self.thinking_dropdown.update(cx, |dropdown, cx| {
-                dropdown.set_items(items.clone(), window, cx);
-                if let Some(ref value) = selected_value {
-                    dropdown.set_selected_value(value, window, cx);
-                } else {
-                    dropdown.set_selected_index(None, window, cx);
-                }
-            });
-        });
-        cx.notify();
+        chat_window
     }
 
     fn attach_session(&mut self, session: Entity<SessionHandle>, cx: &mut Context<Self>) {
@@ -682,29 +354,18 @@ impl ChatWindow {
         let commands = s.commands.clone();
 
         self.messages = messages;
-        self.state = state;
+        self.state = state.clone();
         if matches!(self.state, ChatState::Streaming) && self.scroll_locked {
             self.scroll_handle.scroll_to_bottom();
         }
         self.session_file = session_file;
         self.title = title;
-        self.selected_model = selected_model.clone();
-        self.thinking_level = thinking_level.clone();
         self.session_stats = s.session_stats.clone();
 
         self.chat_input.update(cx, |ci, cx| {
             ci.set_commands(commands, cx);
+            ci.sync(selected_model, thinking_level, state, cx);
         });
-        let _ = cx.update_window(self.window_handle, |_, window, cx| {
-            self.model_dropdown.update(cx, |dropdown, cx| {
-                if let Some(ref value) = selected_model {
-                    dropdown.set_selected_value(value, window, cx);
-                } else {
-                    dropdown.set_selected_index(None, window, cx);
-                }
-            });
-        });
-        self.refresh_thinking_dropdown(cx);
     }
 
     fn sort_workspaces(workspaces: &mut Vec<WorkspaceMeta>) {
@@ -866,8 +527,8 @@ impl ChatWindow {
                 path: PathBuf::from(&ws.path),
                 name: ws.name.clone(),
             });
-        let model = self.selected_model.clone();
-        let thinking_level = self.thinking_level.clone();
+        let model = self.chat_input.read(cx).selected_model().map(|s| s.to_string());
+        let thinking_level = self.chat_input.read(cx).thinking_level().map(|s| s.to_string());
         let session = Self::get_or_create_session(None, workspace_info, model, thinking_level, cx);
         self.attach_session(session, cx);
         self.session.is_some()
@@ -893,7 +554,7 @@ impl ChatWindow {
             self.chat_input.read(cx).content(cx).clone()
         };
         eprintln!("[mini-pi] send_message: {} chars", content.len());
-        let has_attachment = !self.pending_attachments.is_empty();
+        let has_attachment = !self.chat_input.read(cx).pending_attachments().is_empty();
         if content.is_empty() && !has_attachment {
             return;
         }
@@ -902,7 +563,6 @@ impl ChatWindow {
         // edited prompt into the new branch. Attachments are not carried over
         // when editing; discard them to keep the flow simple.
         if let Some(editing_id) = self.editing_message_id.take() {
-            self.pending_attachments.clear();
             self.chat_input.update(cx, |ci, cx| ci.reset(_window, cx));
             let Some(edit_idx) = self.messages.iter().position(|m| m.id == editing_id) else {
                 eprintln!("[mini-pi] edited message {} not found", editing_id);
@@ -936,7 +596,7 @@ impl ChatWindow {
 
         self.chat_input.update(cx, |ci, cx| ci.reset(_window, cx));
         self.scroll_locked = true;
-        let attachments = std::mem::take(&mut self.pending_attachments);
+        let attachments = self.chat_input.update(cx, |ci, _cx| ci.take_pending_attachments());
 
         let mut media: Vec<ImageContent> = Vec::new();
         let mut file_parts: Vec<String> = Vec::new();
@@ -1022,260 +682,6 @@ impl ChatWindow {
         }
 
         cx.notify();
-    }
-
-    fn path_to_attachment(path: PathBuf) -> Result<PendingAttachment, String> {
-        let metadata =
-            std::fs::metadata(&path).map_err(|e| format!("Cannot read file metadata: {}", e))?;
-        if metadata.is_dir() {
-            return Err(format!(
-                "{}: please select a file, not a directory",
-                path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("selected item")
-            ));
-        }
-        let size = metadata.len();
-        if size > 5 * 1024 * 1024 {
-            return Err(format!(
-                "{}: file is larger than 5 MB",
-                path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("selected file")
-            ));
-        }
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("file")
-            .to_string();
-
-        // Some extensions (e.g. `.ts`) are mis-guessed as video by MIME libraries,
-        // so check the explicit text-extension list before looking at MIME.
-        let extension_is_text = has_text_extension(&path);
-        let guessed_mime = mime_guess::from_path(&path).first();
-
-        if let Some(ref mime) = guessed_mime {
-            if is_supported_image_mime(mime) {
-                let mime_type = mime.to_string();
-                let bytes =
-                    std::fs::read(&path).map_err(|e| format!("Failed to read file: {}", e))?;
-                let base64 =
-                    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
-                return Ok(PendingAttachment::Image {
-                    path,
-                    name,
-                    mime_type,
-                    base64,
-                });
-            }
-            if extension_is_text || is_text_mime(mime) {
-                const MAX_TEXT_BYTES: usize = 100 * 1024;
-                if size > MAX_TEXT_BYTES as u64 {
-                    return Err(format!("{}: text file is larger than 100 KB", name));
-                }
-                let bytes =
-                    std::fs::read(&path).map_err(|e| format!("Failed to read file: {}", e))?;
-                let content = String::from_utf8(bytes)
-                    .map_err(|_| format!("{}: binary files are not supported", name))?;
-                return Ok(PendingAttachment::Text {
-                    path,
-                    name,
-                    content,
-                });
-            }
-            // Known non-text MIME type — reject without reading the bytes.
-            return Err(format!("{}: binary files are not supported", name));
-        }
-
-        // No extension or unknown MIME type: attempt UTF-8 as a last resort.
-        const MAX_TEXT_BYTES: usize = 100 * 1024;
-        if size > MAX_TEXT_BYTES as u64 {
-            return Err(format!("{}: file is larger than 100 KB", name));
-        }
-        let bytes = std::fs::read(&path).map_err(|e| format!("Failed to read file: {}", e))?;
-        let content = String::from_utf8(bytes)
-            .map_err(|_| format!("{}: binary files are not supported", name))?;
-        Ok(PendingAttachment::Text {
-            path,
-            name,
-            content,
-        })
-    }
-
-    fn add_attachments(
-        &mut self,
-        results: Vec<Result<PendingAttachment, String>>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let mut errors = Vec::new();
-        for result in results {
-            match result {
-                Ok(attachment) => self.pending_attachments.push(attachment),
-                Err(err) => errors.push(err),
-            }
-        }
-        if !errors.is_empty() {
-            let message = if errors.len() == 1 {
-                errors.into_iter().next().unwrap()
-            } else {
-                format!(
-                    "{} files could not be attached:\n{}",
-                    errors.len(),
-                    errors.join("\n")
-                )
-            };
-            window.push_notification(Notification::error(message), cx);
-        }
-        if !self.pending_attachments.is_empty() {
-            self.chat_input.update(cx, |ci, cx| ci.focus(window, cx));
-            cx.notify();
-        }
-    }
-
-    pub fn pick_and_send_file(
-        &mut self,
-        _: &gpui::ClickEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if matches!(self.state, ChatState::Streaming | ChatState::Loading) {
-            return;
-        }
-
-        let rx = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: true,
-            prompt: None,
-        });
-
-        cx.spawn_in(window, async move |this, cx| {
-            let paths = match rx.await {
-                Ok(Ok(Some(paths))) => paths,
-                _ => return,
-            };
-            if paths.is_empty() {
-                return;
-            }
-
-            let (supported, unsupported): (Vec<PathBuf>, Vec<PathBuf>) = paths
-                .into_iter()
-                .partition(|p| is_supported_attachment_path(p));
-
-            let results: Vec<Result<PendingAttachment, String>> = smol::unblock(move || {
-                supported.into_iter().map(Self::path_to_attachment).collect()
-            })
-            .await;
-
-            this.update_in(cx, |this, window, cx| {
-                if !unsupported.is_empty() {
-                    let names: Vec<String> = unsupported
-                        .iter()
-                        .map(|p| {
-                            p.file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("selected file")
-                                .to_string()
-                        })
-                        .collect();
-                    let message = if unsupported.len() == 1 {
-                        format!(
-                            "{}: only images and text files can be attached",
-                            names[0]
-                        )
-                    } else {
-                        format!(
-                            "{} files cannot be attached (only images and text files are allowed):\n{}",
-                            names.len(),
-                            names.join("\n")
-                        )
-                    };
-                    window.push_notification(Notification::error(message), cx);
-                }
-                this.add_attachments(results, window, cx);
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    fn handle_paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(self.state, ChatState::Streaming | ChatState::Loading) {
-            return;
-        }
-
-        let Some(clipboard) = cx.read_from_clipboard() else {
-            return;
-        };
-
-        let mut image_attachments: Vec<PendingAttachment> = Vec::new();
-        let mut file_paths: Vec<PathBuf> = Vec::new();
-
-        for entry in clipboard.into_entries() {
-            match entry {
-                ClipboardEntry::Image(image) => {
-                    let format = image.format;
-                    let mime_type = format.mime_type().to_string();
-                    let extension = extension_for_image_format(format);
-                    let name = format!("pasted-image.{}", extension);
-                    let base64 = base64::Engine::encode(
-                        &base64::engine::general_purpose::STANDARD,
-                        &image.bytes,
-                    );
-                    image_attachments.push(PendingAttachment::Image {
-                        path: PathBuf::from(&name),
-                        name,
-                        mime_type,
-                        base64,
-                    });
-                }
-                ClipboardEntry::ExternalPaths(paths) => {
-                    file_paths.extend(
-                        paths
-                            .0
-                            .into_iter()
-                            .filter(|p| is_supported_attachment_path(p)),
-                    );
-                }
-                _ => {}
-            }
-        }
-
-        if image_attachments.is_empty() && file_paths.is_empty() {
-            // Let the input handle plain-text paste normally.
-            return;
-        }
-
-        cx.stop_propagation();
-
-        for attachment in image_attachments {
-            self.pending_attachments.push(attachment);
-        }
-
-        if !file_paths.is_empty() {
-            cx.spawn_in(window, async move |this, cx| {
-                let results: Vec<Result<PendingAttachment, String>> = smol::unblock(move || {
-                    file_paths
-                        .into_iter()
-                        .map(Self::path_to_attachment)
-                        .collect()
-                })
-                .await;
-
-                this.update_in(cx, |this, window, cx| {
-                    this.add_attachments(results, window, cx);
-                })
-                .ok();
-            })
-            .detach();
-        }
-
-        if !self.pending_attachments.is_empty() {
-            self.chat_input.update(cx, |ci, cx| ci.focus(window, cx));
-            cx.notify();
-        }
     }
 
     fn send_edited_prompt(
@@ -1398,7 +804,6 @@ impl ChatWindow {
                 true,
             );
         }
-        // Ping AppStore so the ThreadList refreshes its data.
         cx.update_global(|_: &mut AppStore, _| {});
         cx.notify();
     }
@@ -1427,201 +832,6 @@ impl ChatWindow {
             self.inline_edit_input = Some(inline_input);
             cx.notify();
         }
-    }
-
-    pub fn toggle_voice_input(
-        &mut self,
-        _: &gpui::ClickEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match self.voice_state {
-            VoiceState::Idle => self.start_voice_input(window, cx),
-            VoiceState::Recording => self.stop_voice_input(window, cx),
-            VoiceState::Transcribing => {}
-        }
-    }
-
-    fn start_voice_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match start_recording() {
-            Ok(recorder) => {
-                self.voice_recorder = Some(recorder);
-                self.voice_state = VoiceState::Recording;
-                cx.notify();
-            }
-            Err(err) => {
-                window.push_notification(
-                    Notification::error(format!("Voice input error: {}", err)),
-                    cx,
-                );
-                cx.notify();
-            }
-        }
-    }
-
-    fn stop_voice_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(recorder) = self.voice_recorder.take() else {
-            return;
-        };
-        let wav_bytes = recorder.stop();
-        self.voice_state = VoiceState::Transcribing;
-        cx.notify();
-
-        cx.spawn_in(window, async move |this, cx| {
-            let result = transcribe(&wav_bytes).await;
-            this.update_in(cx, |this, window, cx| {
-                match result {
-                    Ok(text) if !text.is_empty() => {
-                        let current = this.chat_input.read(cx).content(cx).to_string();
-                        let new_text = if current.is_empty() {
-                            text
-                        } else if current.ends_with(' ') {
-                            current + &text
-                        } else {
-                            current + " " + &text
-                        };
-                        this.chat_input.update(cx, |ci, cx| {
-                            ci.set_content(new_text, window, cx);
-                        });
-                    }
-                    Ok(_) => {}
-                    Err(err) => {
-                        window.push_notification(
-                            Notification::error(format!("Transcription failed: {}", err)),
-                            cx,
-                        );
-                    }
-                }
-                this.voice_state = VoiceState::Idle;
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    fn render_at_mention_popup(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let chat_input = self.chat_input.read(cx);
-        let items = chat_input.popup_items();
-        let highlighted = chat_input.popup_highlighted();
-
-        if !items.is_empty() && highlighted < items.len() {
-            self.at_mention_scroll_handle.scroll_to_item(highlighted);
-        }
-
-        div()
-            .relative()
-            .px_3()
-            .pb_1()
-            .child(
-                div()
-                    .id("at-mention-overlay")
-                    .absolute()
-                    .occlude()
-                    .top(px(-5000.))
-                    .left(px(-5000.))
-                    .w(px(10000.))
-                    .h(px(10000.))
-                    .on_mouse_down(
-                        gpui::MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
-                            this.chat_input.update(cx, |ci, cx| ci.close_popup(cx));
-                        }),
-                    ),
-            )
-            .child(
-                div()
-                    .id("at-mention-popup")
-                    .track_scroll(&self.at_mention_scroll_handle)
-                    .absolute()
-                    .occlude()
-                    .bottom(px(0.))
-                    .left(px(12.))
-                    .right(px(12.))
-                    .max_h(px(240.))
-                    .overflow_y_scroll()
-                    .bg(cx.theme().popover)
-                    .border_1()
-                    .border_color(cx.theme().primary)
-                    .rounded_md()
-                    .py_1()
-                    .shadow(vec![gpui::BoxShadow {
-                        color: cx.theme().overlay,
-                        offset: gpui::point(px(0.), px(4.)),
-                        blur_radius: px(12.),
-                        spread_radius: px(0.),
-                        inset: false,
-                    }])
-                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
-                        cx.stop_propagation();
-                    })
-                    .children(items.iter().enumerate().map(|(idx, item)| {
-                        let is_highlighted = idx == highlighted;
-                        let icon = if item.is_dir {
-                            "icons/folder.svg"
-                        } else {
-                            "icons/file.svg"
-                        };
-                        let label: SharedString = item.name.clone().into();
-                        let detail: SharedString = if item.relative_path != item.name {
-                            item.relative_path.clone().into()
-                        } else {
-                            "".into()
-                        };
-                        let item_idx = idx;
-                        div()
-                            .id(SharedString::from(format!("mention-{}", idx)))
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .px_3()
-                            .py_1p5()
-                            .cursor_pointer()
-                            .when(is_highlighted, |s| s.bg(cx.theme().accent))
-                            .hover(|style| style.bg(cx.theme().accent))
-                            .child(
-                                svg()
-                                    .path(icon)
-                                    .size(px(14.))
-                                    .text_color(if is_highlighted {
-                                        cx.theme().primary
-                                    } else {
-                                        cx.theme().muted_foreground
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_baseline()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .text_color(if is_highlighted {
-                                                cx.theme().foreground
-                                            } else {
-                                                cx.theme().muted_foreground
-                                            })
-                                            .child(label),
-                                    )
-                                    .when(!detail.is_empty(), |s| {
-                                        s.child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(cx.theme().muted_foreground)
-                                                .child(detail),
-                                        )
-                                    }),
-                            )
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                this.chat_input.update(cx, |ci, cx| {
-                                    ci.select_mention_at(item_idx, _window, cx);
-                                });
-                            }))
-                    })),
-            )
     }
 
     fn render_messages_scrollbar(&self, _cx: &mut Context<Self>) -> impl IntoElement {
@@ -1676,126 +886,6 @@ impl ChatWindow {
                         ),
                 )
             })
-    }
-
-    fn render_command_popup(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let chat_input = self.chat_input.read(cx);
-        let items = chat_input.slash_command_items();
-        let highlighted = chat_input.slash_command_highlighted();
-
-        if !items.is_empty() && highlighted < items.len() {
-            self.command_scroll_handle.scroll_to_item(highlighted);
-        }
-
-        div()
-            .relative()
-            .px_3()
-            .pb_1()
-            .child(
-                div()
-                    .id("command-overlay")
-                    .absolute()
-                    .occlude()
-                    .top(px(-5000.))
-                    .left(px(-5000.))
-                    .w(px(10000.))
-                    .h(px(10000.))
-                    .on_mouse_down(
-                        gpui::MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
-                            this.chat_input.update(cx, |ci, cx| ci.close_popup(cx));
-                        }),
-                    ),
-            )
-            .child(
-                div()
-                    .id("command-popup")
-                    .track_scroll(&self.command_scroll_handle)
-                    .absolute()
-                    .occlude()
-                    .bottom(px(0.))
-                    .left(px(12.))
-                    .right(px(12.))
-                    .max_h(px(240.))
-                    .overflow_y_scroll()
-                    .bg(cx.theme().popover)
-                    .border_1()
-                    .border_color(cx.theme().primary)
-                    .rounded_md()
-                    .py_1()
-                    .shadow(vec![gpui::BoxShadow {
-                        color: cx.theme().overlay,
-                        offset: gpui::point(px(0.), px(4.)),
-                        blur_radius: px(12.),
-                        spread_radius: px(0.),
-                        inset: false,
-                    }])
-                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
-                        cx.stop_propagation();
-                    })
-                    .children(items.iter().enumerate().map(|(idx, item)| {
-                        let is_highlighted = idx == highlighted;
-                        let label: SharedString = format!("/{}", item.name).into();
-                        let detail: SharedString =
-                            item.description.clone().unwrap_or_default().into();
-                        let source_label: SharedString = (match item.source.as_str() {
-                            "extension" => "Extension",
-                            "prompt" => "Prompt",
-                            "skill" => "Skill",
-                            _ => &item.source,
-                        })
-                        .to_string()
-                        .into();
-                        let item_idx = idx;
-                        div()
-                            .id(SharedString::from(format!("command-{}", idx)))
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .px_3()
-                            .py_1p5()
-                            .cursor_pointer()
-                            .when(is_highlighted, |s| s.bg(cx.theme().accent))
-                            .hover(|style| style.bg(cx.theme().accent))
-                            .child(
-                                div()
-                                    .w(px(160.))
-                                    .overflow_hidden()
-                                    .text_sm()
-                                    .text_color(if is_highlighted {
-                                        cx.theme().foreground
-                                    } else {
-                                        cx.theme().muted_foreground
-                                    })
-                                    .child(div().whitespace_nowrap().text_ellipsis().child(label)),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w(px(0.))
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .line_clamp(2)
-                                    .when(!detail.is_empty(), |s| s.child(detail)),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .px_1()
-                                    .py_0p5()
-                                    .rounded_sm()
-                                    .bg(cx.theme().secondary)
-                                    .text_color(cx.theme().secondary_foreground)
-                                    .child(source_label),
-                            )
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                this.chat_input.update(cx, |ci, cx| {
-                                    ci.select_command_at(item_idx, _window, cx);
-                                });
-                            }))
-                    })),
-            )
     }
 
     /// Resolve the active workspace directory, used by `ToolCall` to resolve
@@ -2532,290 +1622,6 @@ impl ChatWindow {
             .into_any_element()
     }
 
-    fn render_attachment_bar(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        if self.pending_attachments.is_empty() {
-            return div().into_any_element();
-        }
-        let attachments = self.pending_attachments.clone();
-        div()
-            .px_3()
-            .pt_2()
-            .pb_1()
-            .flex()
-            .flex_row()
-            .flex_wrap()
-            .gap_2()
-            .children(
-                attachments
-                    .into_iter()
-                    .enumerate()
-                    .map(|(idx, attachment)| {
-                        let name = match &attachment {
-                            PendingAttachment::Image { name, .. }
-                            | PendingAttachment::Text { name, .. } => name.clone(),
-                        };
-                        div()
-                            .id(SharedString::from(format!("pending-attachment-{}", idx)))
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .bg(cx.theme().accent)
-                            .text_color(cx.theme().accent_foreground)
-                            .child(
-                                Icon::empty()
-                                    .path("icons/file.svg")
-                                    .size(px(14.))
-                                    .text_color(cx.theme().accent_foreground),
-                            )
-                            .child(div().text_sm().child(SharedString::from(name)))
-                            .child(
-                                Button::new(SharedString::from(format!(
-                                    "remove-attachment-{}",
-                                    idx
-                                )))
-                                .with_size(Size::XSmall)
-                                .ghost()
-                                .icon(
-                                    Icon::empty()
-                                        .path("icons/close.svg")
-                                        .size(px(12.))
-                                        .text_color(cx.theme().accent_foreground),
-                                )
-                                .on_click(cx.listener(
-                                    move |this, _, _window, cx| {
-                                        this.pending_attachments.remove(idx);
-                                        cx.notify();
-                                    },
-                                )),
-                            )
-                    }),
-            )
-            .into_any_element()
-    }
-
-    fn render_input_area(
-        &mut self,
-        cx: &mut Context<Self>,
-        is_disabled: bool,
-        input_focused: bool,
-    ) -> impl IntoElement {
-        div()
-            .px_3()
-            .pb_3()
-            .when(self.chat_input.read(cx).is_at_popup_visible(), |this| {
-                this.child(self.render_at_mention_popup(cx))
-            })
-            .when(
-                self.chat_input.read(cx).is_command_popup_visible(),
-                |this| this.child(self.render_command_popup(cx)),
-            )
-            .child(
-                div()
-                    .bg(cx.theme().secondary)
-                    .rounded_xl()
-                    .border_1()
-                    .border_color(if input_focused {
-                        cx.theme().primary
-                    } else {
-                        cx.theme().border
-                    })
-                    .shadow_sm()
-                    .px_3()
-                    .pb_2()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .when(!self.pending_attachments.is_empty(), |this| {
-                        this.child(self.render_attachment_bar(cx))
-                    })
-                    .child(
-                        div()
-                            .flex()
-                            // These input-bound actions (up/down/enter/tab) never
-                            // reach an `on_key_down` listener on a parent div, because
-                            // GPUI stops propagation once an action listener handles
-                            // them in the bubble phase (inside `Input`). Intercepts
-                            // them in the CAPTURE phase, which runs before the Input's
-                            // bubble-phase handlers, so the popup can swallow the keys
-                            // when it's open and lets them pass through otherwise.
-                            .capture_action(cx.listener(|this, _action: &MoveUp, _window, cx| {
-                                if this.chat_input.read(cx).is_popup_visible() {
-                                    this.chat_input
-                                        .update(cx, |ci, cx| ci.navigate_popup(-1, cx));
-                                    cx.stop_propagation();
-                                }
-                            }))
-                            .capture_action(cx.listener(|this, _action: &MoveDown, _window, cx| {
-                                if this.chat_input.read(cx).is_popup_visible() {
-                                    this.chat_input
-                                        .update(cx, |ci, cx| ci.navigate_popup(1, cx));
-                                    cx.stop_propagation();
-                                }
-                            }))
-                            .capture_action(cx.listener(|this, _action: &Enter, window, cx| {
-                                if this.chat_input.read(cx).is_at_popup_visible() {
-                                    this.chat_input.update(cx, |ci, cx| {
-                                        ci.select_highlighted_mention(window, cx)
-                                    });
-                                    cx.stop_propagation();
-                                } else if this.chat_input.read(cx).is_command_popup_visible() {
-                                    this.chat_input.update(cx, |ci, cx| {
-                                        ci.select_highlighted_command(window, cx)
-                                    });
-                                    cx.stop_propagation();
-                                }
-                            }))
-                            .capture_action(cx.listener(
-                                |this, _action: &IndentInline, window, cx| {
-                                    if this.chat_input.read(cx).is_at_popup_visible() {
-                                        this.chat_input.update(cx, |ci, cx| {
-                                            ci.select_highlighted_mention(window, cx)
-                                        });
-                                        cx.stop_propagation();
-                                    } else if this.chat_input.read(cx).is_command_popup_visible() {
-                                        this.chat_input.update(cx, |ci, cx| {
-                                            ci.select_highlighted_command(window, cx)
-                                        });
-                                        cx.stop_propagation();
-                                    }
-                                },
-                            ))
-                            .capture_action(cx.listener(|this, _action: &Paste, window, cx| {
-                                this.handle_paste(_action, window, cx);
-                            }))
-                            .child(
-                                Input::new(&self.chat_input.read(cx).input_state)
-                                    .appearance(false)
-                                    .w_full(),
-                            ),
-                    )
-                    .child(self.render_toolbar(cx, is_disabled)),
-            )
-    }
-
-    fn render_toolbar(&self, cx: &mut Context<Self>, is_disabled: bool) -> impl IntoElement {
-        let is_streaming = matches!(self.state, ChatState::Streaming);
-        let is_busy = matches!(self.state, ChatState::Streaming | ChatState::Loading);
-        div()
-            .flex()
-            .flex_row()
-            .gap_1()
-            .items_center()
-            .child(
-                div().max_w_full().child(
-                    Select::new(&self.model_dropdown)
-                        .with_size(Size::Small)
-                        .appearance(false)
-                        .w(px(180.))
-                        .placeholder("LLM Model")
-                        .menu_width(Length::Auto)
-                        .menu_max_h(rems(10.)),
-                ),
-            )
-            .child(
-                div().max_w_full().child(
-                    Select::new(&self.thinking_dropdown)
-                        .with_size(Size::Small)
-                        .appearance(false)
-                        .w(px(140.))
-                        .placeholder("Thinking effort")
-                        .menu_width(Length::Auto)
-                        .menu_max_h(rems(10.)),
-                ),
-            )
-            .child(div().flex_1())
-            .child(
-                Button::new("attach-file-btn")
-                    .with_size(Size::Small)
-                    .ghost()
-                    .disabled(is_busy)
-                    .icon(
-                        Icon::empty()
-                            .path("icons/plus.svg")
-                            .size(px(14.))
-                            .text_color(cx.theme().muted_foreground),
-                    )
-                    .on_click(cx.listener(Self::pick_and_send_file))
-                    .into_any_element(),
-            )
-            .child({
-                let is_recording = self.voice_state == VoiceState::Recording;
-                let is_transcribing = self.voice_state == VoiceState::Transcribing;
-
-                if is_recording {
-                    Button::new("voice-btn")
-                        .with_size(Size::Small)
-                        .custom(
-                            ButtonCustomVariant::new(cx)
-                                .color(cx.theme().danger.into())
-                                .foreground(cx.theme().danger_foreground.into())
-                                .hover(cx.theme().danger_hover.into())
-                                .active(cx.theme().danger_active.into()),
-                        )
-                        .icon(
-                            Icon::empty()
-                                .path("icons/mic.svg")
-                                .size(px(14.))
-                                .text_color(cx.theme().danger_foreground),
-                        )
-                        .on_click(cx.listener(Self::toggle_voice_input))
-                        .into_any_element()
-                } else {
-                    Button::new("voice-btn")
-                        .with_size(Size::Small)
-                        .loading(is_transcribing)
-                        .ghost()
-                        .icon(
-                            Icon::empty()
-                                .path("icons/mic.svg")
-                                .size(px(14.))
-                                .text_color(cx.theme().muted_foreground),
-                        )
-                        .on_click(cx.listener(Self::toggle_voice_input))
-                        .into_any_element()
-                }
-            })
-            .child(if is_streaming {
-                Button::new("stop-btn")
-                    .with_size(Size::Small)
-                    .custom(
-                        ButtonCustomVariant::new(cx)
-                            .color(cx.theme().danger.into())
-                            .foreground(cx.theme().danger_foreground.into())
-                            .hover(cx.theme().danger_hover.into())
-                            .active(cx.theme().danger_active.into()),
-                    )
-                    .icon(
-                        Icon::empty()
-                            .path("icons/stop.svg")
-                            .size(px(14.))
-                            .text_color(cx.theme().danger_foreground),
-                    )
-                    .on_click(cx.listener(|this, _, _window, cx| {
-                        this.stop_streaming(&StopStreaming, _window, cx);
-                    }))
-                    .into_any_element()
-            } else {
-                Button::new("send-btn")
-                    .with_size(Size::Small)
-                    .primary()
-                    .icon(
-                        Icon::empty()
-                            .path("icons/send.svg")
-                            .size(px(14.))
-                            .text_color(cx.theme().primary_foreground),
-                    )
-                    .disabled(is_disabled)
-                    .on_click(cx.listener(|this, _, _window, cx| {
-                        this.send_message(&SendMessage, _window, cx);
-                    }))
-                    .into_any_element()
-            })
-    }
 
     fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let stats = self.session_stats.as_ref();
@@ -2915,10 +1721,13 @@ impl Render for ChatWindow {
         let is_error = matches!(self.state, ChatState::Error(_));
         let is_loading = matches!(self.state, ChatState::Loading);
         let is_streaming = matches!(self.state, ChatState::Streaming);
-        let input_empty = self.chat_input.read(cx).content(cx).is_empty();
-        let is_disabled =
-            is_streaming || is_loading || (input_empty && self.pending_attachments.is_empty());
-        let input_focused = self.chat_input.read(cx).focus_handle.is_focused(window);
+
+        // Sync chat state into the chat input so the composer toolbar can
+        // render the correct send/stop button and disable attachments while
+        // busy.
+        self.chat_input.update(cx, |ci, cx| {
+            ci.set_chat_state(self.state.clone(), cx);
+        });
 
         // Clone the pre-synced display handles (cheap — Entity is Copy).
         // sync_display_entities is called from sync_from_session whenever
@@ -2934,6 +1743,7 @@ impl Render for ChatWindow {
                 window.remove_window();
             })
             .on_action(cx.listener(Self::send_message))
+            .on_action(cx.listener(Self::stop_streaming))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
                 if event.keystroke.key == "escape" {
                     if this.chat_input.read(cx).is_popup_visible() {
@@ -2967,7 +1777,7 @@ impl Render for ChatWindow {
             .when(self.session.is_none(), |el| {
                 el.child(self.render_workspace_selector(cx))
             })
-            .child(self.render_input_area(cx, is_disabled, input_focused))
+            .child(self.chat_input.clone())
             .when(self.session.is_some(), |el| {
                 el.child(self.render_status_bar(cx))
             })
