@@ -107,26 +107,22 @@ impl ChatApp {
         let title = self.title.clone();
         let title_input = self.title_input.clone();
 
-        div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(
-                Popover::new("rename-thread-popover")
-                    .open(self.title_popover_open)
-                    .on_open_change(cx.listener(Self::on_title_popover_toggle))
-                    .trigger(
-                        Button::new("thread-title-trigger")
-                            .ghost()
-                            .label(title)
-                            .text_size(px(13.0))
-                            .font_weight(gpui::FontWeight::SEMIBOLD),
-                    )
-                    .p_3()
-                    .gap_2()
-                    .child(Input::new(&title_input).w(px(200.)))
-                    .child(self.render_rename_buttons(cx)),
-            )
+        div().flex().items_center().gap_2().child(
+            Popover::new("rename-thread-popover")
+                .open(self.title_popover_open)
+                .on_open_change(cx.listener(Self::on_title_popover_toggle))
+                .trigger(
+                    Button::new("thread-title-trigger")
+                        .ghost()
+                        .label(title)
+                        .text_size(px(13.0))
+                        .font_weight(gpui::FontWeight::SEMIBOLD),
+                )
+                .p_3()
+                .gap_2()
+                .child(Input::new(&title_input).w(px(200.)))
+                .child(self.render_rename_buttons(cx)),
+        )
     }
 
     fn on_title_popover_toggle(

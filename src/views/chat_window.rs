@@ -28,8 +28,8 @@ use gpui_component::notification::Notification;
 use gpui_component::tag::Tag;
 use gpui_component::text::{TextView, TextViewState};
 use gpui_component::{
-    ActiveTheme as _, Icon, Sizable as _, Size, WindowExt as _,
-    h_flex, hover_card::HoverCard, scroll::Scrollbar, status_bar::StatusBar,
+    ActiveTheme as _, Icon, Sizable as _, Size, WindowExt as _, h_flex, hover_card::HoverCard,
+    scroll::Scrollbar, status_bar::StatusBar,
 };
 
 type ReasoningEntities = Vec<Vec<Option<Entity<Reasoning>>>>;
@@ -527,8 +527,16 @@ impl ChatWindow {
                 path: PathBuf::from(&ws.path),
                 name: ws.name.clone(),
             });
-        let model = self.chat_input.read(cx).selected_model().map(|s| s.to_string());
-        let thinking_level = self.chat_input.read(cx).thinking_level().map(|s| s.to_string());
+        let model = self
+            .chat_input
+            .read(cx)
+            .selected_model()
+            .map(|s| s.to_string());
+        let thinking_level = self
+            .chat_input
+            .read(cx)
+            .thinking_level()
+            .map(|s| s.to_string());
         let session = Self::get_or_create_session(None, workspace_info, model, thinking_level, cx);
         self.attach_session(session, cx);
         self.session.is_some()
@@ -596,7 +604,9 @@ impl ChatWindow {
 
         self.chat_input.update(cx, |ci, cx| ci.reset(_window, cx));
         self.scroll_locked = true;
-        let attachments = self.chat_input.update(cx, |ci, _cx| ci.take_pending_attachments());
+        let attachments = self
+            .chat_input
+            .update(cx, |ci, _cx| ci.take_pending_attachments());
 
         let mut media: Vec<ImageContent> = Vec::new();
         let mut file_parts: Vec<String> = Vec::new();
@@ -1621,7 +1631,6 @@ impl ChatWindow {
             })
             .into_any_element()
     }
-
 
     fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let stats = self.session_stats.as_ref();

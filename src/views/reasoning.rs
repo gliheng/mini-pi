@@ -38,11 +38,7 @@ impl Reasoning {
         self
     }
 
-    pub fn set_content(
-        &mut self,
-        content: impl Into<SharedString>,
-        state: Option<PartState>,
-    ) {
+    pub fn set_content(&mut self, content: impl Into<SharedString>, state: Option<PartState>) {
         self.content = content.into();
         self.state = state;
     }

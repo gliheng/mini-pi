@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
 use gpui::{
-    div, px, App, ElementId, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    RenderOnce, SharedString, Styled, Window,
+    App, ElementId, InteractiveElement, IntoElement, MouseButton, ParentElement, RenderOnce,
+    SharedString, Styled, Window, div, px,
 };
 
 use gpui_component::{
+    ActiveTheme, Icon, Sizable as _, Size,
     button::{Button, ButtonCustomVariant, ButtonVariants as _},
     h_flex,
     tag::Tag,
-    ActiveTheme, Icon, Sizable as _, Size,
 };
 
 use crate::data::store::WorkspaceMeta;

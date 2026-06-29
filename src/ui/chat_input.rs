@@ -8,12 +8,14 @@ use gpui::{
 };
 
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants};
-use gpui_component::input::{Enter, IndentInline, Input, InputEvent, InputState, MoveDown,
-    MoveUp, Paste, RopeExt as _};
+use gpui_component::input::{
+    Enter, IndentInline, Input, InputEvent, InputState, MoveDown, MoveUp, Paste, RopeExt as _,
+};
 use gpui_component::notification::Notification;
 use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
-use gpui_component::{ActiveTheme as _, Disableable as _, Icon, IndexPath, Sizable as _, Size,
-    WindowExt as _};
+use gpui_component::{
+    ActiveTheme as _, Disableable as _, Icon, IndexPath, Sizable as _, Size, WindowExt as _,
+};
 
 use crate::config::model_config::{ModelInfo, all_models};
 use crate::core::app::AppStore;
@@ -1498,16 +1500,13 @@ impl ChatInput {
             })
     }
 
-    fn render_composer(
-        &mut self,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_composer(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let input_focused = self.focus_handle.is_focused(window);
         let input_empty = self.content(cx).is_empty();
         let is_streaming = matches!(self.chat_state, ChatState::Streaming);
         let is_loading = matches!(self.chat_state, ChatState::Loading);
-        let is_disabled = is_streaming || is_loading || (input_empty && self.pending_attachments.is_empty());
+        let is_disabled =
+            is_streaming || is_loading || (input_empty && self.pending_attachments.is_empty());
 
         div()
             .px_3()
@@ -1575,11 +1574,7 @@ impl ChatInput {
                             .capture_action(cx.listener(|this, _action: &Paste, window, cx| {
                                 this.handle_paste(_action, window, cx);
                             }))
-                            .child(
-                                Input::new(&self.input_state)
-                                    .appearance(false)
-                                    .w_full(),
-                            ),
+                            .child(Input::new(&self.input_state).appearance(false).w_full()),
                     )
                     .child(self.render_toolbar(cx, is_disabled)),
             )
@@ -1597,12 +1592,9 @@ impl Render for ChatInput {
         if self.composer_enabled {
             self.render_composer(window, cx).into_any_element()
         } else {
-            div().child(
-                Input::new(&self.input_state)
-                    .appearance(false)
-                    .w_full(),
-            )
-            .into_any_element()
+            div()
+                .child(Input::new(&self.input_state).appearance(false).w_full())
+                .into_any_element()
         }
     }
 }
@@ -1630,14 +1622,99 @@ fn is_text_mime(mime: &mime_guess::Mime) -> bool {
 }
 
 const TEXT_FILE_EXTENSIONS: &[&str] = &[
-    "txt", "md", "markdown", "json", "yaml", "yml", "toml", "csv", "tsv", "log", "rs", "py", "js",
-    "ts", "jsx", "tsx", "mjs", "cjs", "html", "htm", "css", "scss", "sass", "less", "sql", "sh",
-    "bash", "zsh", "fish", "c", "cpp", "cc", "cxx", "h", "hpp", "hh", "go", "java", "kt", "kts",
-    "swift", "rb", "php", "cs", "fs", "fsx", "ml", "clj", "cljs", "scala", "r", "lua", "pl", "pm",
-    "vim", "ex", "exs", "erl", "hrl", "elm", "hs", "lhs", "cl", "lisp", "scm", "rkt", "dart",
-    "groovy", "jl", "m", "wl", "xml", "xsl", "xsd", "graphql", "gql", "prisma", "proto", "env",
-    "ini", "conf", "cfg", "properties", "gitignore", "dockerfile", "tf", "hcl", "nomad", "pkl",
-    "nix", "vue", "svelte", "astro",
+    "txt",
+    "md",
+    "markdown",
+    "json",
+    "yaml",
+    "yml",
+    "toml",
+    "csv",
+    "tsv",
+    "log",
+    "rs",
+    "py",
+    "js",
+    "ts",
+    "jsx",
+    "tsx",
+    "mjs",
+    "cjs",
+    "html",
+    "htm",
+    "css",
+    "scss",
+    "sass",
+    "less",
+    "sql",
+    "sh",
+    "bash",
+    "zsh",
+    "fish",
+    "c",
+    "cpp",
+    "cc",
+    "cxx",
+    "h",
+    "hpp",
+    "hh",
+    "go",
+    "java",
+    "kt",
+    "kts",
+    "swift",
+    "rb",
+    "php",
+    "cs",
+    "fs",
+    "fsx",
+    "ml",
+    "clj",
+    "cljs",
+    "scala",
+    "r",
+    "lua",
+    "pl",
+    "pm",
+    "vim",
+    "ex",
+    "exs",
+    "erl",
+    "hrl",
+    "elm",
+    "hs",
+    "lhs",
+    "cl",
+    "lisp",
+    "scm",
+    "rkt",
+    "dart",
+    "groovy",
+    "jl",
+    "m",
+    "wl",
+    "xml",
+    "xsl",
+    "xsd",
+    "graphql",
+    "gql",
+    "prisma",
+    "proto",
+    "env",
+    "ini",
+    "conf",
+    "cfg",
+    "properties",
+    "gitignore",
+    "dockerfile",
+    "tf",
+    "hcl",
+    "nomad",
+    "pkl",
+    "nix",
+    "vue",
+    "svelte",
+    "astro",
 ];
 
 fn has_text_extension(path: &std::path::Path) -> bool {

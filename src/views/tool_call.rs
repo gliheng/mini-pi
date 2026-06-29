@@ -8,9 +8,7 @@ use gpui::{
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::tag::Tag;
 use gpui_component::text::{TextView, TextViewState};
-use gpui_component::{
-    ActiveTheme as _, Icon, Sizable as _, Size, h_flex, hover_card::HoverCard,
-};
+use gpui_component::{ActiveTheme as _, Icon, Sizable as _, Size, h_flex, hover_card::HoverCard};
 
 use crate::data::models::PartState;
 use crate::ui::loader::spinner_with;
@@ -160,11 +158,7 @@ impl ToolCall {
     }
 
     /// A standalone `ToolCall` part with no paired result.
-    pub fn call_only(
-        name: SharedString,
-        args: SharedString,
-        state: Option<PartState>,
-    ) -> Self {
+    pub fn call_only(name: SharedString, args: SharedString, state: Option<PartState>) -> Self {
         Self {
             kind: ToolCallKind::CallOnly,
             name,
@@ -300,31 +294,25 @@ impl ToolCall {
                                         .child(input_text.clone())
                                         .into_any_element();
 
-                                    let output_element: AnyElement = if let Some(ref md) =
-                                        output_markdown
-                                    {
-                                        div()
-                                            .flex()
-                                            .w(hover_width)
-                                            .min_w_0()
-                                            .child(
-                                                div()
-                                                    .flex_1()
-                                                    .min_w_0()
-                                                    .child(
-                                                        TextView::new(md).selectable(true).w_full(),
-                                                    ),
-                                            )
-                                            .into_any_element()
-                                    } else if let Some(ref text) = output_text {
-                                        div()
-                                            .w(hover_width)
-                                            .min_w_0()
-                                            .child(text.to_string())
-                                            .into_any_element()
-                                    } else {
-                                        div().into_any_element()
-                                    };
+                                    let output_element: AnyElement =
+                                        if let Some(ref md) = output_markdown {
+                                            div()
+                                                .flex()
+                                                .w(hover_width)
+                                                .min_w_0()
+                                                .child(div().flex_1().min_w_0().child(
+                                                    TextView::new(md).selectable(true).w_full(),
+                                                ))
+                                                .into_any_element()
+                                        } else if let Some(ref text) = output_text {
+                                            div()
+                                                .w(hover_width)
+                                                .min_w_0()
+                                                .child(text.to_string())
+                                                .into_any_element()
+                                        } else {
+                                            div().into_any_element()
+                                        };
 
                                     div()
                                         .id(format!("tool-detail-content-{}", msg_idx))
@@ -351,7 +339,9 @@ impl ToolCall {
                                                         .gap_1()
                                                         .child(
                                                             div()
-                                                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                                .font_weight(
+                                                                    gpui::FontWeight::SEMIBOLD,
+                                                                )
                                                                 .child("Input"),
                                                         )
                                                         .child(
@@ -369,7 +359,9 @@ impl ToolCall {
                                                         .gap_1()
                                                         .child(
                                                             div()
-                                                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                                .font_weight(
+                                                                    gpui::FontWeight::SEMIBOLD,
+                                                                )
                                                                 .child("Output"),
                                                         )
                                                         .child(
@@ -451,14 +443,10 @@ impl ToolCall {
                                             .child(title),
                                     )
                                     .when(is_streaming, |this| {
-                                        this.child(
-                                            div()
-                                                .mt(px(1.))
-                                                .child(spinner_with(
-                                                    12.0,
-                                                    u32::from(cx.theme().muted_foreground.to_rgb()) >> 8,
-                                                )),
-                                        )
+                                        this.child(div().mt(px(1.)).child(spinner_with(
+                                            12.0,
+                                            u32::from(cx.theme().muted_foreground.to_rgb()) >> 8,
+                                        )))
                                     }),
                             ),
                     ),
@@ -494,22 +482,9 @@ impl ToolCall {
                     .text_color(cx.theme().secondary_foreground)
                     .text_xs()
                     .w_full()
-                    .child(
-                        div()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(header),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .h_px()
-                            .bg(cx.theme().border),
-                    )
-                    .child(
-                        div()
-                            .opacity(0.75)
-                            .child(output.to_string()),
-                    ),
+                    .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(header))
+                    .child(div().w_full().h_px().bg(cx.theme().border))
+                    .child(div().opacity(0.75).child(output.to_string())),
             )
             .into_any_element()
     }

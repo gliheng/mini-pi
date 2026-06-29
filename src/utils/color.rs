@@ -45,5 +45,3 @@ pub fn workspace_foreground(background: gpui::Hsla) -> gpui::Hsla {
         gpui::white()
     }
 }
-
-

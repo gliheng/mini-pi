@@ -340,12 +340,11 @@ pub fn list_files(
 
     let resp = ensure_success(resp)?;
     let body = resp.text().map_err(SupabaseAuthError::Http)?;
-    let files: Vec<StorageFile> = serde_json::from_str(&body).map_err(|e| {
-        SupabaseAuthError::Api {
+    let files: Vec<StorageFile> =
+        serde_json::from_str(&body).map_err(|e| SupabaseAuthError::Api {
             msg: format!("failed to parse file list: {} (body: {})", e, body),
             status: 200,
-        }
-    })?;
+        })?;
     Ok(files)
 }
 

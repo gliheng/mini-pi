@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use gpui::{
-    div, prelude::*, px, size, svg, Anchor, AnyWindowHandle, App, Bounds, ClickEvent, Context,
-    ElementId, FocusHandle, Focusable, IntoElement, MouseButton, ParentElement, Render, RenderOnce,
-    SharedString, Styled, Window,
+    Anchor, AnyWindowHandle, App, Bounds, ClickEvent, Context, ElementId, FocusHandle, Focusable,
+    IntoElement, MouseButton, ParentElement, Render, RenderOnce, SharedString, Styled, Window, div,
+    prelude::*, px, size, svg,
 };
 
 use crate::auth::state;
 use crate::core::actions::CloseWindow;
-use crate::core::app::{custom_window_options, AppStore};
+use crate::core::app::{AppStore, custom_window_options};
 use crate::data::store::{PaginatedThreads, Store, ThreadMeta, WorkspaceMeta};
 use crate::utils::format::format_relative_time;
 use crate::views::chat_app::open_chat_window;
@@ -17,11 +17,10 @@ use crate::views::pi_agent_import::{PiAgentImport, PiAgentImportEvent};
 use crate::views::workspace_filter::{WorkspaceFilterPopover, WorkspaceFilterTag};
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _, Toggle};
 use gpui_component::{
-    h_flex,
+    ActiveTheme, Icon, IconName, IndexPath, Selectable, Sizable as _, Size, h_flex,
     input::{Input, InputEvent, InputState},
     list::{List, ListDelegate, ListEvent, ListState},
     popover::Popover,
-    ActiveTheme, Icon, IconName, IndexPath, Selectable, Sizable as _, Size,
 };
 
 #[derive(IntoElement)]
@@ -424,7 +423,10 @@ impl ThreadListDelegate {
         } else {
             self.page = 1;
             self.eof = true;
-            match self.store.search_threads(query, self.workspace_filter.as_deref()) {
+            match self
+                .store
+                .search_threads(query, self.workspace_filter.as_deref())
+            {
                 Ok(threads) => {
                     self.total = threads.len();
                     self.per_page = threads.len().max(1);
@@ -601,9 +603,8 @@ impl ThreadList {
         let delegate = ThreadListDelegate::new(store.clone());
         let list_state = cx.new(|cx| ListState::new(delegate, window, cx).searchable(false));
 
-        let search_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Search threads...")
-        });
+        let search_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search threads..."));
         let search_input_subscription = cx.subscribe_in(
             &search_input,
             window,
@@ -702,7 +703,12 @@ impl ThreadList {
         });
     }
 
-    fn set_workspace_filter(&mut self, workspace: Option<&WorkspaceMeta>, _window: &mut Window, cx: &mut Context<Self>) {
+    fn set_workspace_filter(
+        &mut self,
+        workspace: Option<&WorkspaceMeta>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let workspace_id = workspace.map(|ws| ws.id.clone());
         self.list_state.update(cx, |state, _cx| {
             state.delegate_mut().workspace_filter = workspace_id;
@@ -761,12 +767,7 @@ impl Render for ThreadList {
         let theme = cx.theme().clone();
         let window_width = window.bounds().size.width;
         let filter_panel_width = (window_width - px(24.)).max(px(100.));
-        let active_workspace_id = self
-            .list_state
-            .read(cx)
-            .delegate()
-            .workspace_filter
-            .clone();
+        let active_workspace_id = self.list_state.read(cx).delegate().workspace_filter.clone();
         let active_workspace = active_workspace_id
             .as_ref()
             .and_then(|id| self.workspaces.iter().find(|ws| ws.id == *id));
@@ -802,100 +803,79 @@ impl Render for ThreadList {
                     .border_b_1()
                     .border_color(theme.border)
                     .child(
-                        div()
-                            .flex_1()
-                            .child(
-                                Popover::new("workspace-filter-popover")
-                                    .anchor(Anchor::TopCenter)
-                                    .mouse_button(MouseButton::Right)
-                                    .open(self.search_focused)
-                                    .on_open_change(cx.listener(|this, open, _, cx| {
-                                        this.search_focused = *open;
-                                        cx.notify();
-                                    }))
-                                    .p_1()
-                                    .overlay_closable(false)
-                                    .max_h(px(200.))
-                                    .trigger(
-                                        Input::new(&self.search_input)
-                                            .w_full()
-                                            .appearance(false)
-                                            .prefix(
-                                                Icon::new(IconName::Search)
-                                                    .text_color(theme.muted_foreground),
+                        div().flex_1().child(
+                            Popover::new("workspace-filter-popover")
+                                .anchor(Anchor::TopCenter)
+                                .mouse_button(MouseButton::Right)
+                                .open(self.search_focused)
+                                .on_open_change(cx.listener(|this, open, _, cx| {
+                                    this.search_focused = *open;
+                                    cx.notify();
+                                }))
+                                .p_1()
+                                .overlay_closable(false)
+                                .max_h(px(200.))
+                                .trigger(
+                                    Input::new(&self.search_input)
+                                        .w_full()
+                                        .appearance(false)
+                                        .prefix(
+                                            Icon::new(IconName::Search)
+                                                .text_color(theme.muted_foreground),
+                                        )
+                                        .when(active_workspace_id.is_none(), |this| {
+                                            this.suffix(
+                                                div()
+                                                    .text_color(theme.muted_foreground)
+                                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                                        cx.stop_propagation();
+                                                    })
+                                                    .child(
+                                                        Toggle::new("workspace-filter-trigger")
+                                                            .icon(
+                                                                Icon::empty()
+                                                                    .path("icons/filter.svg")
+                                                                    .size(px(14.)),
+                                                            )
+                                                            .cursor_default()
+                                                            .with_size(Size::XSmall)
+                                                            .checked(self.search_focused)
+                                                            .on_click(cx.listener(
+                                                                |this, checked: &bool, _, cx| {
+                                                                    this.search_focused = *checked;
+                                                                    cx.stop_propagation();
+                                                                    cx.notify();
+                                                                },
+                                                            )),
+                                                    ),
                                             )
-                                            .when(active_workspace_id.is_none(), |this| {
-                                                this.suffix(
-                                                    div()
-                                                        .text_color(theme.muted_foreground)
-                                                        .on_mouse_down(
-                                                            MouseButton::Left,
-                                                            |_, _, cx| {
-                                                                cx.stop_propagation();
-                                                            },
-                                                        )
-                                                        .child(
-                                                            Toggle::new("workspace-filter-trigger")
-                                                                .icon(
-                                                                    Icon::empty()
-                                                                        .path("icons/filter.svg")
-                                                                        .size(px(14.)),
-                                                                )
-                                                                .cursor_default()
-                                                                .with_size(Size::XSmall)
-                                                                .checked(self.search_focused)
-                                                                .on_click(cx.listener(
-                                                                    |this,
-                                                                     checked: &bool,
-                                                                     _,
-                                                                     cx| {
-                                                                        this.search_focused = *checked;
-                                                                        cx.stop_propagation();
-                                                                        cx.notify();
-                                                                    },
-                                                                )),
-                                                        ),
-                                                )
-                                            })
-                                            .cleanable(true),
-                                    )
-                                    .child(
-                                        div()
-                                            .w(filter_panel_width)
-                                            .child(WorkspaceFilterPopover::new(
-                                                self.workspaces.clone(),
-                                                {
-                                                    let listener = cx.listener(
-                                                        |this,
-                                                         workspace: &Option<WorkspaceMeta>,
-                                                         window,
-                                                         cx| {
-                                                            this.set_workspace_filter(
-                                                                workspace.as_ref(),
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        },
-                                                    );
-                                                    move |workspace: Option<WorkspaceMeta>,
-                                                          window,
-                                                          cx| {
-                                                        listener(&workspace, window, cx);
-                                                    }
-                                                },
-                                            )),
-                                    )
-                            ),
+                                        })
+                                        .cleanable(true),
+                                )
+                                .child(div().w(filter_panel_width).child(
+                                    WorkspaceFilterPopover::new(self.workspaces.clone(), {
+                                        let listener = cx.listener(
+                                            |this,
+                                             workspace: &Option<WorkspaceMeta>,
+                                             window,
+                                             cx| {
+                                                this.set_workspace_filter(
+                                                    workspace.as_ref(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            },
+                                        );
+                                        move |workspace: Option<WorkspaceMeta>, window, cx| {
+                                            listener(&workspace, window, cx);
+                                        }
+                                    }),
+                                )),
+                        ),
                     )
-                    .when_some(workspace_filter_tag, |this, tag| {
-                        this.child(tag)
-                    }),
+                    .when_some(workspace_filter_tag, |this, tag| this.child(tag)),
             )
-            .child(
-                List::new(&self.list_state)
-                    .flex_1()
-                    .w_full(),
-            )
+            .child(List::new(&self.list_state).flex_1().w_full())
             .child(
                 div()
                     .px_3()
