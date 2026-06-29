@@ -4101,6 +4101,7 @@ dependencies = [
  "hound",
  "image",
  "linkify",
+ "mime_guess",
  "nanoid",
  "objc",
  "parking_lot",

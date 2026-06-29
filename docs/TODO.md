@@ -5,12 +5,12 @@
 - [x] Message editing
 - [x] Packaging
 - [x] Support setting model both on gpui and web
-- [ ] Copy & paste images
+- [x] Copy & paste images
+- [x] Properly display model & thinking select
+- [ ] Message display optimization, virtualize it
 - [ ] Pi settings GUI (api keys, extensions, prompts)
 - [ ] Support extension UI protocol
 - [ ] Steering, follow up and message queue
-- [ ] Properly display thinking select
-- [ ] Message display optimization
 - [ ] Display session stats in the status bar
 - [ ] Support bearer token settings for tunnel
 - [ ] Auto update and release channel

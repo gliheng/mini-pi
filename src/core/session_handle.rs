@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures::StreamExt;
-use gpui::{Context, EventEmitter, SharedString, Task};
 use gpui::prelude::*;
+use gpui::{Context, EventEmitter, SharedString, Task};
 use uuid::Uuid;
 
 use crate::config::model_config::parse_model_id;
@@ -208,6 +208,7 @@ impl SessionHandle {
                 text: content.clone(),
                 state: Some(PartState::Done),
             }],
+            media: Vec::new(),
         });
 
         if self.thread_id.is_none() {
@@ -319,18 +320,18 @@ impl SessionHandle {
         cx.emit(SessionEvent::Changed);
     }
 
-    pub fn send_message_with_images(
+    pub fn send_message_with_media(
         &mut self,
         content: SharedString,
-        images: Vec<ImageContent>,
+        media: Vec<ImageContent>,
         cx: &mut Context<Self>,
     ) {
         eprintln!(
-            "[mini-pi] send_message_with_images: {} chars, {} images",
+            "[mini-pi] send_message_with_media: {} chars, {} media items",
             content.len(),
-            images.len()
+            media.len()
         );
-        if images.is_empty() {
+        if media.is_empty() {
             self.send_message(content, cx);
             return;
         }
@@ -347,6 +348,7 @@ impl SessionHandle {
                 text: content.clone(),
                 state: Some(PartState::Done),
             }],
+            media: media.clone(),
         });
 
         if self.thread_id.is_none() {
@@ -449,7 +451,7 @@ impl SessionHandle {
         self.state = ChatState::Streaming;
 
         if let Some(ref mut rpc) = self.rpc {
-            let _ = rpc.send_prompt_ext(&content, Some(&images), None, None);
+            let _ = rpc.send_prompt_ext(&content, Some(&media), None, None);
         }
 
         cx.emit(SessionEvent::Changed);
@@ -754,7 +756,10 @@ impl SessionHandle {
                         .and_then(|e| e.as_str())
                         .filter(|s| !s.is_empty())
                         .map(|s| s.to_string());
-                    let stop_reason = message.as_ref().and_then(|m| m.get("stopReason")).and_then(|s| s.as_str());
+                    let stop_reason = message
+                        .as_ref()
+                        .and_then(|m| m.get("stopReason"))
+                        .and_then(|s| s.as_str());
                     let is_error = is_assistant_error(error_message.as_deref(), stop_reason);
 
                     let id = Uuid::new_v4().to_string();
@@ -777,6 +782,7 @@ impl SessionHandle {
                         entry_id,
                         role: Role::Assistant,
                         parts,
+                        media: Vec::new(),
                     });
                 }
             }
@@ -1271,24 +1277,32 @@ impl SessionHandle {
             match msg.role.as_str() {
                 "user" => {
                     let mut parts = vec![];
+                    let mut media = vec![];
                     for part in msg.parts {
-                        if let LoadedPart::Text { text } = part {
-                            parts.push(MessagePart::Text {
-                                text: if text.is_empty() {
-                                    SharedString::from("(empty)")
-                                } else {
-                                    text.into()
-                                },
-                                state: Some(PartState::Done),
-                            });
+                        match part {
+                            LoadedPart::Text { text } => {
+                                parts.push(MessagePart::Text {
+                                    text: if text.is_empty() {
+                                        SharedString::from("(empty)")
+                                    } else {
+                                        text.into()
+                                    },
+                                    state: Some(PartState::Done),
+                                });
+                            }
+                            LoadedPart::Image { data, mime_type } => {
+                                media.push(ImageContent { data, mime_type });
+                            }
+                            _ => {}
                         }
                     }
-                    if !parts.is_empty() {
+                    if !parts.is_empty() || !media.is_empty() {
                         self.messages.push(Message {
                             id: Uuid::new_v4().to_string(),
                             entry_id: msg.id,
                             role: Role::User,
                             parts,
+                            media,
                         });
                     }
                 }
@@ -1326,6 +1340,7 @@ impl SessionHandle {
                                     details: None,
                                 });
                             }
+                            LoadedPart::Image { .. } => {}
                         }
                     }
                     // Preserve any errorMessage that isn't already represented by a
@@ -1345,7 +1360,9 @@ impl SessionHandle {
                         }
                     } else if msg.is_error {
                         let fallback: SharedString = "Error: assistant response failed.".into();
-                        if !parts.iter().any(|p| matches!(p, MessagePart::Text { text, .. } if text == &fallback)) {
+                        if !parts.iter().any(
+                            |p| matches!(p, MessagePart::Text { text, .. } if text == &fallback),
+                        ) {
                             parts.push(MessagePart::Text {
                                 text: fallback,
                                 state: Some(PartState::Done),
@@ -1366,6 +1383,7 @@ impl SessionHandle {
                             entry_id: msg.id,
                             role: Role::Assistant,
                             parts,
+                            media: Vec::new(),
                         });
                     }
                 }
@@ -1477,65 +1495,65 @@ impl SessionHandle {
             // streaming/MessageStart rather than letting a later non-empty snapshot
             // overwrite the error text. For normal turns, merge final parts.
             if !final_assistant.is_error {
-            for final_part in final_parts {
-                match final_part {
-                    MessagePart::Text { text, .. } => {
-                        // Don't overwrite already-populated text (e.g. an error
-                        // surfaced during MessageStart) with an empty final snapshot.
-                        if text.is_empty() {
-                            continue;
+                for final_part in final_parts {
+                    match final_part {
+                        MessagePart::Text { text, .. } => {
+                            // Don't overwrite already-populated text (e.g. an error
+                            // surfaced during MessageStart) with an empty final snapshot.
+                            if text.is_empty() {
+                                continue;
+                            }
+                            if let Some(MessagePart::Text {
+                                text: existing_text,
+                                state,
+                                ..
+                            }) = target
+                                .parts
+                                .iter_mut()
+                                .find(|p| matches!(p, MessagePart::Text { .. }))
+                            {
+                                *existing_text = text;
+                                *state = Some(PartState::Done);
+                            } else {
+                                target.parts.push(MessagePart::Text {
+                                    text,
+                                    state: Some(PartState::Done),
+                                });
+                            }
                         }
-                        if let Some(MessagePart::Text {
-                            text: existing_text,
-                            state,
+                        MessagePart::Reasoning {
+                            text,
+                            provider_metadata,
                             ..
-                        }) = target
-                            .parts
-                            .iter_mut()
-                            .find(|p| matches!(p, MessagePart::Text { .. }))
-                        {
-                            *existing_text = text;
-                            *state = Some(PartState::Done);
-                        } else {
-                            target.parts.push(MessagePart::Text {
-                                text,
-                                state: Some(PartState::Done),
-                            });
+                        } => {
+                            if text.is_empty() {
+                                continue;
+                            }
+                            if let Some(MessagePart::Reasoning {
+                                text: existing_text,
+                                state,
+                                ..
+                            }) = target
+                                .parts
+                                .iter_mut()
+                                .find(|p| matches!(p, MessagePart::Reasoning { .. }))
+                            {
+                                *existing_text = text;
+                                *state = Some(PartState::Done);
+                            } else {
+                                target.parts.push(MessagePart::Reasoning {
+                                    text,
+                                    state: Some(PartState::Done),
+                                    provider_metadata,
+                                });
+                            }
                         }
-                    }
-                    MessagePart::Reasoning {
-                        text,
-                        provider_metadata,
-                        ..
-                    } => {
-                        if text.is_empty() {
-                            continue;
+                        MessagePart::ToolCall { .. } | MessagePart::ToolResult { .. } => {
+                            // Already streamed or created inline; keep them.
                         }
-                        if let Some(MessagePart::Reasoning {
-                            text: existing_text,
-                            state,
-                            ..
-                        }) = target
-                            .parts
-                            .iter_mut()
-                            .find(|p| matches!(p, MessagePart::Reasoning { .. }))
-                        {
-                            *existing_text = text;
-                            *state = Some(PartState::Done);
-                        } else {
-                            target.parts.push(MessagePart::Reasoning {
-                                text,
-                                state: Some(PartState::Done),
-                                provider_metadata,
-                            });
-                        }
-                    }
-                    MessagePart::ToolCall { .. } | MessagePart::ToolResult { .. } => {
-                        // Already streamed or created inline; keep them.
                     }
                 }
             }
-        }
         }
 
         final_assistant.is_error
@@ -1563,14 +1581,8 @@ fn parse_session_stats(val: &serde_json::Value) -> SessionStats {
             .get("assistantMessages")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as usize,
-        tool_calls: val
-            .get("toolCalls")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize,
-        tool_results: val
-            .get("toolResults")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize,
+        tool_calls: val.get("toolCalls").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+        tool_results: val.get("toolResults").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
         total_messages: val
             .get("totalMessages")
             .and_then(|v| v.as_u64())
@@ -1595,32 +1607,21 @@ fn parse_session_stats(val: &serde_json::Value) -> SessionStats {
             .and_then(|t| t.get("total"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as usize,
-        cost: val
-            .get("cost")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0),
-        context_tokens: context_usage
-            .and_then(|c| c.get("tokens"))
-            .and_then(|v| {
-                if v.is_null() {
-                    None
-                } else {
-                    v.as_u64().map(|n| n as usize)
-                }
-            }),
+        cost: val.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0),
+        context_tokens: context_usage.and_then(|c| c.get("tokens")).and_then(|v| {
+            if v.is_null() {
+                None
+            } else {
+                v.as_u64().map(|n| n as usize)
+            }
+        }),
         context_window: context_usage
             .and_then(|c| c.get("contextWindow"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as usize,
         context_percent: context_usage
             .and_then(|c| c.get("percent"))
-            .and_then(|v| {
-                if v.is_null() {
-                    None
-                } else {
-                    v.as_f64()
-                }
-            }),
+            .and_then(|v| if v.is_null() { None } else { v.as_f64() }),
     }
 }
 
@@ -1632,6 +1633,7 @@ fn loaded_parts_to_message_parts(parts: Vec<LoadedPart>) -> Vec<MessagePart> {
                 text: text.into(),
                 state: Some(PartState::Done),
             }),
+            LoadedPart::Image { .. } => None,
             LoadedPart::Thinking { text } => Some(MessagePart::Reasoning {
                 text: text.into(),
                 state: Some(PartState::Done),
@@ -1683,7 +1685,10 @@ mod tests {
             }
         });
         let stats = parse_session_stats(&val);
-        assert_eq!(stats.session_file, Some("/home/user/.mini-pi/sessions/session_123.jsonl".to_string()));
+        assert_eq!(
+            stats.session_file,
+            Some("/home/user/.mini-pi/sessions/session_123.jsonl".to_string())
+        );
         assert_eq!(stats.session_id, "session_123");
         assert_eq!(stats.user_messages, 3);
         assert_eq!(stats.assistant_messages, 4);
@@ -1771,6 +1776,7 @@ mod tests {
                 text: "Hi".into(),
                 state: Some(PartState::Done),
             }],
+            media: Vec::new(),
         });
         session.messages.push(Message {
             id: "assistant-1".into(),
@@ -1780,6 +1786,7 @@ mod tests {
                 text: "Error: assistant response failed.".into(),
                 state: Some(PartState::Done),
             }],
+            media: Vec::new(),
         });
 
         let loaded = vec![LoadedMessage {
@@ -1799,7 +1806,11 @@ mod tests {
             session.state
         );
         // Existing error text should not be overwritten by the empty final snapshot.
-        let assistant = session.messages.iter().find(|m| matches!(m.role, Role::Assistant)).unwrap();
+        let assistant = session
+            .messages
+            .iter()
+            .find(|m| matches!(m.role, Role::Assistant))
+            .unwrap();
         assert_eq!(assistant.parts.len(), 1);
         assert_eq!(
             assistant.parts[0],

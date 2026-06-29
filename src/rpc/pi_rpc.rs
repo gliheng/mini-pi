@@ -100,6 +100,7 @@ pub enum BridgeEvent {
 #[derive(Debug, Clone)]
 pub enum LoadedPart {
     Text { text: String },
+    Image { data: String, mime_type: String },
     Thinking { text: String },
     ToolCall { name: String, args: String },
     ToolResult { name: String, output: String },
@@ -482,7 +483,7 @@ impl PiRpc {
     pub fn send_prompt_ext(
         &mut self,
         message: &str,
-        images: Option<&[ImageContent]>,
+        media: Option<&[ImageContent]>,
         streaming_behavior: Option<&str>,
         request_id: Option<&str>,
     ) -> Result<(), PiRpcError> {
@@ -491,7 +492,7 @@ impl PiRpc {
             "message": message,
         });
         add_request_id(&mut cmd, request_id);
-        add_images(&mut cmd, images);
+        add_media(&mut cmd, media);
         if let Some(behavior) = streaming_behavior {
             cmd["streamingBehavior"] = serde_json::json!(behavior);
         }
@@ -501,7 +502,7 @@ impl PiRpc {
     pub fn send_steer(
         &mut self,
         message: &str,
-        images: Option<&[ImageContent]>,
+        media: Option<&[ImageContent]>,
         request_id: Option<&str>,
     ) -> Result<(), PiRpcError> {
         let mut cmd = serde_json::json!({
@@ -509,14 +510,14 @@ impl PiRpc {
             "message": message,
         });
         add_request_id(&mut cmd, request_id);
-        add_images(&mut cmd, images);
+        add_media(&mut cmd, media);
         self.send(&cmd)
     }
 
     pub fn send_follow_up(
         &mut self,
         message: &str,
-        images: Option<&[ImageContent]>,
+        media: Option<&[ImageContent]>,
         request_id: Option<&str>,
     ) -> Result<(), PiRpcError> {
         let mut cmd = serde_json::json!({
@@ -524,7 +525,7 @@ impl PiRpc {
             "message": message,
         });
         add_request_id(&mut cmd, request_id);
-        add_images(&mut cmd, images);
+        add_media(&mut cmd, media);
         self.send(&cmd)
     }
 
@@ -828,21 +829,21 @@ fn add_request_id(cmd: &mut serde_json::Value, request_id: Option<&str>) {
     }
 }
 
-fn add_images(cmd: &mut serde_json::Value, images: Option<&[ImageContent]>) {
-    if let Some(imgs) = images
-        && !imgs.is_empty()
+fn add_media(cmd: &mut serde_json::Value, media: Option<&[ImageContent]>) {
+    if let Some(items) = media
+        && !items.is_empty()
     {
-        let img_vals: Vec<serde_json::Value> = imgs
+        let vals: Vec<serde_json::Value> = items
             .iter()
-            .map(|img| {
+            .map(|item| {
                 serde_json::json!({
                     "type": "image",
-                    "data": img.data,
-                    "mimeType": img.mime_type,
+                    "data": item.data,
+                    "mimeType": item.mime_type,
                 })
             })
             .collect();
-        cmd["images"] = serde_json::json!(img_vals);
+        cmd["images"] = serde_json::json!(vals);
     }
 }
 
@@ -1156,9 +1157,21 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
             "user" => {
                 let content = msg.get("content");
                 let mut text = String::new();
+                let mut parts: Vec<LoadedPart> = vec![];
                 if let Some(arr) = content.and_then(|c| c.as_array()) {
                     for block in arr {
-                        if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
+                        let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                        if block_type == "image" {
+                            if let (Some(data), Some(mime_type)) = (
+                                block.get("data").and_then(|d| d.as_str()),
+                                block.get("mimeType").and_then(|m| m.as_str()),
+                            ) {
+                                parts.push(LoadedPart::Image {
+                                    data: data.to_string(),
+                                    mime_type: mime_type.to_string(),
+                                });
+                            }
+                        } else if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
                             if !text.is_empty() {
                                 text.push('\n');
                             }
@@ -1168,10 +1181,13 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
                 } else if let Some(s) = content.and_then(|c| c.as_str()) {
                     text = s.to_string();
                 }
+                if !text.is_empty() {
+                    parts.insert(0, LoadedPart::Text { text });
+                }
                 loaded.push(LoadedMessage {
                     id,
                     role: "user".to_string(),
-                    parts: vec![LoadedPart::Text { text }],
+                    parts,
                     error_message: None,
                     is_error: false,
                 });
@@ -1229,6 +1245,7 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
                 let is_error = is_assistant_error(error_message.as_deref(), stop_reason);
                 let has_visible_content = parts.iter().any(|p| match p {
                     LoadedPart::Text { text } | LoadedPart::Thinking { text } => !text.is_empty(),
+                    LoadedPart::Image { .. } => true,
                     LoadedPart::ToolCall { args, .. } => !args.is_empty(),
                     LoadedPart::ToolResult { output, .. } => !output.is_empty(),
                 });
@@ -1537,6 +1554,38 @@ mod tests {
         assert!(
             matches!(&messages[0].parts[0], LoadedPart::Text { text } if text == "partial"),
             "expected original text part, got {:?}",
+            messages[0].parts
+        );
+    }
+
+    #[test]
+    fn parse_loaded_messages_preserves_user_images() {
+        let val = serde_json::json!([
+            {
+                "id": "msg-1",
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "describe this" },
+                    { "type": "image", "data": "base64data", "mimeType": "image/png" }
+                ]
+            }
+        ]);
+        let messages = parse_loaded_messages(&val).expect("should parse");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].parts.len(), 2);
+        assert!(
+            matches!(&messages[0].parts[0], LoadedPart::Text { text } if text == "describe this"),
+            "expected text part, got {:?}",
+            messages[0].parts
+        );
+        assert!(
+            matches!(
+                &messages[0].parts[1],
+                LoadedPart::Image { data, mime_type }
+                if data == "base64data" && mime_type == "image/png"
+            ),
+            "expected image part, got {:?}",
             messages[0].parts
         );
     }

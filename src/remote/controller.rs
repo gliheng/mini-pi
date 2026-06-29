@@ -1582,6 +1582,7 @@ mod tests {
                 text: SharedString::from(text.to_string()),
                 state,
             }],
+            media: Vec::new(),
         }
     }
 
@@ -1591,6 +1592,7 @@ mod tests {
             entry_id: None,
             role: Role::Assistant,
             parts: vec![],
+            media: Vec::new(),
         }
     }
 
@@ -1751,6 +1753,7 @@ mod tests {
                 text: SharedString::from("old streaming text"),
                 state: Some(PartState::Streaming),
             }],
+            media: Vec::new(),
         };
         let new_empty = assistant_empty("new");
         let new_with_text = assistant_with_text("new", "hello", Some(PartState::Streaming));
@@ -1799,6 +1802,7 @@ mod tests {
                     details: None,
                 },
             ],
+            media: Vec::new(),
         };
         let second_empty = assistant_empty("second");
         let second_with_text =

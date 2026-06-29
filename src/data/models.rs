@@ -1,6 +1,8 @@
 use gpui::SharedString;
 use serde_json::Value;
 
+use crate::rpc::pi_rpc::ImageContent;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Role {
     User,
@@ -47,6 +49,10 @@ pub struct Message {
     pub entry_id: Option<String>,
     pub role: Role,
     pub parts: Vec<MessagePart>,
+    /// Images attached to the message. Only populated for locally-sent user
+    /// messages; history restored from the SDK does not currently include
+    /// media attachments.
+    pub media: Vec<ImageContent>,
 }
 
 #[derive(Clone, PartialEq, Debug)]

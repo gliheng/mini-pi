@@ -13,6 +13,8 @@ export interface ChatContentBlock {
   thinking?: string;
   name?: string;
   arguments?: unknown;
+  data?: string;
+  mimeType?: string;
 }
 
 export interface ChatMessage {
@@ -36,6 +38,8 @@ interface SdkContentBlock {
   thinking?: string;
   name?: string;
   arguments?: unknown;
+  data?: string;
+  mimeType?: string;
 }
 
 interface MessageWrapperEntry {
@@ -86,10 +90,19 @@ function normalizeUserContent(content: string | SdkContentBlock[] | undefined): 
     return [{ type: "text", text: content }];
   }
   if (Array.isArray(content)) {
-    return content.map((block) => ({
-      type: String(block.type ?? "text"),
-      text: block.text,
-    }));
+    return content.map((block) => {
+      if (block.type === "image") {
+        return {
+          type: "image",
+          data: block.data,
+          mimeType: block.mimeType,
+        };
+      }
+      return {
+        type: String(block.type ?? "text"),
+        text: block.text,
+      };
+    });
   }
   return [];
 }

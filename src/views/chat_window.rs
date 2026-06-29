@@ -1,15 +1,17 @@
 use std::{path::PathBuf, sync::Arc};
 
+use base64::Engine as _;
 use gpui::{
-    AnyElement, AnyWindowHandle, ClipboardItem, Context, Entity, FocusHandle,
-    InteractiveElement, IntoElement, KeyDownEvent, Length, MouseButton, ParentElement,
-    PathPromptOptions, Pixels, Render, ScrollHandle, SharedString, Styled, Window, div, prelude::*,
-    px, rems, svg,
+    Anchor, AnyElement, AnyWindowHandle, ClipboardEntry, ClipboardItem, Context, Entity,
+    FocusHandle, Image, ImageFormat, ImageSource, InteractiveElement, IntoElement, KeyDownEvent,
+    Length, MouseButton, ParentElement, PathPromptOptions, Pixels, Render, ScrollHandle,
+    SharedString, Styled, Window, div, img, prelude::*, px, rems, svg,
 };
 
-
 use crate::config::model_config::all_models;
-use crate::core::actions::{CancelInlineEdit, CloseWindow, ConfirmInlineEdit, SendMessage, StopStreaming};
+use crate::core::actions::{
+    CancelInlineEdit, CloseWindow, ConfirmInlineEdit, SendMessage, StopStreaming,
+};
 use crate::core::app::AppStore;
 use crate::core::session_handle::{SessionEvent, SessionHandle, SessionStats, WorkspaceInfo};
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
@@ -23,14 +25,14 @@ use crate::views::reasoning::Reasoning;
 use crate::views::tool_call::ToolCall;
 use crate::views::workspace_manager::{WorkspaceManager, WorkspaceManagerEvent};
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants};
-use gpui_component::input::{Enter, IndentInline, Input, MoveDown, MoveUp};
-use gpui_component::tag::Tag;
+use gpui_component::input::{Enter, IndentInline, Input, MoveDown, MoveUp, Paste};
 use gpui_component::notification::Notification;
 use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
+use gpui_component::tag::Tag;
 use gpui_component::text::{TextView, TextViewState};
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IndexPath, Sizable as _, Size, WindowExt as _,
-    h_flex, scroll::Scrollbar, status_bar::StatusBar,
+    h_flex, hover_card::HoverCard, scroll::Scrollbar, status_bar::StatusBar,
 };
 
 type ReasoningEntities = Vec<Vec<Option<Entity<Reasoning>>>>;
@@ -51,31 +53,183 @@ pub enum PendingAttachment {
     },
 }
 
-fn is_image_file(path: &std::path::Path) -> bool {
+fn is_supported_image_mime(mime: &mime_guess::Mime) -> bool {
+    mime.type_() == "image" && matches!(mime.subtype().as_str(), "png" | "jpeg" | "gif" | "webp")
+}
+
+fn is_text_mime(mime: &mime_guess::Mime) -> bool {
+    if mime.type_() == "text" {
+        return true;
+    }
     matches!(
-        path.extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_lowercase())
-            .as_deref(),
-        Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg")
+        (mime.type_().as_str(), mime.subtype().as_str()),
+        ("application", "json")
+            | ("application", "xml")
+            | ("application", "javascript")
+            | ("application", "x-javascript")
+            | ("application", "typescript")
     )
 }
 
-fn mime_type_for_path(path: &std::path::Path) -> &'static str {
-    match path
-        .extension()
+const TEXT_FILE_EXTENSIONS: &[&str] = &[
+    "txt",
+    "md",
+    "markdown",
+    "json",
+    "yaml",
+    "yml",
+    "toml",
+    "csv",
+    "tsv",
+    "log",
+    "rs",
+    "py",
+    "js",
+    "ts",
+    "jsx",
+    "tsx",
+    "mjs",
+    "cjs",
+    "html",
+    "htm",
+    "css",
+    "scss",
+    "sass",
+    "less",
+    "sql",
+    "sh",
+    "bash",
+    "zsh",
+    "fish",
+    "c",
+    "cpp",
+    "cc",
+    "cxx",
+    "h",
+    "hpp",
+    "hh",
+    "go",
+    "java",
+    "kt",
+    "kts",
+    "swift",
+    "rb",
+    "php",
+    "cs",
+    "fs",
+    "fsx",
+    "ml",
+    "clj",
+    "cljs",
+    "scala",
+    "r",
+    "lua",
+    "pl",
+    "pm",
+    "vim",
+    "ex",
+    "exs",
+    "erl",
+    "hrl",
+    "elm",
+    "hs",
+    "lhs",
+    "cl",
+    "lisp",
+    "scm",
+    "rkt",
+    "dart",
+    "groovy",
+    "jl",
+    "m",
+    "wl",
+    "xml",
+    "xsl",
+    "xsd",
+    "graphql",
+    "gql",
+    "prisma",
+    "proto",
+    "env",
+    "ini",
+    "conf",
+    "cfg",
+    "properties",
+    "gitignore",
+    "dockerfile",
+    "tf",
+    "hcl",
+    "nomad",
+    "pkl",
+    "nix",
+    "vue",
+    "svelte",
+    "astro",
+];
+
+fn has_text_extension(path: &std::path::Path) -> bool {
+    path.extension()
         .and_then(|e| e.to_str())
-        .map(|e| e.to_lowercase())
-        .as_deref()
-    {
-        Some("png") => "image/png",
-        Some("jpg" | "jpeg") => "image/jpeg",
-        Some("gif") => "image/gif",
-        Some("webp") => "image/webp",
-        Some("bmp") => "image/bmp",
-        Some("svg") => "image/svg+xml",
-        _ => "application/octet-stream",
+        .map(|e| TEXT_FILE_EXTENSIONS.contains(&e.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+fn is_image_file(path: &std::path::Path) -> bool {
+    mime_guess::from_path(path)
+        .first()
+        .map(|m| is_supported_image_mime(&m))
+        .unwrap_or(false)
+}
+
+fn is_supported_attachment_path(path: &std::path::Path) -> bool {
+    if is_image_file(path) {
+        return true;
     }
+    if has_text_extension(path) {
+        return true;
+    }
+    match mime_guess::from_path(path).first() {
+        Some(mime) => is_text_mime(&mime),
+        None => true,
+    }
+}
+
+fn extension_for_image_format(format: ImageFormat) -> &'static str {
+    match format {
+        ImageFormat::Png => "png",
+        ImageFormat::Jpeg => "jpg",
+        ImageFormat::Webp => "webp",
+        ImageFormat::Gif => "gif",
+        ImageFormat::Svg => "svg",
+        ImageFormat::Bmp => "bmp",
+        ImageFormat::Tiff => "tiff",
+        ImageFormat::Ico => "ico",
+        ImageFormat::Pnm => "pnm",
+    }
+}
+
+fn image_format_for_mime(mime: &str) -> Option<ImageFormat> {
+    match mime.to_lowercase().as_str() {
+        "image/png" => Some(ImageFormat::Png),
+        "image/jpeg" | "image/jpg" => Some(ImageFormat::Jpeg),
+        "image/webp" => Some(ImageFormat::Webp),
+        "image/gif" => Some(ImageFormat::Gif),
+        "image/svg+xml" => Some(ImageFormat::Svg),
+        "image/bmp" => Some(ImageFormat::Bmp),
+        "image/tiff" => Some(ImageFormat::Tiff),
+        "image/x-icon" | "image/vnd.microsoft.icon" => Some(ImageFormat::Ico),
+        _ => None,
+    }
+}
+
+fn image_source_from_base64(data: &str, mime: &str) -> Option<ImageSource> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .ok()?;
+    let format = image_format_for_mime(mime)?;
+    Some(ImageSource::Image(Arc::new(Image::from_bytes(
+        format, bytes,
+    ))))
 }
 
 #[derive(Clone)]
@@ -784,14 +938,17 @@ impl ChatWindow {
         self.scroll_locked = true;
         let attachments = std::mem::take(&mut self.pending_attachments);
 
-        let mut images: Vec<ImageContent> = Vec::new();
+        let mut media: Vec<ImageContent> = Vec::new();
         let mut file_parts: Vec<String> = Vec::new();
         for attachment in attachments {
             match attachment {
                 PendingAttachment::Image {
                     mime_type, base64, ..
                 } => {
-                    images.push(ImageContent { data: base64, mime_type });
+                    media.push(ImageContent {
+                        data: base64,
+                        mime_type,
+                    });
                 }
                 PendingAttachment::Text { content, path, .. } => {
                     file_parts.push(format!(
@@ -816,9 +973,9 @@ impl ChatWindow {
         };
 
         let session = self.session.clone().unwrap();
-        if !images.is_empty() {
+        if !media.is_empty() {
             session.update(cx, |session, cx| {
-                session.send_message_with_images(combined_content, images, cx);
+                session.send_message_with_media(combined_content, media, cx);
             });
         } else {
             session.update(cx, |session, cx| {
@@ -867,6 +1024,116 @@ impl ChatWindow {
         cx.notify();
     }
 
+    fn path_to_attachment(path: PathBuf) -> Result<PendingAttachment, String> {
+        let metadata =
+            std::fs::metadata(&path).map_err(|e| format!("Cannot read file metadata: {}", e))?;
+        if metadata.is_dir() {
+            return Err(format!(
+                "{}: please select a file, not a directory",
+                path.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("selected item")
+            ));
+        }
+        let size = metadata.len();
+        if size > 5 * 1024 * 1024 {
+            return Err(format!(
+                "{}: file is larger than 5 MB",
+                path.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("selected file")
+            ));
+        }
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file")
+            .to_string();
+
+        // Some extensions (e.g. `.ts`) are mis-guessed as video by MIME libraries,
+        // so check the explicit text-extension list before looking at MIME.
+        let extension_is_text = has_text_extension(&path);
+        let guessed_mime = mime_guess::from_path(&path).first();
+
+        if let Some(ref mime) = guessed_mime {
+            if is_supported_image_mime(mime) {
+                let mime_type = mime.to_string();
+                let bytes =
+                    std::fs::read(&path).map_err(|e| format!("Failed to read file: {}", e))?;
+                let base64 =
+                    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
+                return Ok(PendingAttachment::Image {
+                    path,
+                    name,
+                    mime_type,
+                    base64,
+                });
+            }
+            if extension_is_text || is_text_mime(mime) {
+                const MAX_TEXT_BYTES: usize = 100 * 1024;
+                if size > MAX_TEXT_BYTES as u64 {
+                    return Err(format!("{}: text file is larger than 100 KB", name));
+                }
+                let bytes =
+                    std::fs::read(&path).map_err(|e| format!("Failed to read file: {}", e))?;
+                let content = String::from_utf8(bytes)
+                    .map_err(|_| format!("{}: binary files are not supported", name))?;
+                return Ok(PendingAttachment::Text {
+                    path,
+                    name,
+                    content,
+                });
+            }
+            // Known non-text MIME type — reject without reading the bytes.
+            return Err(format!("{}: binary files are not supported", name));
+        }
+
+        // No extension or unknown MIME type: attempt UTF-8 as a last resort.
+        const MAX_TEXT_BYTES: usize = 100 * 1024;
+        if size > MAX_TEXT_BYTES as u64 {
+            return Err(format!("{}: file is larger than 100 KB", name));
+        }
+        let bytes = std::fs::read(&path).map_err(|e| format!("Failed to read file: {}", e))?;
+        let content = String::from_utf8(bytes)
+            .map_err(|_| format!("{}: binary files are not supported", name))?;
+        Ok(PendingAttachment::Text {
+            path,
+            name,
+            content,
+        })
+    }
+
+    fn add_attachments(
+        &mut self,
+        results: Vec<Result<PendingAttachment, String>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut errors = Vec::new();
+        for result in results {
+            match result {
+                Ok(attachment) => self.pending_attachments.push(attachment),
+                Err(err) => errors.push(err),
+            }
+        }
+        if !errors.is_empty() {
+            let message = if errors.len() == 1 {
+                errors.into_iter().next().unwrap()
+            } else {
+                format!(
+                    "{} files could not be attached:\n{}",
+                    errors.len(),
+                    errors.join("\n")
+                )
+            };
+            window.push_notification(Notification::error(message), cx);
+        }
+        if !self.pending_attachments.is_empty() {
+            self.chat_input.update(cx, |ci, cx| ci.focus(window, cx));
+            cx.notify();
+        }
+    }
+
     pub fn pick_and_send_file(
         &mut self,
         _: &gpui::ClickEvent,
@@ -893,94 +1160,122 @@ impl ChatWindow {
                 return;
             }
 
-            let results: Vec<Result<PendingAttachment, String>> = smol::unblock(move || {
-                paths
-                    .into_iter()
-                    .map(|path| {
-                        let metadata = std::fs::metadata(&path)
-                            .map_err(|e| format!("Cannot read file metadata: {}", e))?;
-                        if metadata.is_dir() {
-                            return Err(format!(
-                                "{}: please select a file, not a directory",
-                                path.file_name()
-                                    .and_then(|n| n.to_str())
-                                    .unwrap_or("selected item")
-                            ));
-                        }
-                        let size = metadata.len();
-                        if size > 5 * 1024 * 1024 {
-                            return Err(format!(
-                                "{}: file is larger than 5 MB",
-                                path.file_name()
-                                    .and_then(|n| n.to_str())
-                                    .unwrap_or("selected file")
-                            ));
-                        }
-                        let name = path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("file")
-                            .to_string();
-                        let bytes = std::fs::read(&path)
-                            .map_err(|e| format!("Failed to read file: {}", e))?;
+            let (supported, unsupported): (Vec<PathBuf>, Vec<PathBuf>) = paths
+                .into_iter()
+                .partition(|p| is_supported_attachment_path(p));
 
-                        if is_image_file(&path) {
-                            let mime_type = mime_type_for_path(&path).to_string();
-                            let base64 = base64::Engine::encode(
-                                &base64::engine::general_purpose::STANDARD,
-                                &bytes,
-                            );
-                            Ok(PendingAttachment::Image {
-                                path,
-                                name,
-                                mime_type,
-                                base64,
-                            })
-                        } else {
-                            const MAX_TEXT_BYTES: usize = 100 * 1024;
-                            if bytes.len() > MAX_TEXT_BYTES {
-                                return Err(format!(
-                                    "{}: text file is larger than 100 KB",
-                                    name
-                                ));
-                            }
-                            let content = String::from_utf8(bytes).map_err(|_| {
-                                format!(
-                                    "{}: binary files are not supported",
-                                    name
-                                )
-                            })?;
-                            Ok(PendingAttachment::Text { path, name, content })
-                        }
-                    })
-                    .collect()
+            let results: Vec<Result<PendingAttachment, String>> = smol::unblock(move || {
+                supported.into_iter().map(Self::path_to_attachment).collect()
             })
             .await;
 
             this.update_in(cx, |this, window, cx| {
-                let mut errors = Vec::new();
-                for result in results {
-                    match result {
-                        Ok(attachment) => this.pending_attachments.push(attachment),
-                        Err(err) => errors.push(err),
-                    }
-                }
-                if !errors.is_empty() {
-                    let message = if errors.len() == 1 {
-                        errors.into_iter().next().unwrap()
+                if !unsupported.is_empty() {
+                    let names: Vec<String> = unsupported
+                        .iter()
+                        .map(|p| {
+                            p.file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("selected file")
+                                .to_string()
+                        })
+                        .collect();
+                    let message = if unsupported.len() == 1 {
+                        format!(
+                            "{}: only images and text files can be attached",
+                            names[0]
+                        )
                     } else {
-                        format!("{} files could not be attached:\n{}", errors.len(), errors.join("\n"))
+                        format!(
+                            "{} files cannot be attached (only images and text files are allowed):\n{}",
+                            names.len(),
+                            names.join("\n")
+                        )
                     };
                     window.push_notification(Notification::error(message), cx);
                 }
-                if !this.pending_attachments.is_empty() {
-                    this.chat_input.update(cx, |ci, cx| ci.focus(window, cx));
-                    cx.notify();
-                }
+                this.add_attachments(results, window, cx);
             })
             .ok();
         })
         .detach();
+    }
+
+    fn handle_paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.state, ChatState::Streaming | ChatState::Loading) {
+            return;
+        }
+
+        let Some(clipboard) = cx.read_from_clipboard() else {
+            return;
+        };
+
+        let mut image_attachments: Vec<PendingAttachment> = Vec::new();
+        let mut file_paths: Vec<PathBuf> = Vec::new();
+
+        for entry in clipboard.into_entries() {
+            match entry {
+                ClipboardEntry::Image(image) => {
+                    let format = image.format;
+                    let mime_type = format.mime_type().to_string();
+                    let extension = extension_for_image_format(format);
+                    let name = format!("pasted-image.{}", extension);
+                    let base64 = base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        &image.bytes,
+                    );
+                    image_attachments.push(PendingAttachment::Image {
+                        path: PathBuf::from(&name),
+                        name,
+                        mime_type,
+                        base64,
+                    });
+                }
+                ClipboardEntry::ExternalPaths(paths) => {
+                    file_paths.extend(
+                        paths
+                            .0
+                            .into_iter()
+                            .filter(|p| is_supported_attachment_path(p)),
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        if image_attachments.is_empty() && file_paths.is_empty() {
+            // Let the input handle plain-text paste normally.
+            return;
+        }
+
+        cx.stop_propagation();
+
+        for attachment in image_attachments {
+            self.pending_attachments.push(attachment);
+        }
+
+        if !file_paths.is_empty() {
+            cx.spawn_in(window, async move |this, cx| {
+                let results: Vec<Result<PendingAttachment, String>> = smol::unblock(move || {
+                    file_paths
+                        .into_iter()
+                        .map(Self::path_to_attachment)
+                        .collect()
+                })
+                .await;
+
+                this.update_in(cx, |this, window, cx| {
+                    this.add_attachments(results, window, cx);
+                })
+                .ok();
+            })
+            .detach();
+        }
+
+        if !self.pending_attachments.is_empty() {
+            self.chat_input.update(cx, |ci, cx| ci.focus(window, cx));
+            cx.notify();
+        }
     }
 
     fn send_edited_prompt(
@@ -1593,9 +1888,11 @@ impl ChatWindow {
                         // Only one message streams at a time.  Track its
                         // (msg,part,len) so we can push_str just the delta.
                         let is_streaming = matches!(state, Some(PartState::Streaming));
-                        let same_pos = self.streaming_md_pos
+                        let same_pos = self
+                            .streaming_md_pos
                             .map_or(false, |(m, p, _)| m == msg_idx && p == part_idx);
-                        let old_len = self.streaming_md_pos
+                        let old_len = self
+                            .streaming_md_pos
                             .and_then(|(m, p, len)| (m == msg_idx && p == part_idx).then_some(len))
                             .unwrap_or(0);
 
@@ -1674,20 +1971,23 @@ impl ChatWindow {
                 div()
                     .cursor_pointer()
                     .child(tag.with_size(Size::XSmall).child(name))
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _window, cx| {
-                        this.selected_workspace_id = Some(ws_id.clone());
-                        let ws_dir = this
-                            .workspaces
-                            .iter()
-                            .find(|w| w.id == ws_id)
-                            .map(|w| PathBuf::from(&w.path));
-                        if let Some(dir) = ws_dir {
-                            this.chat_input.update(cx, |ci, cx| {
-                                ci.set_workspace(ws_id.clone(), dir, ws_name.clone(), cx);
-                            });
-                        }
-                        cx.notify();
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _window, cx| {
+                            this.selected_workspace_id = Some(ws_id.clone());
+                            let ws_dir = this
+                                .workspaces
+                                .iter()
+                                .find(|w| w.id == ws_id)
+                                .map(|w| PathBuf::from(&w.path));
+                            if let Some(dir) = ws_dir {
+                                this.chat_input.update(cx, |ci, cx| {
+                                    ci.set_workspace(ws_id.clone(), dir, ws_name.clone(), cx);
+                                });
+                            }
+                            cx.notify();
+                        }),
+                    )
             }))
     }
 
@@ -1802,130 +2102,226 @@ impl ChatWindow {
     ) -> impl IntoElement + use<> {
         let is_user = matches!(msg.role, Role::User);
         let msg_id = msg.id.clone();
-        div()
-            .block()
-            .w_full()
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .w_full()
-                    .when(is_user, |this| this.items_end())
-                    .when(!is_user, |this| this.items_start())
-                    .gap_1()
-                    .children({
-                        let n = msg.parts.len();
-                        let mut paired: Vec<bool> = vec![false; n];
-                        let mut pairs: Vec<(usize, usize)> = Vec::new();
+        let media_element = if is_user && !msg.media.is_empty() {
+            Some(self.render_message_media(cx, &msg.media))
+        } else {
+            None
+        };
+        div().block().w_full().child(
+            div()
+                .flex()
+                .flex_col()
+                .w_full()
+                .when(is_user, |this| this.items_end())
+                .when(!is_user, |this| this.items_start())
+                .gap_1()
+                .children({
+                    let n = msg.parts.len();
+                    let mut paired: Vec<bool> = vec![false; n];
+                    let mut pairs: Vec<(usize, usize)> = Vec::new();
 
-                        // First pass: pair each ToolCall with the earliest unpaired
-                        // ToolResult that follows it. Loaded sessions often place all
-                        // tool calls before all tool results in the same message.
-                        for i in 0..n {
-                            if matches!(msg.parts[i], MessagePart::ToolCall { .. }) && !paired[i] {
-                                if let Some(j) = (i + 1..n).find(|&k| {
+                    // First pass: pair each ToolCall with the earliest unpaired
+                    // ToolResult that follows it. Loaded sessions often place all
+                    // tool calls before all tool results in the same message.
+                    for i in 0..n {
+                        if matches!(msg.parts[i], MessagePart::ToolCall { .. }) && !paired[i] {
+                            if let Some(j) = (i + 1..n).find(|&k| {
+                                matches!(msg.parts[k], MessagePart::ToolResult { .. }) && !paired[k]
+                            }) {
+                                paired[i] = true;
+                                paired[j] = true;
+                                pairs.push((i, j));
+                            }
+                        }
+                    }
+
+                    // Second pass: also pair any remaining ToolCall with the
+                    // immediately following Text part (some tools emit results as
+                    // regular assistant text).
+                    for i in 0..n {
+                        if matches!(msg.parts[i], MessagePart::ToolCall { .. }) && !paired[i] {
+                            if let Some(j) = (i + 1..n).find(|&k| {
+                                matches!(msg.parts[k], MessagePart::Text { .. }) && !paired[k]
+                            }) {
+                                // Only pair if there is no unpaired ToolResult in between.
+                                let has_result_between = (i + 1..j).any(|k| {
                                     matches!(msg.parts[k], MessagePart::ToolResult { .. })
                                         && !paired[k]
-                                }) {
+                                });
+                                if !has_result_between {
                                     paired[i] = true;
                                     paired[j] = true;
                                     pairs.push((i, j));
                                 }
                             }
                         }
+                    }
 
-                        // Second pass: also pair any remaining ToolCall with the
-                        // immediately following Text part (some tools emit results as
-                        // regular assistant text).
-                        for i in 0..n {
-                            if matches!(msg.parts[i], MessagePart::ToolCall { .. }) && !paired[i] {
-                                if let Some(j) = (i + 1..n).find(|&k| {
-                                    matches!(msg.parts[k], MessagePart::Text { .. }) && !paired[k]
-                                }) {
-                                    // Only pair if there is no unpaired ToolResult in between.
-                                    let has_result_between = (i + 1..j).any(|k| {
-                                        matches!(msg.parts[k], MessagePart::ToolResult { .. })
-                                            && !paired[k]
-                                    });
-                                    if !has_result_between {
-                                        paired[i] = true;
-                                        paired[j] = true;
-                                        pairs.push((i, j));
-                                    }
-                                }
-                            }
-                        }
-
-                        let mut children: Vec<AnyElement> = Vec::new();
-                        let mut i = 0;
-                        while i < n {
-                            if paired[i] {
-                                if let Some(&(call_idx, result_idx)) =
-                                    pairs.iter().find(|(call_idx, _)| *call_idx == i)
+                    let mut children: Vec<AnyElement> = Vec::new();
+                    let mut i = 0;
+                    while i < n {
+                        if paired[i] {
+                            if let Some(&(call_idx, result_idx)) =
+                                pairs.iter().find(|(call_idx, _)| *call_idx == i)
+                            {
+                                if let (
+                                    MessagePart::ToolCall {
+                                        name, args, state, ..
+                                    },
+                                    MessagePart::ToolResult {
+                                        output, details, ..
+                                    },
+                                ) = (&msg.parts[call_idx], &msg.parts[result_idx])
                                 {
-                                    if let (
-                                        MessagePart::ToolCall { name, args, state, .. },
-                                        MessagePart::ToolResult {
-                                            output, details, ..
-                                        },
-                                    ) = (&msg.parts[call_idx], &msg.parts[result_idx])
-                                    {
-                                        let tool = ToolCall::paired(
-                                            name.clone(),
-                                            args.clone(),
-                                            Some(output.clone()),
-                                            details.clone(),
-                                            None,
-                                            self.workspace_dir_for_send_file(),
-                                            assistant_text_width,
-                                            state.clone(),
-                                        );
-                                        children.push(tool.render(cx, msg_idx));
-                                    } else if let (
-                                        MessagePart::ToolCall { name, args, state, .. },
-                                        MessagePart::Text { text, .. },
-                                    ) = (&msg.parts[call_idx], &msg.parts[result_idx])
-                                    {
-                                        let markdown_entity =
-                                            msg_markdown.get(result_idx).and_then(|e| e.clone());
-                                        let tool = ToolCall::paired(
-                                            name.clone(),
-                                            args.clone(),
-                                            Some(text.clone()),
-                                            None,
-                                            markdown_entity,
-                                            self.workspace_dir_for_send_file(),
-                                            assistant_text_width,
-                                            state.clone(),
-                                        );
-                                        children.push(tool.render(cx, msg_idx));
-                                    }
-                                    i = result_idx + 1;
-                                    continue;
+                                    let tool = ToolCall::paired(
+                                        name.clone(),
+                                        args.clone(),
+                                        Some(output.clone()),
+                                        details.clone(),
+                                        None,
+                                        self.workspace_dir_for_send_file(),
+                                        assistant_text_width,
+                                        state.clone(),
+                                    );
+                                    children.push(tool.render(cx, msg_idx));
+                                } else if let (
+                                    MessagePart::ToolCall {
+                                        name, args, state, ..
+                                    },
+                                    MessagePart::Text { text, .. },
+                                ) = (&msg.parts[call_idx], &msg.parts[result_idx])
+                                {
+                                    let markdown_entity =
+                                        msg_markdown.get(result_idx).and_then(|e| e.clone());
+                                    let tool = ToolCall::paired(
+                                        name.clone(),
+                                        args.clone(),
+                                        Some(text.clone()),
+                                        None,
+                                        markdown_entity,
+                                        self.workspace_dir_for_send_file(),
+                                        assistant_text_width,
+                                        state.clone(),
+                                    );
+                                    children.push(tool.render(cx, msg_idx));
                                 }
-                                // This index is a paired result; skip it.
-                                i += 1;
+                                i = result_idx + 1;
                                 continue;
                             }
-
-                            let markdown_entity = msg_markdown.get(i).and_then(|e| e.clone());
-                            let reasoning_entity = msg_reasoning.get(i).and_then(|e| e.clone());
-                            children.push(self.render_message_part(
-                                cx,
-                                msg_idx,
-                                i,
-                                &msg.parts[i],
-                                markdown_entity,
-                                reasoning_entity,
-                                assistant_text_width,
-                                is_user,
-                                msg_id.clone(),
-                            ));
+                            // This index is a paired result; skip it.
                             i += 1;
+                            continue;
                         }
-                        children
-                    }),
+
+                        let markdown_entity = msg_markdown.get(i).and_then(|e| e.clone());
+                        let reasoning_entity = msg_reasoning.get(i).and_then(|e| e.clone());
+                        children.push(self.render_message_part(
+                            cx,
+                            msg_idx,
+                            i,
+                            &msg.parts[i],
+                            markdown_entity,
+                            reasoning_entity,
+                            assistant_text_width,
+                            is_user,
+                            msg_id.clone(),
+                        ));
+                        i += 1;
+                    }
+                    children
+                })
+                .when_some(media_element, |this, el| this.child(el)),
+        )
+    }
+
+    fn render_message_media(&self, cx: &mut Context<Self>, media: &[ImageContent]) -> AnyElement {
+        div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .justify_end()
+            .gap_2()
+            .children(
+                media
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, item)| self.render_media_item(cx, idx, item)),
             )
+            .into_any_element()
+    }
+
+    fn render_media_item(
+        &self,
+        cx: &mut Context<Self>,
+        idx: usize,
+        item: &ImageContent,
+    ) -> AnyElement {
+        self.render_image_media_item(cx, idx, item)
+    }
+
+    fn render_image_media_item(
+        &self,
+        cx: &mut Context<Self>,
+        idx: usize,
+        item: &ImageContent,
+    ) -> AnyElement {
+        let source = image_source_from_base64(&item.data, &item.mime_type);
+        let hover_source = source.clone();
+        let thumb = div()
+            .id(SharedString::from(format!(
+                "media-image-{}-{}",
+                idx, item.mime_type
+            )))
+            .size(px(64.))
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().border)
+            .overflow_hidden()
+            .when_some(source.clone(), |this, source| {
+                this.child(img(source).size_full().object_fit(gpui::ObjectFit::Cover))
+            })
+            .when(source.is_none(), |this| {
+                this.flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(cx.theme().muted)
+                    .child(
+                        Icon::empty()
+                            .path("icons/file.svg")
+                            .size(px(20.))
+                            .text_color(cx.theme().muted_foreground),
+                    )
+            });
+
+        HoverCard::new(format!("image-hover-{}", idx))
+            .anchor(Anchor::TopRight)
+            .open_delay(std::time::Duration::from_millis(200))
+            .close_delay(std::time::Duration::from_millis(100))
+            .trigger(thumb)
+            .content(move |_, _, _cx| {
+                div()
+                    .max_w(px(320.))
+                    .max_h(px(240.))
+                    .rounded_md()
+                    .overflow_hidden()
+                    .when_some(hover_source.clone(), |this, source| {
+                        this.child(
+                            img(source)
+                                .max_w(px(320.))
+                                .max_h(px(240.))
+                                .object_fit(gpui::ObjectFit::Contain),
+                        )
+                    })
+                    .when(hover_source.is_none(), |this| {
+                        this.flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(120.))
+                            .child("Image")
+                    })
+                    .into_any_element()
+            })
+            .into_any_element()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1962,9 +2358,9 @@ impl ChatWindow {
                     this.child(reasoning_entity.unwrap())
                 })
                 .into_any_element(),
-            MessagePart::ToolCall { name, args, state, .. } => {
-                ToolCall::call_only(name.clone(), args.clone(), state.clone()).render(cx, msg_idx)
-            }
+            MessagePart::ToolCall {
+                name, args, state, ..
+            } => ToolCall::call_only(name.clone(), args.clone(), state.clone()).render(cx, msg_idx),
             MessagePart::ToolResult {
                 name,
                 output,
@@ -2149,50 +2545,55 @@ impl ChatWindow {
             .flex_row()
             .flex_wrap()
             .gap_2()
-            .children(attachments.into_iter().enumerate().map(|(idx, attachment)| {
-                let name = match &attachment {
-                    PendingAttachment::Image { name, .. } | PendingAttachment::Text { name, .. } => {
-                        name.clone()
-                    }
-                };
-                div()
-                    .id(SharedString::from(format!("pending-attachment-{}", idx)))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .bg(cx.theme().accent)
-                    .text_color(cx.theme().accent_foreground)
-                    .child(
-                        Icon::empty()
-                            .path("icons/file.svg")
-                            .size(px(14.))
-                            .text_color(cx.theme().accent_foreground),
-                    )
-                    .child(
+            .children(
+                attachments
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, attachment)| {
+                        let name = match &attachment {
+                            PendingAttachment::Image { name, .. }
+                            | PendingAttachment::Text { name, .. } => name.clone(),
+                        };
                         div()
-                            .text_sm()
-                            .child(SharedString::from(name)),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("remove-attachment-{}", idx)))
-                            .with_size(Size::XSmall)
-                            .ghost()
-                            .icon(
+                            .id(SharedString::from(format!("pending-attachment-{}", idx)))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .bg(cx.theme().accent)
+                            .text_color(cx.theme().accent_foreground)
+                            .child(
                                 Icon::empty()
-                                    .path("icons/close.svg")
-                                    .size(px(12.))
+                                    .path("icons/file.svg")
+                                    .size(px(14.))
                                     .text_color(cx.theme().accent_foreground),
                             )
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                this.pending_attachments.remove(idx);
-                                cx.notify();
-                            })),
-                    )
-            }))
+                            .child(div().text_sm().child(SharedString::from(name)))
+                            .child(
+                                Button::new(SharedString::from(format!(
+                                    "remove-attachment-{}",
+                                    idx
+                                )))
+                                .with_size(Size::XSmall)
+                                .ghost()
+                                .icon(
+                                    Icon::empty()
+                                        .path("icons/close.svg")
+                                        .size(px(12.))
+                                        .text_color(cx.theme().accent_foreground),
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, _window, cx| {
+                                        this.pending_attachments.remove(idx);
+                                        cx.notify();
+                                    },
+                                )),
+                            )
+                    }),
+            )
             .into_any_element()
     }
 
@@ -2241,39 +2642,33 @@ impl ChatWindow {
                             // them in the CAPTURE phase, which runs before the Input's
                             // bubble-phase handlers, so the popup can swallow the keys
                             // when it's open and lets them pass through otherwise.
-                            .capture_action(cx.listener(
-                                |this, _action: &MoveUp, _window, cx| {
-                                    if this.chat_input.read(cx).is_popup_visible() {
-                                        this.chat_input
-                                            .update(cx, |ci, cx| ci.navigate_popup(-1, cx));
-                                        cx.stop_propagation();
-                                    }
-                                },
-                            ))
-                            .capture_action(cx.listener(
-                                |this, _action: &MoveDown, _window, cx| {
-                                    if this.chat_input.read(cx).is_popup_visible() {
-                                        this.chat_input
-                                            .update(cx, |ci, cx| ci.navigate_popup(1, cx));
-                                        cx.stop_propagation();
-                                    }
-                                },
-                            ))
-                            .capture_action(cx.listener(
-                                |this, _action: &Enter, window, cx| {
-                                    if this.chat_input.read(cx).is_at_popup_visible() {
-                                        this.chat_input.update(cx, |ci, cx| {
-                                            ci.select_highlighted_mention(window, cx)
-                                        });
-                                        cx.stop_propagation();
-                                    } else if this.chat_input.read(cx).is_command_popup_visible() {
-                                        this.chat_input.update(cx, |ci, cx| {
-                                            ci.select_highlighted_command(window, cx)
-                                        });
-                                        cx.stop_propagation();
-                                    }
-                                },
-                            ))
+                            .capture_action(cx.listener(|this, _action: &MoveUp, _window, cx| {
+                                if this.chat_input.read(cx).is_popup_visible() {
+                                    this.chat_input
+                                        .update(cx, |ci, cx| ci.navigate_popup(-1, cx));
+                                    cx.stop_propagation();
+                                }
+                            }))
+                            .capture_action(cx.listener(|this, _action: &MoveDown, _window, cx| {
+                                if this.chat_input.read(cx).is_popup_visible() {
+                                    this.chat_input
+                                        .update(cx, |ci, cx| ci.navigate_popup(1, cx));
+                                    cx.stop_propagation();
+                                }
+                            }))
+                            .capture_action(cx.listener(|this, _action: &Enter, window, cx| {
+                                if this.chat_input.read(cx).is_at_popup_visible() {
+                                    this.chat_input.update(cx, |ci, cx| {
+                                        ci.select_highlighted_mention(window, cx)
+                                    });
+                                    cx.stop_propagation();
+                                } else if this.chat_input.read(cx).is_command_popup_visible() {
+                                    this.chat_input.update(cx, |ci, cx| {
+                                        ci.select_highlighted_command(window, cx)
+                                    });
+                                    cx.stop_propagation();
+                                }
+                            }))
                             .capture_action(cx.listener(
                                 |this, _action: &IndentInline, window, cx| {
                                     if this.chat_input.read(cx).is_at_popup_visible() {
@@ -2289,6 +2684,9 @@ impl ChatWindow {
                                     }
                                 },
                             ))
+                            .capture_action(cx.listener(|this, _action: &Paste, window, cx| {
+                                this.handle_paste(_action, window, cx);
+                            }))
                             .child(
                                 Input::new(&self.chat_input.read(cx).input_state)
                                     .appearance(false)
@@ -2473,28 +2871,18 @@ impl ChatWindow {
                     .items_center()
                     .gap_3()
                     .when(input_tokens > 0 || output_tokens > 0, |this| {
-                        this.child(
-                            div()
-                                .text_xs()
-                                .text_color(muted)
-                                .child(format!(
-                                    "{} in / {} out",
-                                    format_tokens(input_tokens),
-                                    format_tokens(output_tokens)
-                                )),
-                        )
+                        this.child(div().text_xs().text_color(muted).child(format!(
+                            "{} in / {} out",
+                            format_tokens(input_tokens),
+                            format_tokens(output_tokens)
+                        )))
                     })
                     .when(cache_read > 0 || cache_write > 0, |this| {
-                        this.child(
-                            div()
-                                .text_xs()
-                                .text_color(muted)
-                                .child(format!(
-                                    "cache {}r / {}w",
-                                    format_tokens(cache_read),
-                                    format_tokens(cache_write)
-                                )),
-                        )
+                        this.child(div().text_xs().text_color(muted).child(format!(
+                            "cache {}r / {}w",
+                            format_tokens(cache_read),
+                            format_tokens(cache_write)
+                        )))
                     })
                     .when(cost > 0.0, |this| {
                         this.child(
@@ -2580,6 +2968,8 @@ impl Render for ChatWindow {
                 el.child(self.render_workspace_selector(cx))
             })
             .child(self.render_input_area(cx, is_disabled, input_focused))
-            .when(self.session.is_some(), |el| el.child(self.render_status_bar(cx)))
+            .when(self.session.is_some(), |el| {
+                el.child(self.render_status_bar(cx))
+            })
     }
 }
