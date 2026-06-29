@@ -224,45 +224,24 @@ impl Render for UserPanel {
                             .child(error_msg.unwrap_or_default()),
                     )
                 })
-                .when(is_logging_in, |el: gpui::Div| {
-                    el.child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px_4()
-                            .py_3()
-                            .rounded_lg()
-                            .bg(rgb(0x4f46e5))
-                            .text_color(rgb(0xffffff))
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("Signing in..."),
-                    )
+                .when(dialog == AuthDialog::Login, |el: gpui::Div| {
+                    el.child(render_login_button(
+                        email_val.clone(),
+                        password_val.clone(),
+                        is_logging_in,
+                        cx,
+                    ))
                 })
-                .when(
-                    !is_logging_in && dialog == AuthDialog::Login,
-                    |el: gpui::Div| {
-                        el.child(render_login_button(
-                            email_val.clone(),
-                            password_val.clone(),
-                            cx,
-                        ))
-                    },
-                )
-                .when(
-                    !is_logging_in && dialog == AuthDialog::Signup,
-                    |el: gpui::Div| {
-                        el.child(render_signup_submit_button(
-                            email_val.clone(),
-                            password_val.clone(),
-                            confirm_password_val.clone(),
-                            window,
-                            cx,
-                        ))
-                    },
-                );
+                .when(dialog == AuthDialog::Signup, |el: gpui::Div| {
+                    el.child(render_signup_submit_button(
+                        email_val.clone(),
+                        password_val.clone(),
+                        confirm_password_val.clone(),
+                        is_logging_in,
+                        window,
+                        cx,
+                    ))
+                });
 
             div()
                 .id("user-panel")
@@ -1029,12 +1008,14 @@ fn render_password_field(panel: &UserPanel, cx: &mut Context<UserPanel>) -> impl
 fn render_login_button(
     email_val: SharedString,
     password_val: SharedString,
+    is_logging_in: bool,
     cx: &mut Context<UserPanel>,
 ) -> impl IntoElement {
     Button::new("login-button")
         .label("Sign In")
         .with_size(Size::Large)
         .primary()
+        .disabled(is_logging_in)
         .w_full()
         .on_click(cx.listener(move |this, _, _, cx| {
             this.auth_error = None;
@@ -1114,6 +1095,7 @@ fn render_signup_submit_button(
     email_val: SharedString,
     password_val: SharedString,
     confirm_password_val: SharedString,
+    is_logging_in: bool,
     window: &mut Window,
     cx: &mut Context<UserPanel>,
 ) -> impl IntoElement {
@@ -1122,6 +1104,8 @@ fn render_signup_submit_button(
         .label("Create Account")
         .with_size(Size::Large)
         .primary()
+        .loading(is_logging_in)
+        .disabled(is_logging_in)
         .w_full()
         .on_click(cx.listener(move |this, _, _window, cx| {
             this.auth_error = None;
