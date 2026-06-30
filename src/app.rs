@@ -13,9 +13,12 @@ use gpui_component::theme::{Theme, ThemeRegistry};
 use gpui_component::{ActiveTheme, Icon, Root, Sizable, TitleBar};
 
 use crate::auth::state::{self, AuthState};
-use crate::config::app_config::{AppConfig, DEFAULT_DARK_THEME};
+use crate::config::app_config::{AppConfig, DEFAULT_DARK_THEME, FontSizePreset};
 use crate::config::model_config;
-use crate::core::actions::{About, Quit, ShowMainWindow};
+use crate::core::actions::{
+    About, Quit, SelectFontLarge, SelectFontMedium, SelectFontSmall, ShowMainWindow,
+};
+use crate::core::app::apply_font_size;
 use crate::core::app::AppStore;
 use crate::core::assets::Assets;
 use crate::core::session_manager::SessionManager;
@@ -109,6 +112,7 @@ pub fn run() {
             }
             // Other theme settings
             Theme::global_mut(cx).notification.placement = gpui::Anchor::TopCenter;
+            Theme::global_mut(cx).font_size = config.font_size.to_px();
 
             let models = pi_bridge
                 .as_ref()
@@ -178,6 +182,15 @@ pub fn run() {
             cx.on_action(|_: &About, cx: &mut App| {
                 open_about_window(cx);
             });
+            cx.on_action(|_: &SelectFontSmall, cx: &mut App| {
+                apply_font_size(FontSizePreset::Small, cx);
+            });
+            cx.on_action(|_: &SelectFontMedium, cx: &mut App| {
+                apply_font_size(FontSizePreset::Medium, cx);
+            });
+            cx.on_action(|_: &SelectFontLarge, cx: &mut App| {
+                apply_font_size(FontSizePreset::Large, cx);
+            });
             let mut key_bindings = vec![
                 KeyBinding::new("cmd-w", crate::core::actions::CloseWindow, None),
                 KeyBinding::new("cmd-q", Quit, None),
@@ -192,7 +205,8 @@ pub fn run() {
             }
             cx.bind_keys(key_bindings);
 
-            cx.set_menus(vec![
+            #[allow(unused_mut)]
+            let mut menus = vec![
                 Menu {
                     name: "Mini Pi".into(),
                     items: vec![
@@ -207,7 +221,20 @@ pub fn run() {
                     items: vec![MenuItem::action("Show Main Window", ShowMainWindow)],
                     disabled: false,
                 },
-            ]);
+            ];
+
+            #[cfg(target_os = "macos")]
+            menus.push(Menu {
+                name: "View".into(),
+                items: vec![
+                    MenuItem::action("Small Font", SelectFontSmall),
+                    MenuItem::action("Medium Font", SelectFontMedium),
+                    MenuItem::action("Large Font", SelectFontLarge),
+                ],
+                disabled: false,
+            });
+
+            cx.set_menus(menus);
 
             cx.on_window_closed(|cx: &mut App, _window_id| {
                 if !cfg!(target_os = "macos") && cx.windows().is_empty() {

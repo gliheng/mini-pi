@@ -4,13 +4,14 @@ use std::{
 };
 
 use gpui::{
-    AnyWindowHandle, Bounds, Entity, Global, TitlebarOptions, WindowBackgroundAppearance,
-    WindowBounds, WindowOptions, point, px,
+    AnyWindowHandle, BorrowAppContext, Bounds, Entity, Global, TitlebarOptions,
+    WindowBackgroundAppearance, WindowBounds, WindowOptions, point, px,
 };
 
 use crate::auth::state::{AuthState, SupabaseSession};
-use crate::config::app_config::AppConfig;
+use crate::config::app_config::{AppConfig, FontSizePreset};
 use crate::config::model_config::ModelInfo;
+use gpui_component::theme::Theme;
 use crate::core::session_manager::SessionManager;
 use crate::data::store::Store;
 use crate::remote::RemoteController;
@@ -51,4 +52,15 @@ pub fn custom_window_options(bounds: Option<Bounds<gpui::Pixels>>) -> WindowOpti
         window_background: WindowBackgroundAppearance::Transparent,
         ..Default::default()
     }
+}
+
+pub fn apply_font_size(preset: FontSizePreset, cx: &mut gpui::App) {
+    Theme::global_mut(cx).font_size = preset.to_px();
+    cx.update_global(|app: &mut AppStore, _| {
+        app.config.font_size = preset;
+        if let Err(e) = app.config.save() {
+            eprintln!("[font-size] failed to save config: {}", e);
+        }
+    });
+    cx.refresh_windows();
 }

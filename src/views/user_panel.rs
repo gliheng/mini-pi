@@ -1,13 +1,14 @@
 use gpui::{
-    AppContext, BorrowAppContext, ClipboardItem, Context, EventEmitter, InteractiveElement,
+    Action, AppContext, BorrowAppContext, ClipboardItem, Context, EventEmitter, InteractiveElement,
     IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
     div, prelude::FluentBuilder, px, rgb,
 };
 
 use crate::auth::state::{self, AuthState};
 use crate::auth::supabase;
-use crate::config::app_config::{DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME};
-use crate::core::app::AppStore;
+use crate::config::app_config::{DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME, FontSizePreset};
+use crate::core::actions::About;
+use crate::core::app::{AppStore, apply_font_size};
 use crate::remote::RemoteStatus;
 use crate::remote::cloudflared;
 use crate::remote::controller::TunnelLog;
@@ -16,10 +17,11 @@ use crate::sync::settings_sync;
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::notification::Notification;
+use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
 use gpui_component::switch::Switch;
 use gpui_component::theme::{Theme, ThemeRegistry};
 use gpui_component::{
-    ActiveTheme as _, Disableable as _, Icon, Sizable as _, Size, WindowExt as _,
+    ActiveTheme as _, Disableable as _, Icon, IndexPath, Sizable as _, Size, WindowExt as _,
 };
 
 #[derive(Clone)]
@@ -69,10 +71,29 @@ pub struct UserPanel {
     pub auth_error: Option<String>,
     pub auth_dialog: Option<AuthDialog>,
     pub cloudflared_dialog: Option<CloudflaredDialog>,
+    pub font_size_dropdown: gpui::Entity<SelectState<SearchableVec<FontSizePreset>>>,
     pub _email_sub: gpui::Subscription,
     pub _password_sub: gpui::Subscription,
     pub _confirm_password_sub: gpui::Subscription,
     pub _remote_sub: Option<gpui::Subscription>,
+    pub _font_size_dropdown_sub: gpui::Subscription,
+}
+
+impl SelectItem for FontSizePreset {
+    type Value = FontSizePreset;
+
+    fn title(&self) -> SharedString {
+        match self {
+            FontSizePreset::Small => "Small",
+            FontSizePreset::Medium => "Medium",
+            FontSizePreset::Large => "Large",
+        }
+        .into()
+    }
+
+    fn value(&self) -> &Self::Value {
+        self
+    }
 }
 
 impl UserPanel {
@@ -106,6 +127,33 @@ impl UserPanel {
             })
         });
 
+        let presets = vec![
+            FontSizePreset::Small,
+            FontSizePreset::Medium,
+            FontSizePreset::Large,
+        ];
+        let initial_preset = cx.global::<AppStore>().config.font_size;
+        let initial_index = presets
+            .iter()
+            .position(|p| *p == initial_preset)
+            .map(|row| IndexPath::default().row(row));
+        let font_size_dropdown = cx.new(|cx| {
+            SelectState::new(
+                SearchableVec::new(presets),
+                initial_index,
+                window,
+                cx,
+            )
+        });
+        let _font_size_dropdown_sub = cx.subscribe(
+            &font_size_dropdown,
+            |_this, _dropdown, event: &SelectEvent<SearchableVec<FontSizePreset>>, cx| {
+                if let SelectEvent::Confirm(Some(preset)) = event {
+                    apply_font_size(*preset, cx);
+                }
+            },
+        );
+
         Self {
             email_input,
             password_input,
@@ -113,10 +161,12 @@ impl UserPanel {
             auth_error: None,
             auth_dialog: None,
             cloudflared_dialog: None,
+            font_size_dropdown,
             _email_sub,
             _password_sub,
             _confirm_password_sub,
             _remote_sub: remote_sub,
+            _font_size_dropdown_sub,
         }
     }
 
@@ -541,7 +591,7 @@ fn render_remote_control_section(
                 .items_center()
                 .gap_3()
                 .px_4()
-                .py_3()
+                .py_2()
                 .rounded_lg()
                 .bg(cx.theme().secondary)
                 .child(
@@ -725,7 +775,7 @@ fn render_remote_control_section(
                 .flex_col()
                 .gap_2()
                 .px_4()
-                .py_3()
+                .py_2()
                 .rounded_lg()
                 .bg(cx.theme().secondary)
                 .border_1()
@@ -766,7 +816,7 @@ fn render_back_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
 }
 
 fn render_auth_content(
-    _panel: &UserPanel,
+    panel: &UserPanel,
     auth: &AuthState,
     window: &mut Window,
     cx: &mut Context<UserPanel>,
@@ -843,7 +893,7 @@ fn render_auth_content(
                             .items_center()
                             .gap_1()
                             .px_4()
-                            .py_3()
+                            .py_2()
                             .rounded_lg()
                             .bg(cx.theme().secondary)
                             .child(
@@ -896,8 +946,8 @@ fn render_auth_content(
                                 .child("SETTINGS"),
                         )
                         .child(render_appearance_row(window, cx))
-                        .child(settings_row("Keyboard Shortcuts", "icons/keyboard.svg", cx))
-                        .child(settings_row("About", "icons/about.svg", cx)),
+                        .child(render_font_size_row(panel, cx))
+                        .child(render_about_row(cx)),
                 )
                 .child(render_logout_button(cx))
         }
@@ -947,10 +997,95 @@ fn render_auth_content(
                             .child("SETTINGS"),
                     )
                     .child(render_appearance_row(window, cx))
-                    .child(settings_row("Keyboard Shortcuts", "icons/keyboard.svg", cx))
-                    .child(settings_row("About", "icons/about.svg", cx)),
+                    .child(render_font_size_row(panel, cx))
+                    .child(render_about_row(cx)),
             ),
     }
+}
+
+fn render_about_row(cx: &mut Context<UserPanel>) -> impl IntoElement {
+    div()
+        .id("settings-about")
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_3()
+        .px_4()
+        .py_2()
+        .rounded_lg()
+        .bg(cx.theme().secondary)
+        .cursor_pointer()
+        .hover(|style| style.bg(cx.theme().secondary_hover))
+        .on_click(cx.listener(|_, _, window, cx| {
+            window.dispatch_action(About.boxed_clone(), cx);
+        }))
+        .child(
+            div()
+                .size(px(20.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    gpui::svg()
+                        .path("icons/about.svg")
+                        .size(px(18.))
+                        .text_color(cx.theme().muted_foreground),
+                ),
+        )
+        .child(
+            div()
+                .flex_1()
+                .text_sm()
+                .text_color(cx.theme().foreground)
+                .child("About"),
+        )
+        .child(
+            gpui::svg()
+                .path("icons/chevron-right.svg")
+                .size(px(16.))
+                .text_color(cx.theme().muted_foreground),
+        )
+}
+
+fn render_font_size_row(panel: &UserPanel, cx: &mut Context<UserPanel>) -> impl IntoElement {
+    div()
+        .id("settings-font-size")
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_3()
+        .px_4()
+        .py_2()
+        .rounded_lg()
+        .bg(cx.theme().secondary)
+        .child(
+            div()
+                .size(px(20.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    gpui::svg()
+                        .path("icons/appearance.svg")
+                        .size(px(18.))
+                        .text_color(cx.theme().muted_foreground),
+                ),
+        )
+        .child(
+            div()
+                .flex_1()
+                .text_sm()
+                .text_color(cx.theme().foreground)
+                .child("Font Size"),
+        )
+        .child(
+            div().w(px(100.)).child(
+                Select::new(&panel.font_size_dropdown)
+                    .with_size(Size::Small)
+                    .appearance(false)
+                    .menu_width(gpui::Length::Auto),
+            ),
+        )
 }
 
 fn render_email_field(panel: &UserPanel, cx: &mut Context<UserPanel>) -> impl IntoElement {
@@ -1269,7 +1404,7 @@ fn sync_row(
         .items_center()
         .gap_3()
         .px_4()
-        .py_3()
+        .py_2()
         .rounded_lg()
         .bg(cx.theme().secondary)
         .child(
@@ -1297,7 +1432,7 @@ fn render_appearance_row(_window: &mut Window, cx: &mut Context<UserPanel>) -> i
         .items_center()
         .gap_3()
         .px_4()
-        .py_3()
+        .py_2()
         .rounded_lg()
         .bg(cx.theme().secondary)
         .child(
@@ -1348,55 +1483,5 @@ fn render_appearance_row(_window: &mut Window, cx: &mut Context<UserPanel>) -> i
                         cx.refresh_windows();
                     }
                 })),
-        )
-}
-
-fn settings_row(
-    label: impl Into<SharedString>,
-    icon_path: impl Into<SharedString>,
-    cx: &mut Context<UserPanel>,
-) -> impl IntoElement {
-    let label: SharedString = label.into();
-    let icon_path: SharedString = icon_path.into();
-    div()
-        .id(SharedString::from(format!(
-            "settings-{}",
-            label.to_lowercase().replace(" ", "-")
-        )))
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_3()
-        .px_4()
-        .py_3()
-        .rounded_lg()
-        .bg(cx.theme().secondary)
-        .cursor_pointer()
-        .hover(|style| style.bg(cx.theme().secondary_hover))
-        .child(
-            div()
-                .size(px(20.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    gpui::svg()
-                        .path(icon_path)
-                        .size(px(18.))
-                        .text_color(cx.theme().muted_foreground),
-                ),
-        )
-        .child(
-            div()
-                .flex_1()
-                .text_sm()
-                .text_color(cx.theme().foreground)
-                .child(label),
-        )
-        .child(
-            gpui::svg()
-                .path("icons/chevron-right.svg")
-                .size(px(16.))
-                .text_color(cx.theme().muted_foreground),
         )
 }

@@ -14,5 +14,8 @@ actions!(
         StopStreaming,
         ShowMainWindow,
         About,
+        SelectFontSmall,
+        SelectFontMedium,
+        SelectFontLarge,
     ]
 );

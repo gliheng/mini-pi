@@ -23,9 +23,7 @@ use crate::views::reasoning::Reasoning;
 use crate::views::tool_call::ToolCall;
 use crate::views::workspace_manager::{WorkspaceManager, WorkspaceManagerEvent};
 use gpui_component::button::{Button, ButtonVariants, Toggle, ToggleVariants};
-use gpui_component::dialog::{
-    DialogAction, DialogClose, DialogFooter, DialogHeader, DialogTitle,
-};
+use gpui_component::dialog::{DialogAction, DialogClose, DialogFooter, DialogHeader, DialogTitle};
 use gpui_component::input::{Input, InputState};
 use gpui_component::notification::Notification;
 use gpui_component::tag::Tag;
@@ -917,52 +915,40 @@ impl ChatWindow {
                         .close_button(true)
                         .keyboard(true)
                         .content(move |content, _, cx| {
-                            let selected = content_view
-                                .read(cx)
-                                .extension_select_selected
-                                .unwrap_or(0);
+                            let selected =
+                                content_view.read(cx).extension_select_selected.unwrap_or(0);
                             content
                                 .p_4()
                                 .gap_3()
                                 .child(
-                                    DialogHeader::new().child(
-                                        DialogTitle::new().child(header_title.clone()),
-                                    ),
+                                    DialogHeader::new()
+                                        .child(DialogTitle::new().child(header_title.clone())),
                                 )
-                                .child(
-                                    v_flex()
-                                        .gap_2()
-                                        .children(content_options.iter().enumerate().map(
-                                            |(idx, opt)| {
-                                                let view = content_view.clone();
-                                                Toggle::new(format!("ext-select-opt-{}", idx))
-                                                    .label(opt.clone())
-                                                    .checked(idx == selected)
-                                                    .outline()
-                                                    .on_click(move |_, _, cx| {
-                                                        view.update(cx, |this, cx| {
-                                                            this.extension_select_selected =
-                                                                Some(idx);
-                                                            cx.notify();
-                                                        });
-                                                    })
-                                            },
-                                        )),
-                                )
+                                .child(v_flex().gap_2().children(
+                                    content_options.iter().enumerate().map(|(idx, opt)| {
+                                        let view = content_view.clone();
+                                        Toggle::new(format!("ext-select-opt-{}", idx))
+                                            .label(opt.clone())
+                                            .checked(idx == selected)
+                                            .outline()
+                                            .on_click(move |_, _, cx| {
+                                                view.update(cx, |this, cx| {
+                                                    this.extension_select_selected = Some(idx);
+                                                    cx.notify();
+                                                });
+                                            })
+                                    }),
+                                ))
                                 .child(
                                     DialogFooter::new()
                                         .child(
                                             DialogClose::new().child(
-                                                Button::new("cancel")
-                                                    .outline()
-                                                    .label("Cancel"),
+                                                Button::new("cancel").outline().label("Cancel"),
                                             ),
                                         )
                                         .child(
                                             DialogAction::new().child(
-                                                Button::new("confirm")
-                                                    .primary()
-                                                    .label("OK"),
+                                                Button::new("confirm").primary().label("OK"),
                                             ),
                                         ),
                                 )
@@ -971,10 +957,8 @@ impl ChatWindow {
                             if !ok_answered.replace(true)
                                 && let Some(session) = ok_session.as_ref()
                             {
-                                let selected = ok_view
-                                    .read(cx)
-                                    .extension_select_selected
-                                    .unwrap_or(0);
+                                let selected =
+                                    ok_view.read(cx).extension_select_selected.unwrap_or(0);
                                 let response = ok_options
                                     .get(selected)
                                     .map(|v| serde_json::json!({ "value": v }))
@@ -1112,25 +1096,20 @@ impl ChatWindow {
                                 .p_4()
                                 .gap_3()
                                 .child(
-                                    DialogHeader::new().child(
-                                        DialogTitle::new().child(header_title.clone()),
-                                    ),
+                                    DialogHeader::new()
+                                        .child(DialogTitle::new().child(header_title.clone())),
                                 )
                                 .child(Input::new(&content_state).w_full())
                                 .child(
                                     DialogFooter::new()
                                         .child(
                                             DialogClose::new().child(
-                                                Button::new("cancel")
-                                                    .outline()
-                                                    .label("Cancel"),
+                                                Button::new("cancel").outline().label("Cancel"),
                                             ),
                                         )
                                         .child(
                                             DialogAction::new().child(
-                                                Button::new("confirm")
-                                                    .primary()
-                                                    .label("OK"),
+                                                Button::new("confirm").primary().label("OK"),
                                             ),
                                         ),
                                 )
@@ -1213,25 +1192,20 @@ impl ChatWindow {
                                 .p_4()
                                 .gap_3()
                                 .child(
-                                    DialogHeader::new().child(
-                                        DialogTitle::new().child(header_title.clone()),
-                                    ),
+                                    DialogHeader::new()
+                                        .child(DialogTitle::new().child(header_title.clone())),
                                 )
                                 .child(Input::new(&content_state).w_full())
                                 .child(
                                     DialogFooter::new()
                                         .child(
                                             DialogClose::new().child(
-                                                Button::new("cancel")
-                                                    .outline()
-                                                    .label("Cancel"),
+                                                Button::new("cancel").outline().label("Cancel"),
                                             ),
                                         )
                                         .child(
                                             DialogAction::new().child(
-                                                Button::new("confirm")
-                                                    .primary()
-                                                    .label("OK"),
+                                                Button::new("confirm").primary().label("OK"),
                                             ),
                                         ),
                                 )
@@ -1284,7 +1258,7 @@ impl ChatWindow {
                 };
                 window.push_notification(notification, cx);
             }
-            "set_editor_text" => {
+            "setEditorText" => {
                 let text = payload
                     .get("text")
                     .and_then(|t| t.as_str())
@@ -1592,7 +1566,7 @@ impl ChatWindow {
                 let tag = if is_selected {
                     Tag::custom(bg, fg, bg)
                 } else {
-                    Tag::custom(bg.opacity(0.7), fg, bg.opacity(0.7))
+                    Tag::custom(bg.opacity(0.5), fg, bg.opacity(0.5))
                 };
                 div()
                     .cursor_pointer()
@@ -2289,9 +2263,7 @@ impl Render for ChatWindow {
             .on_action(cx.listener(Self::send_message))
             .on_action(cx.listener(Self::stop_streaming))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
-                if event.keystroke.key == "escape"
-                    && this.chat_input.read(cx).is_popup_visible()
-                {
+                if event.keystroke.key == "escape" && this.chat_input.read(cx).is_popup_visible() {
                     this.chat_input.update(cx, |ci, cx| ci.close_popup(cx));
                 }
             }))
