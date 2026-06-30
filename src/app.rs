@@ -90,12 +90,12 @@ pub fn run() {
             let themes_dir = crate::utils::paths::app_root()
                 .join("assets")
                 .join("themes");
-            let theme_store = store.clone();
+            let initial_theme_name = config
+                .theme
+                .clone()
+                .unwrap_or_else(|| DEFAULT_DARK_THEME.to_string());
             if let Err(err) = ThemeRegistry::watch_dir(themes_dir, cx, move |cx| {
-                let theme_name = theme_store
-                    .theme_name()
-                    .unwrap_or_else(|| DEFAULT_DARK_THEME.to_string());
-                let theme_name = SharedString::from(theme_name);
+                let theme_name = SharedString::from(initial_theme_name.clone());
                 if let Some(theme) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
                     let mode = theme.mode;
                     let global_theme = Theme::global_mut(cx);

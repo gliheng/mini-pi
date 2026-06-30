@@ -1469,7 +1469,8 @@ fn render_appearance_row(_window: &mut Window, cx: &mut Context<UserPanel>) -> i
                         let mode = theme.mode;
                         let name = theme.name.to_string();
                         cx.update_global(|app: &mut AppStore, _| {
-                            if let Err(e) = app.store.set_theme_name(&name) {
+                            app.config.theme = Some(name.clone());
+                            if let Err(e) = app.config.save() {
                                 eprintln!("[theme] failed to save theme: {}", e);
                             }
                         });

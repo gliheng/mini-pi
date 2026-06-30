@@ -36,6 +36,8 @@ pub struct AppConfig {
     pub font_size: FontSizePreset,
     #[serde(default)]
     pub remote_control: RemoteControlConfig,
+    #[serde(default)]
+    pub theme: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

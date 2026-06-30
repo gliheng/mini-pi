@@ -215,14 +215,6 @@ impl Store {
         Ok(())
     }
 
-    pub fn theme_name(&self) -> Option<String> {
-        self.get_user_setting("theme").ok().flatten()
-    }
-
-    pub fn set_theme_name(&self, name: &str) -> Result<(), StoreError> {
-        self.set_user_setting("theme", name)
-    }
-
     /// Fetch a thread by id using an existing connection. Returns
     /// `Ok(None)` when the row doesn't exist (so callers can compose this
     /// inside a transaction without re-locking the mutex).
