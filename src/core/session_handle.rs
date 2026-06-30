@@ -47,7 +47,9 @@ pub struct SessionStats {
 #[derive(Clone, Debug)]
 pub enum SessionEvent {
     Changed,
-    ExportHtmlSucceeded { path: PathBuf },
+    ExportHtmlSucceeded {
+        path: PathBuf,
+    },
     ExtensionUiRequest {
         id: String,
         method: String,
@@ -1092,7 +1094,11 @@ impl SessionHandle {
                     }
                 }
             }
-            BridgeEvent::ExtensionUiRequest { id, method, payload } => {
+            BridgeEvent::ExtensionUiRequest {
+                id,
+                method,
+                payload,
+            } => {
                 cx.emit(SessionEvent::ExtensionUiRequest {
                     id,
                     method,

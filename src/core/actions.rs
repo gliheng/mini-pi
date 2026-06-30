@@ -14,6 +14,7 @@ actions!(
         StopStreaming,
         ShowMainWindow,
         About,
+        OpenInstallExtensionWindow,
         SelectFontSmall,
         SelectFontMedium,
         SelectFontLarge,

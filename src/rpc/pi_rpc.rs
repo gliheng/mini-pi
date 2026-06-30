@@ -145,6 +145,27 @@ pub struct BridgeModel {
     pub thinking_level_map: Option<HashMap<String, Option<String>>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct BridgeSkill {
+    pub name: String,
+    pub description: Option<String>,
+    pub raw: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct BridgeExtension {
+    pub name: String,
+    pub description: Option<String>,
+    pub raw: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct BridgePrompt {
+    pub name: String,
+    pub description: Option<String>,
+    pub raw: serde_json::Value,
+}
+
 // ---------------------------------------------------------------------------
 // Macros
 // ---------------------------------------------------------------------------
@@ -171,6 +192,20 @@ impl Drop for PiBridge {
         if let Ok(mut child) = self.child.lock() {
             let _ = child.kill();
         }
+    }
+}
+
+/// Ensures a temporary session entry is removed from the bridge's session map
+/// even if the caller panics or the future is dropped early.
+struct SessionGuard {
+    sessions: Arc<Mutex<HashMap<String, futures::channel::mpsc::UnboundedSender<BridgeEvent>>>>,
+    session_id: String,
+}
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        let mut sessions = self.sessions.lock().unwrap();
+        sessions.remove(&self.session_id);
     }
 }
 
@@ -344,6 +379,10 @@ impl PiBridge {
             let mut sessions = self.sessions.lock().unwrap();
             sessions.insert(session_id.clone(), tx);
         }
+        let _guard = SessionGuard {
+            sessions: Arc::clone(&self.sessions),
+            session_id: session_id.clone(),
+        };
 
         let req = serde_json::json!({
             "type": "get_models",
@@ -351,8 +390,6 @@ impl PiBridge {
             "id": request_id,
         });
         if let Err(e) = self.send_json(&req) {
-            let mut sessions = self.sessions.lock().unwrap();
-            sessions.remove(&session_id);
             return Err(e);
         }
 
@@ -380,11 +417,6 @@ impl PiBridge {
                 "bridge closed before get_models response".into(),
             ))
         });
-
-        {
-            let mut sessions = self.sessions.lock().unwrap();
-            sessions.remove(&session_id);
-        }
 
         let data = result?;
         let models_val = data
@@ -431,6 +463,158 @@ impl PiBridge {
             });
         }
         Ok(models)
+    }
+
+    pub fn get_skills(&self) -> Result<Vec<BridgeSkill>, PiRpcError> {
+        self.query_session_resource("get_skills", "skills", |data| {
+            let arr = data
+                .as_array()
+                .ok_or_else(|| PiRpcError::Skills("skills is not an array".into()))?;
+            let mut items = Vec::new();
+            for val in arr {
+                let obj = val.as_object();
+                let name = obj
+                    .and_then(|o| o.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unnamed")
+                    .to_string();
+                let description = obj
+                    .and_then(|o| o.get("description"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let raw = obj
+                    .and_then(|o| o.get("raw"))
+                    .cloned()
+                    .unwrap_or_else(|| val.clone());
+                items.push(BridgeSkill {
+                    name,
+                    description,
+                    raw,
+                });
+            }
+            Ok(items)
+        })
+    }
+
+    pub fn get_extensions(&self) -> Result<Vec<BridgeExtension>, PiRpcError> {
+        self.query_session_resource("get_extensions", "extensions", |data| {
+            let arr = data
+                .as_array()
+                .ok_or_else(|| PiRpcError::Extensions("extensions is not an array".into()))?;
+            let mut items = Vec::new();
+            for val in arr {
+                let obj = val.as_object();
+                let name = obj
+                    .and_then(|o| o.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unnamed")
+                    .to_string();
+                let description = obj
+                    .and_then(|o| o.get("description"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let raw = obj
+                    .and_then(|o| o.get("raw"))
+                    .cloned()
+                    .unwrap_or_else(|| val.clone());
+                items.push(BridgeExtension {
+                    name,
+                    description,
+                    raw,
+                });
+            }
+            Ok(items)
+        })
+    }
+
+    pub fn get_prompts(&self) -> Result<Vec<BridgePrompt>, PiRpcError> {
+        self.query_session_resource("get_prompts", "prompts", |data| {
+            let arr = data
+                .as_array()
+                .ok_or_else(|| PiRpcError::Prompts("prompts is not an array".into()))?;
+            let mut items = Vec::new();
+            for val in arr {
+                let obj = val.as_object();
+                let name = obj
+                    .and_then(|o| o.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unnamed")
+                    .to_string();
+                let description = obj
+                    .and_then(|o| o.get("description"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let raw = obj
+                    .and_then(|o| o.get("raw"))
+                    .cloned()
+                    .unwrap_or_else(|| val.clone());
+                items.push(BridgePrompt {
+                    name,
+                    description,
+                    raw,
+                });
+            }
+            Ok(items)
+        })
+    }
+
+    fn query_session_resource<T>(
+        &self,
+        command: &str,
+        data_key: &str,
+        parse: impl FnOnce(serde_json::Value) -> Result<T, PiRpcError>,
+    ) -> Result<T, PiRpcError> {
+        let session_id = format!("__resources__{}", Uuid::new_v4());
+        let request_id = Uuid::new_v4().to_string();
+
+        // Create a session so the bridge has a runtime with services.resourceLoader.
+        let mut rx = self.create_session(session_id.clone(), None, None, None, None)?;
+        let _guard = SessionGuard {
+            sessions: Arc::clone(&self.sessions),
+            session_id: session_id.clone(),
+        };
+
+        let req = serde_json::json!({
+            "type": command,
+            "id": request_id,
+        });
+        if let Err(e) = self.send(session_id.clone(), &req) {
+            return Err(e);
+        }
+
+        let result = self.runtime.block_on(async move {
+            while let Some(event) = rx.next().await {
+                if let BridgeEvent::Response {
+                    command: resp_command,
+                    success,
+                    data,
+                    error,
+                    ..
+                } = event
+                {
+                    if resp_command == command {
+                        if success {
+                            return Ok(data);
+                        }
+                        return Err(PiRpcError::Bridge(format!(
+                            "{} failed: {}",
+                            command,
+                            error.unwrap_or_else(|| "unknown error".into())
+                        )));
+                    }
+                }
+            }
+            Err(PiRpcError::WebSocket(format!(
+                "bridge closed before {} response",
+                command
+            )))
+        });
+
+        let data = result?;
+        let resource_val = data.and_then(|d| d.get(data_key).cloned()).ok_or_else(|| {
+            PiRpcError::Bridge(format!("{} response missing {}", command, data_key))
+        })?;
+        parse(resource_val)
     }
 
     pub fn send(&self, session_id: String, json: &serde_json::Value) -> Result<(), PiRpcError> {
@@ -1346,6 +1530,10 @@ pub enum PiRpcError {
     WebSocket(String),
     Runtime(String),
     Models(String),
+    Skills(String),
+    Extensions(String),
+    Prompts(String),
+    Bridge(String),
 }
 
 impl std::fmt::Display for PiRpcError {
@@ -1358,6 +1546,10 @@ impl std::fmt::Display for PiRpcError {
             PiRpcError::WebSocket(msg) => write!(f, "websocket error: {}", msg),
             PiRpcError::Runtime(msg) => write!(f, "runtime error: {}", msg),
             PiRpcError::Models(msg) => write!(f, "models error: {}", msg),
+            PiRpcError::Skills(msg) => write!(f, "skills error: {}", msg),
+            PiRpcError::Extensions(msg) => write!(f, "extensions error: {}", msg),
+            PiRpcError::Prompts(msg) => write!(f, "prompts error: {}", msg),
+            PiRpcError::Bridge(msg) => write!(f, "bridge error: {}", msg),
         }
     }
 }

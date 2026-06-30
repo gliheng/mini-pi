@@ -104,6 +104,27 @@ const GetModelSchema = Type.Intersect([
   }),
 ]);
 
+const GetSkillsSchema = Type.Intersect([
+  BaseMessageSchema,
+  Type.Object({
+    type: Type.Literal("get_skills"),
+  }),
+]);
+
+const GetExtensionsSchema = Type.Intersect([
+  BaseMessageSchema,
+  Type.Object({
+    type: Type.Literal("get_extensions"),
+  }),
+]);
+
+const GetPromptsSchema = Type.Intersect([
+  BaseMessageSchema,
+  Type.Object({
+    type: Type.Literal("get_prompts"),
+  }),
+]);
+
 const GetSessionStatsSchema = Type.Intersect([
   BaseMessageSchema,
   Type.Object({
@@ -319,6 +340,127 @@ export async function handleGetCommands(ctx: CommandContext): Promise<void> {
   sendResponse(ws, sessionId, "get_commands", msg.id, true, { commands });
 }
 
+function normalizeResourceArray(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) {
+    return raw;
+  }
+  if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    if (Array.isArray(obj.skills)) return obj.skills;
+    if (Array.isArray(obj.extensions)) return obj.extensions;
+  }
+  return [];
+}
+
+function extractResourceName(item: unknown): string | undefined {
+  if (item && typeof item === "object") {
+    const obj = item as Record<string, unknown>;
+    if (typeof obj.name === "string") return obj.name;
+    if (typeof obj.title === "string") return obj.title;
+    if (typeof obj.id === "string") return obj.id;
+    if (typeof obj.path === "string") return obj.path;
+    if (typeof obj.entryPoint === "string") return obj.entryPoint;
+  }
+  return undefined;
+}
+
+function extractResourceDescription(item: unknown): string | undefined {
+  if (item && typeof item === "object") {
+    const obj = item as Record<string, unknown>;
+    if (typeof obj.description === "string") return obj.description;
+  }
+  return undefined;
+}
+
+function normalizeResourceItems(raw: unknown): unknown[] {
+  return normalizeResourceArray(raw).map((item) => ({
+    name: extractResourceName(item) ?? "Unnamed",
+    description: extractResourceDescription(item) ?? "",
+    raw: item,
+  }));
+}
+
+interface ResourceLoader {
+  reload?: () => Promise<void> | void;
+  getSkills?: () => Promise<unknown> | unknown;
+  getExtensions?: () => Promise<unknown> | unknown;
+  getPrompts?: () => Promise<unknown> | unknown;
+}
+
+function getResourceLoader(
+  runtime: unknown,
+): ResourceLoader | undefined {
+  const services = (runtime as Record<string, unknown> | undefined)?.services;
+  const loader =
+    services && typeof services === "object"
+      ? (services as Record<string, unknown>).resourceLoader
+      : undefined;
+  return loader as ResourceLoader | undefined;
+}
+
+export async function handleGetSkills(ctx: CommandContext): Promise<void> {
+  const { ws, sessionId, state, msg } = ctx;
+  const loader = getResourceLoader(state.runtime);
+  if (!loader?.getSkills) {
+    sendResponse(
+      ws,
+      sessionId,
+      "get_skills",
+      msg.id,
+      false,
+      undefined,
+      "resource loader or getSkills not available",
+    );
+    return;
+  }
+  await loader.reload?.();
+  const raw = await loader.getSkills();
+  const skills = normalizeResourceItems(raw);
+  sendResponse(ws, sessionId, "get_skills", msg.id, true, { skills });
+}
+
+export async function handleGetExtensions(ctx: CommandContext): Promise<void> {
+  const { ws, sessionId, state, msg } = ctx;
+  const loader = getResourceLoader(state.runtime);
+  if (!loader?.getExtensions) {
+    sendResponse(
+      ws,
+      sessionId,
+      "get_extensions",
+      msg.id,
+      false,
+      undefined,
+      "resource loader or getExtensions not available",
+    );
+    return;
+  }
+  await loader.reload?.();
+  const raw = await loader.getExtensions();
+  const extensions = normalizeResourceItems(raw);
+  sendResponse(ws, sessionId, "get_extensions", msg.id, true, { extensions });
+}
+
+export async function handleGetPrompts(ctx: CommandContext): Promise<void> {
+  const { ws, sessionId, state, msg } = ctx;
+  const loader = getResourceLoader(state.runtime);
+  if (!loader?.getPrompts) {
+    sendResponse(
+      ws,
+      sessionId,
+      "get_prompts",
+      msg.id,
+      false,
+      undefined,
+      "resource loader or getPrompts not available",
+    );
+    return;
+  }
+  await loader.reload?.();
+  const raw = await loader.getPrompts();
+  const prompts = normalizeResourceItems(raw);
+  sendResponse(ws, sessionId, "get_prompts", msg.id, true, { prompts });
+}
+
 export async function handleExportHtml(ctx: CommandContext): Promise<void> {
   const { ws, sessionId, state, msg } = ctx;
   const parsed = assertShape(msg, ExportHtmlSchema);
@@ -426,6 +568,9 @@ export const sessionCommands = new Map<string, SessionCommandHandler>([
   ["clone", handleClone],
   ["get_messages", handleGetMessages],
   ["get_commands", handleGetCommands],
+  ["get_skills", handleGetSkills],
+  ["get_extensions", handleGetExtensions],
+  ["get_prompts", handleGetPrompts],
   ["export_html", handleExportHtml],
   ["compact", handleCompact],
   ["extension_ui_response", handleExtensionUiResponse],

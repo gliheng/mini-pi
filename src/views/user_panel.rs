@@ -137,14 +137,8 @@ impl UserPanel {
             .iter()
             .position(|p| *p == initial_preset)
             .map(|row| IndexPath::default().row(row));
-        let font_size_dropdown = cx.new(|cx| {
-            SelectState::new(
-                SearchableVec::new(presets),
-                initial_index,
-                window,
-                cx,
-            )
-        });
+        let font_size_dropdown =
+            cx.new(|cx| SelectState::new(SearchableVec::new(presets), initial_index, window, cx));
         let _font_size_dropdown_sub = cx.subscribe(
             &font_size_dropdown,
             |_this, _dropdown, event: &SelectEvent<SearchableVec<FontSizePreset>>, cx| {

@@ -16,10 +16,11 @@ use crate::auth::state::{self, AuthState};
 use crate::config::app_config::{AppConfig, DEFAULT_DARK_THEME, FontSizePreset};
 use crate::config::model_config;
 use crate::core::actions::{
-    About, Quit, SelectFontLarge, SelectFontMedium, SelectFontSmall, ShowMainWindow,
+    About, OpenInstallExtensionWindow, Quit, SelectFontLarge, SelectFontMedium, SelectFontSmall,
+    ShowMainWindow,
 };
-use crate::core::app::apply_font_size;
 use crate::core::app::AppStore;
+use crate::core::app::apply_font_size;
 use crate::core::assets::Assets;
 use crate::core::session_manager::SessionManager;
 use crate::data::store::Store;
@@ -27,7 +28,9 @@ use crate::remote::RemoteController;
 use crate::rpc::pi_rpc::PiBridge;
 use crate::sync::settings_sync;
 use crate::views::about::open_about_window;
+use crate::views::install_extension::open_install_extension_window;
 use crate::views::mini_app::MiniApp;
+use crate::views::skills_panel::SkillsPanel;
 use crate::views::thread_list::ThreadList;
 use crate::views::user_panel::{UserPanel, UserPanelEvent};
 
@@ -182,6 +185,9 @@ pub fn run() {
             cx.on_action(|_: &About, cx: &mut App| {
                 open_about_window(cx);
             });
+            cx.on_action(|_: &OpenInstallExtensionWindow, cx: &mut App| {
+                open_install_extension_window(cx);
+            });
             cx.on_action(|_: &SelectFontSmall, cx: &mut App| {
                 apply_font_size(FontSizePreset::Small, cx);
             });
@@ -315,13 +321,15 @@ pub(crate) fn trigger_sync<C>(
 enum MiniPiTab {
     #[default]
     Threads,
+    Skills,
     MiniApp,
 }
 
 impl MiniPiTab {
     fn from_index(index: usize) -> Self {
         match index {
-            1 => MiniPiTab::MiniApp,
+            1 => MiniPiTab::Skills,
+            2 => MiniPiTab::MiniApp,
             _ => MiniPiTab::Threads,
         }
     }
@@ -331,6 +339,7 @@ struct MiniPiApp {
     thread_list: gpui::Entity<ThreadList>,
     user_panel: gpui::Entity<UserPanel>,
     mini_app: gpui::Entity<MiniApp>,
+    skills_panel: gpui::Entity<SkillsPanel>,
     active_tab_index: usize,
     pinned: bool,
     _user_panel_subscription: gpui::Subscription,
@@ -342,6 +351,7 @@ impl MiniPiApp {
         let thread_list = cx.new(|cx| ThreadList::new(window, cx, store));
         let user_panel = cx.new(|cx| UserPanel::new(window, cx));
         let mini_app = cx.new(|cx| MiniApp::new(window, cx));
+        let skills_panel = cx.new(|cx| SkillsPanel::new(window, cx));
 
         let _user_panel_subscription =
             cx.subscribe(&user_panel, move |this, _, event: &UserPanelEvent, cx| {
@@ -374,6 +384,7 @@ impl MiniPiApp {
             thread_list,
             user_panel,
             mini_app,
+            skills_panel,
             active_tab_index: 0,
             pinned: false,
             _user_panel_subscription,
@@ -413,7 +424,8 @@ impl gpui::Render for MiniPiApp {
                             .on_click(cx.listener(|this, ix: &usize, window, cx| {
                                 this.set_active_tab(*ix, window, cx);
                             }))
-                            .child(Tab::new().label("Mini Pi")), // .child(Tab::new().label("Mini app")),
+                            .child(Tab::new().label("Mini Pi"))
+                            .child(Tab::new().label("Skills")),
                     )
                     .child(
                         gpui::div()
@@ -440,6 +452,7 @@ impl gpui::Render for MiniPiApp {
                         } else {
                             match MiniPiTab::from_index(active_tab_index) {
                                 MiniPiTab::Threads => this.child(self.thread_list.clone()),
+                                MiniPiTab::Skills => this.child(self.skills_panel.clone()),
                                 MiniPiTab::MiniApp => this.child(self.mini_app.clone()),
                             }
                         }
@@ -499,6 +512,11 @@ impl MiniPiApp {
         cx.update_global(|app: &mut AppStore, _| {
             app.user_panel_active = false;
         });
+        if let MiniPiTab::Skills = MiniPiTab::from_index(index) {
+            self.skills_panel.update(cx, |panel, cx| {
+                panel.load_if_needed(cx);
+            });
+        }
         cx.notify();
     }
 }

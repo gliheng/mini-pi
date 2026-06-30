@@ -11,12 +11,12 @@ use gpui::{
 use crate::auth::state::{AuthState, SupabaseSession};
 use crate::config::app_config::{AppConfig, FontSizePreset};
 use crate::config::model_config::ModelInfo;
-use gpui_component::theme::Theme;
 use crate::core::session_manager::SessionManager;
 use crate::data::store::Store;
 use crate::remote::RemoteController;
 use crate::rpc::pi_rpc::PiBridge;
 use crate::sync::settings_sync::{SyncMeta, SyncStatus};
+use gpui_component::theme::Theme;
 
 pub struct AppStore {
     pub store: Arc<Store>,
