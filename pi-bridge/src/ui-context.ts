@@ -105,10 +105,32 @@ export function createUiContext(channel: ExtensionUiChannel): ExtensionUIContext
       channel.emit("notify", { message, notifyType: type });
     },
 
+    // Forwarded to the GUI.
+    select: async (title, options, opts) => {
+      const result = await channel.request(
+        "select",
+        { title, options, timeout: opts?.timeout },
+        opts,
+      );
+      if (result.cancelled) return undefined;
+      return result.value ?? undefined;
+    },
+    input: async (title, placeholder, opts) => {
+      const result = await channel.request(
+        "input",
+        { title, placeholder, timeout: opts?.timeout },
+        opts,
+      );
+      if (result.cancelled) return undefined;
+      return result.value ?? undefined;
+    },
+    editor: async (title, prefill) => {
+      const result = await channel.request("editor", { title, prefill });
+      if (result.cancelled) return undefined;
+      return result.value ?? undefined;
+    },
+
     // Not forwarded yet: resolve as cancelled / empty.
-    select: () => Promise.resolve(undefined),
-    input: () => Promise.resolve(undefined),
-    editor: () => Promise.resolve(undefined),
     custom: <T>(): Promise<T> => Promise.resolve(undefined as T),
 
     // Status / widgets: no GUI surface for these yet.
