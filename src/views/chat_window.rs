@@ -66,11 +66,6 @@ pub enum ExtensionDialog {
         options: Vec<SharedString>,
         selected: usize,
     },
-    Confirm {
-        id: String,
-        title: SharedString,
-        message: SharedString,
-    },
     Input {
         id: String,
         title: SharedString,
@@ -87,7 +82,6 @@ impl ExtensionDialog {
     pub fn id(&self) -> &str {
         match self {
             ExtensionDialog::Select { id, .. }
-            | ExtensionDialog::Confirm { id, .. }
             | ExtensionDialog::Input { id, .. }
             | ExtensionDialog::Editor { id, .. } => id,
         }
@@ -949,12 +943,50 @@ impl ChatWindow {
                     .and_then(|m| m.as_str())
                     .unwrap_or("")
                     .to_string();
-                self.extension_dialog = Some(ExtensionDialog::Confirm {
-                    id,
-                    title: title.into(),
-                    message: message.into(),
+                let session = self.session.clone();
+                // Shared one-shot guard so the response is sent exactly once,
+                // whichever close path fires first (OK / Cancel / Esc).
+                let answered = std::rc::Rc::new(std::cell::Cell::new(false));
+                window.open_alert_dialog(cx, move |alert, _window, _cx| {
+                    let ok_session = session.clone();
+                    let ok_id = id.clone();
+                    let ok_answered = answered.clone();
+                    let cancel_session = session.clone();
+                    let cancel_id = id.clone();
+                    let cancel_answered = answered.clone();
+                    alert
+                        .title(title.clone())
+                        .description(message.clone())
+                        .show_cancel(true)
+                        .on_ok(move |_, _window, cx| {
+                            if !ok_answered.replace(true)
+                                && let Some(session) = ok_session.as_ref()
+                            {
+                                session.update(cx, |s, cx| {
+                                    s.respond_extension_ui(
+                                        &ok_id,
+                                        &serde_json::json!({ "confirmed": true }),
+                                        cx,
+                                    );
+                                });
+                            }
+                            true
+                        })
+                        .on_cancel(move |_, _window, cx| {
+                            if !cancel_answered.replace(true)
+                                && let Some(session) = cancel_session.as_ref()
+                            {
+                                session.update(cx, |s, cx| {
+                                    s.respond_extension_ui(
+                                        &cancel_id,
+                                        &serde_json::json!({ "cancelled": true }),
+                                        cx,
+                                    );
+                                });
+                            }
+                            true
+                        })
                 });
-                self.extension_dialog_focus.focus(window, cx);
             }
             "input" => {
                 let title = payload
@@ -1123,7 +1155,6 @@ impl ChatWindow {
                     .unwrap_or_else(|| serde_json::json!({ "cancelled": true }));
                 (id, response)
             }
-            ExtensionDialog::Confirm { id, .. } => (id, serde_json::json!({ "confirmed": true })),
             ExtensionDialog::Input { id, input, .. } => {
                 let value = input.read(cx).value();
                 (id, serde_json::json!({ "value": value }))
@@ -2062,7 +2093,6 @@ impl ChatWindow {
         // Build the inner content based on dialog type.
         let title: SharedString = match dialog {
             ExtensionDialog::Select { title, .. }
-            | ExtensionDialog::Confirm { title, .. }
             | ExtensionDialog::Input { title, .. }
             | ExtensionDialog::Editor { title, .. } => title.clone(),
         };
@@ -2099,45 +2129,6 @@ impl ChatWindow {
                                 this.select_extension_option(opt_idx, cx);
                             }))
                     }))
-                    .into_any_element()
-            }
-            ExtensionDialog::Confirm { message, .. } => {
-                let msg = message.clone();
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(msg),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap_2()
-                            .justify_end()
-                            .child(
-                                Button::new("ext-confirm-cancel")
-                                    .with_size(Size::Small)
-                                    .outline()
-                                    .label("Cancel")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.cancel_extension_dialog(cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("ext-confirm-ok")
-                                    .with_size(Size::Small)
-                                    .primary()
-                                    .label("Confirm")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.confirm_extension_dialog(cx);
-                                    })),
-                            ),
-                    )
                     .into_any_element()
             }
             ExtensionDialog::Input { input, .. } => {

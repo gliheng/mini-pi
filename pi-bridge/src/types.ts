@@ -3,6 +3,7 @@ import type {
   AgentSessionRuntime,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import type { ExtensionUiChannel } from "./extension-ui.js";
 
 export interface BridgeConfig {
   port: number;
@@ -15,6 +16,7 @@ export interface SessionState {
   unsubscribe: () => void;
   cwd: string;
   agentDir: string;
+  ui: ExtensionUiChannel;
 }
 
 export interface Logger {

@@ -111,6 +111,16 @@ const GetSessionStatsSchema = Type.Intersect([
   }),
 ]);
 
+const ExtensionUiResponseSchema = Type.Intersect([
+  BaseMessageSchema,
+  Type.Object({
+    type: Type.Literal("extension_ui_response"),
+    confirmed: Type.Optional(Type.Boolean()),
+    cancelled: Type.Optional(Type.Boolean()),
+    value: Type.Optional(Type.String()),
+  }),
+]);
+
 export type InboundMessage = Static<typeof BaseMessageSchema>;
 
 export interface CommandContext {
@@ -310,10 +320,20 @@ export async function handleCompact(ctx: CommandContext): Promise<void> {
 }
 
 export async function handleExtensionUiResponse(ctx: CommandContext): Promise<void> {
-  const { ws, sessionId, msg } = ctx;
-  // SDK mode does not expose extension UI requests over this bridge.
-  // Silently acknowledge to keep the client from retrying.
-  sendResponse(ws, sessionId, "extension_ui_response", msg.id, true);
+  const { state, msg, logger } = ctx;
+  const parsed = assertShape(msg, ExtensionUiResponseSchema);
+  if (!parsed.id) {
+    logger.warn("extension_ui_response missing id");
+    return;
+  }
+  // Resolve the pending confirm/select/input/editor request the bridge is
+  // awaiting. This is intentionally not acknowledged back to the GUI: the
+  // GUI sends responses fire-and-forget and does not wait for a reply.
+  state.ui.resolve(parsed.id, {
+    confirmed: parsed.confirmed,
+    cancelled: parsed.cancelled,
+    value: parsed.value,
+  });
 }
 
 export async function handleGetModels(ctx: GlobalCommandContext): Promise<void> {

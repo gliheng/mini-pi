@@ -15,6 +15,8 @@ import type { WebSocket } from "ws";
 import type { Logger, SessionState } from "./types.js";
 import { forwardEvent } from "./messages.js";
 import { createSendFileTool } from "./send-file-tool.js";
+import { createUiContext } from "./ui-context.js";
+import { ExtensionUiChannel } from "./extension-ui.js";
 
 function createRuntimeFactory(
   cwd: string,
@@ -126,6 +128,12 @@ export class SessionStore {
         sessionManager,
       },
     );
+    const ui = new ExtensionUiChannel(ws, sessionId, this.#logger);
+    this.#logger.info('before', runtime.session.resourceLoader.getExtensions());
+    await runtime.session.bindExtensions({
+      uiContext: createUiContext(ui),
+    });
+    this.#logger.info('after', runtime.session.resourceLoader.getExtensions());
     this.#logger.info(
       "runtime created, sessionFile:",
       runtime.session.sessionFile,
@@ -141,6 +149,7 @@ export class SessionStore {
       unsubscribe,
       cwd,
       agentDir,
+      ui,
     };
     this.#sessions.set(sessionId, state);
     return state;
@@ -216,6 +225,7 @@ export class SessionStore {
   disposeAll(): void {
     for (const [, state] of this.#sessions.entries()) {
       try {
+        state.ui.dispose();
         state.unsubscribe();
         state.runtime.dispose?.();
       } catch {
