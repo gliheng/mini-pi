@@ -283,6 +283,23 @@ export async function handleGetCommands(ctx: CommandContext): Promise<void> {
   const prompts = promptsResult.prompts ?? [];
   const skills = skillsResult.skills ?? [];
   const commands: CommandWireInfo[] = [];
+
+  // Extension commands (pi.registerCommand) live in the session's extension runner.
+  const extensionRunner = (state.runtime.session as { extensionRunner?: unknown }).extensionRunner;
+  const registeredCommands = Array.isArray((extensionRunner as { getRegisteredCommands?: () => unknown[] } | undefined)?.getRegisteredCommands?.())
+    ? (extensionRunner as { getRegisteredCommands: () => unknown[] }).getRegisteredCommands()
+    : [];
+  for (const cmd of registeredCommands) {
+    const c = cmd as { invocationName?: string; description?: string };
+    if (c.invocationName) {
+      commands.push({
+        name: c.invocationName,
+        description: c.description,
+        source: "extension",
+      });
+    }
+  }
+
   for (const prompt of prompts) {
     const p = prompt as { name: string; description?: string; source?: string };
     commands.push({

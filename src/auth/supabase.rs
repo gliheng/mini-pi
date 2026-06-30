@@ -320,13 +320,38 @@ pub fn upload_file(
     Ok(())
 }
 
+/// List every file stored under a user's folder in the `pi-sync` bucket.
+///
+/// Supabase Storage's `list` endpoint is **not** recursive: listing a prefix
+/// returns the files directly under it plus placeholder entries for immediate
+/// subfolders (these have a `null` id and no trailing slash). To enumerate
+/// nested files (e.g. `extensions/<name>.json`) we must descend into each
+/// subfolder ourselves.
+///
+/// The returned `StorageFile::name` is rewritten to the path relative to the
+/// user folder (e.g. `auth.json`, `extensions/foo.json`) so callers get a
+/// consistent, fully-qualified relative path regardless of nesting depth.
 pub fn list_files(
     access_token: &str,
     user_id: &str,
 ) -> Result<Vec<StorageFile>, SupabaseAuthError> {
+    let mut files = Vec::new();
+    list_files_recursive(access_token, user_id, "", &mut files)?;
+    Ok(files)
+}
+
+/// List one folder level under `{user_id}/{sub_prefix}` and recurse into any
+/// subfolders found. `sub_prefix` is relative to the user folder and is either
+/// empty or ends with `/` (e.g. "" or "extensions/").
+fn list_files_recursive(
+    access_token: &str,
+    user_id: &str,
+    sub_prefix: &str,
+    out: &mut Vec<StorageFile>,
+) -> Result<(), SupabaseAuthError> {
     let url = format!("{}/storage/v1/object/list/pi-sync", SUPABASE_URL);
     let body_json = serde_json::json!({
-        "prefix": format!("{}/", user_id),
+        "prefix": format!("{}/{}", user_id, sub_prefix),
         "limit": 1000,
     });
 
@@ -340,12 +365,40 @@ pub fn list_files(
 
     let resp = ensure_success(resp)?;
     let body = resp.text().map_err(SupabaseAuthError::Http)?;
-    let files: Vec<StorageFile> =
+    let entries: Vec<StorageFile> =
         serde_json::from_str(&body).map_err(|e| SupabaseAuthError::Api {
             msg: format!("failed to parse file list: {} (body: {})", e, body),
             status: 200,
         })?;
-    Ok(files)
+
+    for entry in entries {
+        let Some(name) = entry.name.clone() else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+
+        if entry.id.is_none() {
+            // Folder placeholder: descend into it.
+            let next_prefix = format!("{}{}/", sub_prefix, name);
+            list_files_recursive(access_token, user_id, &next_prefix, out)?;
+            continue;
+        }
+
+        // Skip the zero-byte marker Supabase creates for folders made via the
+        // dashboard; it is not a real synced file.
+        if name == ".emptyFolderPlaceholder" {
+            continue;
+        }
+
+        // Rewrite the name to the full path relative to the user folder.
+        let mut file = entry;
+        file.name = Some(format!("{}{}", sub_prefix, name));
+        out.push(file);
+    }
+
+    Ok(())
 }
 
 pub fn download_file(

@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::ops::Range;
 use std::path::PathBuf;
 
@@ -136,6 +137,11 @@ pub struct ChatInput {
     window_handle: AnyWindowHandle,
     at_mention_scroll_handle: ScrollHandle,
     command_scroll_handle: ScrollHandle,
+    // Set when keyboard navigation moves the highlight so the next render
+    // scrolls the highlighted item into view. Cleared after scrolling so that
+    // mouse-wheel scrolling is not snapped back to the highlighted item.
+    at_mention_scroll_pending: Cell<bool>,
+    command_scroll_pending: Cell<bool>,
     pending_attachments: Vec<PendingAttachment>,
     voice_state: VoiceState,
     voice_recorder: Option<VoiceRecorder>,
@@ -296,6 +302,8 @@ impl ChatInput {
             window_handle: window.window_handle(),
             at_mention_scroll_handle: ScrollHandle::new(),
             command_scroll_handle: ScrollHandle::new(),
+            at_mention_scroll_pending: Cell::new(false),
+            command_scroll_pending: Cell::new(false),
             pending_attachments: Vec::new(),
             voice_state: VoiceState::Idle,
             voice_recorder: None,
@@ -492,6 +500,7 @@ impl ChatInput {
                     self.at_mention_highlighted - 1
                 };
             }
+            self.at_mention_scroll_pending.set(true);
         } else if !self.slash_command_items.is_empty() {
             let len = self.slash_command_items.len();
             if direction > 0 {
@@ -503,6 +512,7 @@ impl ChatInput {
                     self.slash_command_highlighted - 1
                 };
             }
+            self.command_scroll_pending.set(true);
         }
         cx.notify();
     }
@@ -1080,8 +1090,9 @@ impl ChatInput {
         let items = self.popup_items();
         let highlighted = self.popup_highlighted();
 
-        if !items.is_empty() && highlighted < items.len() {
+        if !items.is_empty() && highlighted < items.len() && self.at_mention_scroll_pending.get() {
             self.at_mention_scroll_handle.scroll_to_item(highlighted);
+            self.at_mention_scroll_pending.set(false);
         }
 
         div()
@@ -1201,8 +1212,9 @@ impl ChatInput {
         let items = self.slash_command_items();
         let highlighted = self.slash_command_highlighted();
 
-        if !items.is_empty() && highlighted < items.len() {
+        if !items.is_empty() && highlighted < items.len() && self.command_scroll_pending.get() {
             self.command_scroll_handle.scroll_to_item(highlighted);
+            self.command_scroll_pending.set(false);
         }
 
         div()

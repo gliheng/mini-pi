@@ -129,11 +129,9 @@ export class SessionStore {
       },
     );
     const ui = new ExtensionUiChannel(ws, sessionId, this.#logger);
-    this.#logger.info('before', runtime.session.resourceLoader.getExtensions());
     await runtime.session.bindExtensions({
       uiContext: createUiContext(ui),
     });
-    this.#logger.info('after', runtime.session.resourceLoader.getExtensions());
     this.#logger.info(
       "runtime created, sessionFile:",
       runtime.session.sessionFile,
