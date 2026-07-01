@@ -7,14 +7,16 @@
 - [x] Support setting model both on gpui and web
 - [x] Copy & paste images
 - [x] Properly display model & thinking select
+- [x] Pi settings GUI (api keys, extensions, prompts)
+- [x] Basic support for extension UI protocol
+- [ ] Better on-boarding experience
 - [ ] Message display optimization, virtualize it
-- [ ] Pi settings GUI (api keys, extensions, prompts)
-- [ ] Support extension UI protocol
 - [ ] Steering, follow up and message queue
 - [ ] Display session stats in the status bar
 - [ ] Support bearer token settings for tunnel
 - [ ] Auto update and release channel
 - [ ] Pet window
+- [ ] Extensive support for UI protocol
 
 # UI
 - [x] Add a button to scroll to the bottom when user just scrolled

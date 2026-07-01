@@ -14,7 +14,7 @@ import {
 import type { WebSocket } from "ws";
 import type { Logger, SessionState } from "./types.js";
 import { forwardEvent } from "./messages.js";
-import { createSendFileTool } from "./send-file-tool.js";
+import { createSendFileTool } from "./tools/send-file-tool.js";
 import { createUiContext } from "./ui-context.js";
 import { ExtensionUiChannel } from "./extension-ui.js";
 
