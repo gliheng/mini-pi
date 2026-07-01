@@ -55,6 +55,10 @@ impl OnboardingPanel {
         let api_key_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("API key")
+<<<<<<< HEAD
+=======
+                .masked(true)
+>>>>>>> adc1715 (Refactor onboarding import panel and remove deprecated migration plan)
         });
 
         let provider_dropdown =
@@ -306,23 +310,40 @@ impl OnboardingPanel {
             .py_5()
             .flex()
             .flex_col()
+<<<<<<< HEAD
             .items_stretch()
             .gap_4()
             .child(
                 div()
+=======
+            .gap_4()
+            .child(
+                div()
+                    .w_full()
+>>>>>>> adc1715 (Refactor onboarding import panel and remove deprecated migration plan)
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .child("Choose your AI provider and enter your API key. Your key is stored only on this device."),
             )
             .child(
                 div()
+<<<<<<< HEAD
                     .flex()
                     .flex_col()
                     .items_stretch()
+=======
+                    .w_full()
+                    .flex()
+                    .flex_col()
+>>>>>>> adc1715 (Refactor onboarding import panel and remove deprecated migration plan)
                     .gap_3()
                     .child(self.render_labeled_row(
                         "Provider",
                         Select::new(&self.provider_dropdown)
+<<<<<<< HEAD
+=======
+                            .appearance(false)
+>>>>>>> adc1715 (Refactor onboarding import panel and remove deprecated migration plan)
                             .w_full()
                             .placeholder(if !bridge_available {
                                 "Bridge unavailable"
