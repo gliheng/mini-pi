@@ -173,6 +173,14 @@ pub struct BridgeProvider {
     pub configured: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct BridgeSettings {
+    pub compaction_enabled: bool,
+    pub default_thinking_level: Option<String>,
+    pub default_model: Option<String>,
+    pub default_provider: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Macros
 // ---------------------------------------------------------------------------
@@ -626,10 +634,7 @@ impl PiBridge {
                 .get("id")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| PiRpcError::Bridge("provider missing id".into()))?;
-            let name = p
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or(id);
+            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or(id);
             let configured = p
                 .get("configured")
                 .and_then(|v| v.as_bool())
@@ -689,6 +694,168 @@ impl PiBridge {
             Err(PiRpcError::WebSocket(
                 "bridge closed before set_auth response".into(),
             ))
+        })
+    }
+
+    pub fn get_settings(&self) -> Result<BridgeSettings, PiRpcError> {
+        let session_id = format!("__settings__{}", Uuid::new_v4());
+        let request_id = Uuid::new_v4().to_string();
+        let (tx, mut rx) = futures::channel::mpsc::unbounded();
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.insert(session_id.clone(), tx);
+        }
+        let _guard = SessionGuard {
+            sessions: Arc::clone(&self.sessions),
+            session_id: session_id.clone(),
+        };
+
+        let req = serde_json::json!({
+            "type": "get_settings",
+            "sessionId": session_id,
+            "id": request_id,
+        });
+        if let Err(e) = self.send_json(&req) {
+            return Err(e);
+        }
+
+        let result = self.runtime.block_on(async {
+            while let Some(event) = rx.next().await {
+                if let BridgeEvent::Response {
+                    command,
+                    success,
+                    data,
+                    error,
+                    ..
+                } = event
+                {
+                    if command == "get_settings" {
+                        if success {
+                            return Ok(data);
+                        }
+                        return Err(PiRpcError::Bridge(
+                            error.unwrap_or_else(|| "get_settings failed".into()),
+                        ));
+                    }
+                }
+            }
+            Err(PiRpcError::WebSocket(
+                "bridge closed before get_settings response".into(),
+            ))
+        });
+
+        let data = result?;
+        let data =
+            data.ok_or_else(|| PiRpcError::Bridge("get_settings response missing data".into()))?;
+
+        let compaction_enabled = data
+            .get("compactionEnabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let default_thinking_level = data
+            .get("defaultThinkingLevel")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let default_model = data
+            .get("defaultModel")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let default_provider = data
+            .get("defaultProvider")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        Ok(BridgeSettings {
+            compaction_enabled,
+            default_thinking_level,
+            default_model,
+            default_provider,
+        })
+    }
+
+    pub fn set_compaction_enabled(&self, enabled: bool) -> Result<(), PiRpcError> {
+        self.send_settings_command(
+            "set_compaction_enabled",
+            serde_json::json!({ "enabled": enabled }),
+        )
+    }
+
+    pub fn set_default_thinking_level(&self, level: &str) -> Result<(), PiRpcError> {
+        self.send_settings_command(
+            "set_default_thinking_level",
+            serde_json::json!({ "level": level }),
+        )
+    }
+
+    pub fn set_default_model(&self, model_id: &str) -> Result<(), PiRpcError> {
+        self.send_settings_command(
+            "set_default_model",
+            serde_json::json!({ "modelId": model_id }),
+        )
+    }
+
+    pub fn set_default_provider(&self, provider: &str) -> Result<(), PiRpcError> {
+        self.send_settings_command(
+            "set_default_provider",
+            serde_json::json!({ "provider": provider }),
+        )
+    }
+
+    fn send_settings_command(
+        &self,
+        command: &str,
+        payload: serde_json::Value,
+    ) -> Result<(), PiRpcError> {
+        let session_id = format!("__settings__{}", Uuid::new_v4());
+        let request_id = Uuid::new_v4().to_string();
+        let (tx, mut rx) = futures::channel::mpsc::unbounded();
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.insert(session_id.clone(), tx);
+        }
+        let _guard = SessionGuard {
+            sessions: Arc::clone(&self.sessions),
+            session_id: session_id.clone(),
+        };
+
+        let mut req = serde_json::json!({
+            "type": command,
+            "sessionId": session_id,
+            "id": request_id,
+        });
+        if let Some(obj) = payload.as_object() {
+            for (key, value) in obj {
+                req[key] = value.clone();
+            }
+        }
+
+        if let Err(e) = self.send_json(&req) {
+            return Err(e);
+        }
+
+        self.runtime.block_on(async {
+            while let Some(event) = rx.next().await {
+                if let BridgeEvent::Response {
+                    command: resp_command,
+                    success,
+                    error,
+                    ..
+                } = event
+                {
+                    if resp_command == command {
+                        if success {
+                            return Ok(());
+                        }
+                        return Err(PiRpcError::Bridge(
+                            error.unwrap_or_else(|| format!("{} failed", command)),
+                        ));
+                    }
+                }
+            }
+            Err(PiRpcError::WebSocket(format!(
+                "bridge closed before {} response",
+                command
+            )))
         })
     }
 

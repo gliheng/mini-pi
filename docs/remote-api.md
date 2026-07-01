@@ -46,7 +46,6 @@ Example minimal config:
 
 ```json
 {
-  "default_model": "cloudflare-ai-gateway:gpt-4o-mini",
   "remote_control": {
     "enabled": true,
     "bind_port": 9876

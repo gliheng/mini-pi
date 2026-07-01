@@ -1,5 +1,9 @@
 import type { WebSocket } from "ws";
-import type { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type {
+  AuthStorage,
+  ModelRegistry,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import type { Logger, SessionState, CommandWireInfo, ModelWireInfo } from "./types.js";
@@ -141,6 +145,52 @@ const SetAuthSchema = Type.Intersect([
   }),
 ]);
 
+const GetSettingsSchema = Type.Intersect([
+  BaseMessageSchema,
+  Type.Object({
+    type: Type.Literal("get_settings"),
+  }),
+]);
+
+const SetCompactionEnabledSchema = Type.Intersect([
+  BaseMessageSchema,
+  Type.Object({
+    type: Type.Literal("set_compaction_enabled"),
+    enabled: Type.Boolean(),
+  }),
+]);
+
+const SetDefaultThinkingLevelSchema = Type.Intersect([
+  BaseMessageSchema,
+  Type.Object({
+    type: Type.Literal("set_default_thinking_level"),
+    level: Type.Union([
+      Type.Literal("off"),
+      Type.Literal("minimal"),
+      Type.Literal("low"),
+      Type.Literal("medium"),
+      Type.Literal("high"),
+      Type.Literal("xhigh"),
+    ]),
+  }),
+]);
+
+const SetDefaultModelSchema = Type.Intersect([
+  BaseMessageSchema,
+  Type.Object({
+    type: Type.Literal("set_default_model"),
+    modelId: Type.String(),
+  }),
+]);
+
+const SetDefaultProviderSchema = Type.Intersect([
+  BaseMessageSchema,
+  Type.Object({
+    type: Type.Literal("set_default_provider"),
+    provider: Type.String(),
+  }),
+]);
+
 const GetSessionStatsSchema = Type.Intersect([
   BaseMessageSchema,
   Type.Object({
@@ -176,6 +226,7 @@ export interface GlobalCommandContext {
   msg: InboundMessage;
   modelRegistry: ModelRegistry;
   authStorage: AuthStorage;
+  settingsManager: SettingsManager;
   logger: Logger;
 }
 
@@ -592,6 +643,81 @@ export async function handleSetAuth(ctx: GlobalCommandContext): Promise<void> {
   const parsed = assertShape(msg, SetAuthSchema);
   authStorage.set(parsed.provider, { type: "api_key", key: parsed.key });
   sendResponse(ws, ctx.sessionId || "bridge", "set_auth", msg.id, true);
+}
+
+export async function handleGetSettings(ctx: GlobalCommandContext): Promise<void> {
+  const { ws, msg, settingsManager } = ctx;
+  assertShape(msg, GetSettingsSchema);
+  sendResponse(ws, ctx.sessionId || "bridge", "get_settings", msg.id, true, {
+    compactionEnabled: settingsManager.getCompactionEnabled(),
+    defaultThinkingLevel: settingsManager.getDefaultThinkingLevel(),
+    defaultModel: settingsManager.getDefaultModel(),
+    defaultProvider: settingsManager.getDefaultProvider(),
+  });
+}
+
+export async function handleSetCompactionEnabled(
+  ctx: GlobalCommandContext,
+): Promise<void> {
+  const { ws, msg, settingsManager } = ctx;
+  const parsed = assertShape(msg, SetCompactionEnabledSchema);
+  settingsManager.setCompactionEnabled(parsed.enabled);
+  await settingsManager.flush();
+  sendResponse(
+    ws,
+    ctx.sessionId || "bridge",
+    "set_compaction_enabled",
+    msg.id,
+    true,
+  );
+}
+
+export async function handleSetDefaultThinkingLevel(
+  ctx: GlobalCommandContext,
+): Promise<void> {
+  const { ws, msg, settingsManager } = ctx;
+  const parsed = assertShape(msg, SetDefaultThinkingLevelSchema);
+  settingsManager.setDefaultThinkingLevel(parsed.level);
+  await settingsManager.flush();
+  sendResponse(
+    ws,
+    ctx.sessionId || "bridge",
+    "set_default_thinking_level",
+    msg.id,
+    true,
+  );
+}
+
+export async function handleSetDefaultModel(
+  ctx: GlobalCommandContext,
+): Promise<void> {
+  const { ws, msg, settingsManager } = ctx;
+  const parsed = assertShape(msg, SetDefaultModelSchema);
+  settingsManager.setDefaultModel(parsed.modelId);
+  await settingsManager.flush();
+  sendResponse(
+    ws,
+    ctx.sessionId || "bridge",
+    "set_default_model",
+    msg.id,
+    true,
+  );
+}
+
+export async function handleSetDefaultProvider(
+  ctx: GlobalCommandContext,
+): Promise<void> {
+  const { ws, msg, settingsManager } = ctx;
+  const parsed = assertShape(msg, SetDefaultProviderSchema);
+  settingsManager.setDefaultProvider(parsed.provider);
+  await settingsManager.flush();
+  sendResponse(
+    ws,
+    ctx.sessionId || "bridge",
+    "set_default_provider",
+    msg.id,
+    true,
+  );
 }
 
 export const sessionCommands = new Map<string, SessionCommandHandler>([

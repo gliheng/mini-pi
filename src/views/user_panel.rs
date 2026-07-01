@@ -959,11 +959,27 @@ fn render_auth_content(
                                 .text_xs()
                                 .text_color(cx.theme().muted_foreground)
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child("PI SETTINGS"),
+                        )
+                        .child(render_pi_settings_row(cx)),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(
+                            div()
+                                .px_2()
+                                .py_1()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .child("SETTINGS"),
                         )
                         .child(render_appearance_row(window, cx))
                         .child(render_font_size_row(panel, cx))
-                        .child(render_pi_settings_row(cx))
                         .child(render_about_row(cx)),
                 )
                 .child(render_logout_button(cx))
@@ -1011,11 +1027,27 @@ fn render_auth_content(
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
                             .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child("PI SETTINGS"),
+                    )
+                    .child(render_pi_settings_row(cx)),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .px_2()
+                            .py_1()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child("SETTINGS"),
                     )
                     .child(render_appearance_row(window, cx))
                     .child(render_font_size_row(panel, cx))
-                    .child(render_pi_settings_row(cx))
                     .child(render_about_row(cx)),
             ),
     }
@@ -1375,9 +1407,9 @@ fn render_signup_submit_button(
 fn render_logout_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
     Button::new("logout-button")
         .label("Sign Out")
-        .with_size(Size::Large)
         .danger()
         .w_full()
+        .py_5()
         .on_click(cx.listener(|this, _, _, cx| {
             this.auth_error = None;
             let session = cx.global::<AppStore>().session.clone();
@@ -1406,10 +1438,10 @@ fn render_sync_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
 
     Button::new("sync-button")
         .label(label)
-        .with_size(Size::Large)
+        .w_full()
+        .py_5()
         .primary()
         .disabled(is_syncing)
-        .w_full()
         .on_click(cx.listener(|_this, _, _, cx| {
             let session = cx.global::<AppStore>().session.clone();
             if let Some(s) = session {

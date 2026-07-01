@@ -4,7 +4,11 @@ import type { AddressInfo } from "node:net";
 import * as net from "node:net";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import {
+  AuthStorage,
+  ModelRegistry,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
 import type {
   BridgeConfig,
   ConnectedClient,
@@ -19,7 +23,12 @@ import {
   handleGetModel,
   handleGetModels,
   handleGetProviders,
+  handleGetSettings,
   handleSetAuth,
+  handleSetCompactionEnabled,
+  handleSetDefaultModel,
+  handleSetDefaultProvider,
+  handleSetDefaultThinkingLevel,
   sessionCommands,
   type InboundMessage,
 } from "./commands.js";
@@ -44,6 +53,7 @@ export class BridgeServer {
   readonly #config: BridgeConfig;
   readonly #modelRegistry: ModelRegistry;
   readonly #authStorage: AuthStorage;
+  readonly #settingsManager: SettingsManager;
   readonly #logger: Logger;
   readonly #store: SessionStore;
   #wss: WebSocketServer | null = null;
@@ -61,6 +71,7 @@ export class BridgeServer {
     );
     this.#authStorage = authStorage;
     this.#modelRegistry = modelRegistry;
+    this.#settingsManager = SettingsManager.create(process.cwd(), agentDir);
 
     this.#store = new SessionStore({
       agentDir,
@@ -131,6 +142,7 @@ export class BridgeServer {
           msg,
           modelRegistry: this.#modelRegistry,
           authStorage: this.#authStorage,
+          settingsManager: this.#settingsManager,
           logger: this.#logger,
         });
         return;
@@ -143,6 +155,7 @@ export class BridgeServer {
           msg,
           modelRegistry: this.#modelRegistry,
           authStorage: this.#authStorage,
+          settingsManager: this.#settingsManager,
           logger: this.#logger,
         });
         return;
@@ -155,6 +168,72 @@ export class BridgeServer {
           msg,
           modelRegistry: this.#modelRegistry,
           authStorage: this.#authStorage,
+          settingsManager: this.#settingsManager,
+          logger: this.#logger,
+        });
+        return;
+      }
+
+      if (type === "get_settings") {
+        await handleGetSettings({
+          ws,
+          sessionId,
+          msg,
+          modelRegistry: this.#modelRegistry,
+          authStorage: this.#authStorage,
+          settingsManager: this.#settingsManager,
+          logger: this.#logger,
+        });
+        return;
+      }
+
+      if (type === "set_compaction_enabled") {
+        await handleSetCompactionEnabled({
+          ws,
+          sessionId,
+          msg,
+          modelRegistry: this.#modelRegistry,
+          authStorage: this.#authStorage,
+          settingsManager: this.#settingsManager,
+          logger: this.#logger,
+        });
+        return;
+      }
+
+      if (type === "set_default_thinking_level") {
+        await handleSetDefaultThinkingLevel({
+          ws,
+          sessionId,
+          msg,
+          modelRegistry: this.#modelRegistry,
+          authStorage: this.#authStorage,
+          settingsManager: this.#settingsManager,
+          logger: this.#logger,
+        });
+        return;
+      }
+
+      if (type === "set_default_model") {
+        await handleSetDefaultModel({
+          ws,
+          sessionId,
+          msg,
+          modelRegistry: this.#modelRegistry,
+          authStorage: this.#authStorage,
+          settingsManager: this.#settingsManager,
+          logger: this.#logger,
+        });
+        return;
+      }
+
+      if (type === "set_default_provider") {
+        await handleSetDefaultProvider({
+          ws,
+          sessionId,
+          msg,
+          modelRegistry: this.#modelRegistry,
+          authStorage: this.#authStorage,
+          settingsManager: this.#settingsManager,
           logger: this.#logger,
         });
         return;
@@ -169,6 +248,7 @@ export class BridgeServer {
             msg,
             modelRegistry: this.#modelRegistry,
             authStorage: this.#authStorage,
+            settingsManager: this.#settingsManager,
             logger: this.#logger,
           },
           state,

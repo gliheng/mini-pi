@@ -8,6 +8,7 @@ use gpui::{
     div, img, prelude::*, px, svg,
 };
 
+use crate::config::model_config;
 use crate::core::actions::{
     CancelInlineEdit, CloseWindow, ConfirmInlineEdit, SendMessage, StopStreaming,
 };
@@ -110,17 +111,36 @@ impl ChatWindow {
             .unwrap_or_else(|| "New Thread".into());
 
         let thread_id = thread.map(|t| t.id.clone());
-        let selected_model: Option<String> = thread
-            .and_then(|t| t.model.clone())
-            .or_else(|| cx.global::<AppStore>().config.default_model.clone());
         let models = cx.global::<AppStore>().models.clone();
-        let selected_thinking_level: Option<String> = if thread.is_some() {
-            thread.and_then(|t| t.thinking_level.clone())
+
+        // For new threads, fall back to the pi agent's own default settings
+        // instead of the (now-removed) app-level defaults.
+        let pi_defaults = if thread.is_some() {
+            None
         } else {
             cx.global::<AppStore>()
-                .config
-                .default_thinking_level
-                .clone()
+                .pi_bridge
+                .as_ref()
+                .and_then(|b| b.get_settings().ok())
+        };
+
+        let selected_model: Option<String> = if let Some(t) = thread {
+            t.model.clone()
+        } else {
+            pi_defaults.as_ref().and_then(|s| {
+                model_config::resolve_full_model_id(
+                    &models,
+                    s.default_provider.as_deref(),
+                    s.default_model.as_deref(),
+                )
+            })
+        };
+        let selected_thinking_level: Option<String> = if let Some(t) = thread {
+            t.thinking_level.clone()
+        } else {
+            pi_defaults
+                .as_ref()
+                .and_then(|s| s.default_thinking_level.clone())
                 .or(Some("off".to_string()))
         };
 
@@ -212,20 +232,14 @@ impl ChatWindow {
             session_stats: None,
         };
 
-        let default_model = cx.global::<AppStore>().config.default_model.clone();
         // Only create/attach a session immediately for restored threads so
         // history + slash commands are available right away. For new threads
         // leave the session uncreated so the workspace picker is shown; the
         // session is created lazily in `ensure_session` once the user picks a
         // workspace and sends the first message.
         if thread.is_some() {
-            let session = Self::get_or_create_session(
-                thread,
-                workspace_info.clone(),
-                default_model,
-                None,
-                cx,
-            );
+            let session =
+                Self::get_or_create_session(thread, workspace_info.clone(), None, None, cx);
             chat_window.attach_session(session, cx);
         }
 
@@ -249,12 +263,6 @@ impl ChatWindow {
                     this.stop_streaming(&StopStreaming, window, cx);
                 }
                 ChatInputEvent::ModelChanged(id) => {
-                    cx.update_global(|app_store: &mut AppStore, _| {
-                        app_store.config.default_model = Some(id.clone());
-                        if let Err(e) = app_store.config.save() {
-                            eprintln!("[mini-pi] failed to save config: {}", e);
-                        }
-                    });
                     if let Some(ref session) = this.session {
                         session.update(cx, |session, cx| {
                             session.set_model(Some(id.clone()), cx);
@@ -263,12 +271,6 @@ impl ChatWindow {
                     cx.notify();
                 }
                 ChatInputEvent::ThinkingChanged(id) => {
-                    cx.update_global(|app_store: &mut AppStore, _| {
-                        app_store.config.default_thinking_level = Some(id.clone());
-                        if let Err(e) = app_store.config.save() {
-                            eprintln!("[mini-pi] failed to save config: {}", e);
-                        }
-                    });
                     if let Some(ref session) = this.session {
                         session.update(cx, |session, cx| {
                             session.set_thinking_level(Some(id.clone()), cx);

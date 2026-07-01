@@ -33,7 +33,7 @@ src/core/
   app.rs                # AppStore GPUI Global and custom_window_options()
   assets.rs             # AssetSource implementation that loads SVGs from the assets/ directory
 src/config/
-  app_config.rs         # ~/.config/mini-pi/config.json (default_model, remote_control, theme)
+  app_config.rs         # ~/.config/mini-pi/config.json (font_size, remote_control, theme)
   model_config.rs       # Hardcoded model list and provider/name helpers
 src/data/
   models.rs             # Domain enums: Role, PartState, MessagePart, Message, ChatState
