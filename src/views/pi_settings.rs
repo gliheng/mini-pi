@@ -4,6 +4,7 @@ use gpui::{
     App, Bounds, Context, IntoElement, Render, ScrollHandle, Window, WindowBounds,
     WindowDecorations, WindowOptions, div, prelude::*, px, size,
 };
+use gpui_component::accordion::Accordion;
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::scroll::Scrollbar;
@@ -14,12 +15,15 @@ use crate::core::app::AppStore;
 use crate::rpc::pi_rpc::BridgeProvider;
 
 /// A standalone window for managing pi agent settings. It is organized into
-/// sections; the first (and currently only) section is provider **API Keys**.
+/// collapsible accordion sections; the first (and currently only) section is
+/// provider **API Keys**.
 pub struct PiSettings {
     providers: Vec<BridgeProvider>,
     providers_loading: bool,
     provider_inputs: HashMap<String, gpui::Entity<InputState>>,
     _provider_input_subs: Vec<gpui::Subscription>,
+    /// Indices of the accordion sections that are currently expanded.
+    open_sections: Vec<usize>,
     scroll_handle: ScrollHandle,
 }
 
@@ -30,6 +34,7 @@ impl PiSettings {
             providers_loading: false,
             provider_inputs: HashMap::new(),
             _provider_input_subs: Vec::new(),
+            open_sections: vec![0],
             scroll_handle: ScrollHandle::new(),
         };
         view.load_providers(cx);
@@ -145,7 +150,7 @@ impl Render for PiSettings {
             .gap_6()
             .px_6()
             .py_6()
-            .child(render_api_keys_section(self, cx));
+            .child(render_sections(self, cx));
 
         div()
             .id("pi-settings")
@@ -190,7 +195,33 @@ impl Render for PiSettings {
     }
 }
 
-fn render_api_keys_section(view: &mut PiSettings, cx: &mut Context<PiSettings>) -> impl IntoElement {
+/// Builds the accordion that groups the settings into collapsible sections.
+fn render_sections(view: &mut PiSettings, cx: &mut Context<PiSettings>) -> impl IntoElement {
+    let api_keys_open = view.open_sections.contains(&0);
+    let api_keys_body = render_api_keys_body(view, cx);
+
+    // The Accordion renders itself with `size_full`. Wrap it in a
+    // content-height container so that `h_full` resolves against an indefinite
+    // height (i.e. sizes to its content) instead of filling — and clipping —
+    // the scroll viewport, which would otherwise block scrolling.
+    div().w_full().child(
+        Accordion::new("pi-settings-sections")
+            .multiple(true)
+            .item(move |item| {
+                item.open(api_keys_open)
+                    .title("API Keys")
+                    .child(api_keys_body)
+            })
+            .on_toggle_click(cx.listener(|this, open_ixs: &[usize], _, cx| {
+                this.open_sections = open_ixs.to_vec();
+                cx.notify();
+            })),
+    )
+}
+
+/// Body content of the **API Keys** accordion section: a short description plus
+/// one row per provider.
+fn render_api_keys_body(view: &mut PiSettings, cx: &mut Context<PiSettings>) -> impl IntoElement {
     let mut section = div()
         .w_full()
         .flex()
@@ -198,16 +229,6 @@ fn render_api_keys_section(view: &mut PiSettings, cx: &mut Context<PiSettings>) 
         .gap_2()
         .child(
             div()
-                .px_2()
-                .py_1()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .child("API KEYS"),
-        )
-        .child(
-            div()
-                .px_2()
                 .pb_1()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
