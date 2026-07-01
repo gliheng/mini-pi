@@ -166,6 +166,13 @@ pub struct BridgePrompt {
     pub raw: serde_json::Value,
 }
 
+#[derive(Debug, Clone)]
+pub struct BridgeProvider {
+    pub id: String,
+    pub name: String,
+    pub configured: bool,
+}
+
 // ---------------------------------------------------------------------------
 // Macros
 // ---------------------------------------------------------------------------
@@ -555,6 +562,133 @@ impl PiBridge {
                 });
             }
             Ok(items)
+        })
+    }
+
+    pub fn get_providers(&self) -> Result<Vec<BridgeProvider>, PiRpcError> {
+        let session_id = format!("__providers__{}", Uuid::new_v4());
+        let request_id = Uuid::new_v4().to_string();
+        let (tx, mut rx) = futures::channel::mpsc::unbounded();
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.insert(session_id.clone(), tx);
+        }
+        let _guard = SessionGuard {
+            sessions: Arc::clone(&self.sessions),
+            session_id: session_id.clone(),
+        };
+
+        let req = serde_json::json!({
+            "type": "get_providers",
+            "sessionId": session_id,
+            "id": request_id,
+        });
+        if let Err(e) = self.send_json(&req) {
+            return Err(e);
+        }
+
+        let result = self.runtime.block_on(async {
+            while let Some(event) = rx.next().await {
+                if let BridgeEvent::Response {
+                    command,
+                    success,
+                    data,
+                    error,
+                    ..
+                } = event
+                {
+                    if command == "get_providers" {
+                        if success {
+                            return Ok(data);
+                        }
+                        return Err(PiRpcError::Bridge(
+                            error.unwrap_or_else(|| "get_providers failed".into()),
+                        ));
+                    }
+                }
+            }
+            Err(PiRpcError::WebSocket(
+                "bridge closed before get_providers response".into(),
+            ))
+        });
+
+        let data = result?;
+        let providers_val = data
+            .and_then(|d| d.get("providers").cloned())
+            .ok_or_else(|| PiRpcError::Bridge("get_providers response missing providers".into()))?;
+        let arr = providers_val
+            .as_array()
+            .ok_or_else(|| PiRpcError::Bridge("get_providers providers is not an array".into()))?;
+
+        let mut providers = Vec::new();
+        for p in arr {
+            let id = p
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| PiRpcError::Bridge("provider missing id".into()))?;
+            let name = p
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(id);
+            let configured = p
+                .get("configured")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            providers.push(BridgeProvider {
+                id: id.to_string(),
+                name: name.to_string(),
+                configured,
+            });
+        }
+        Ok(providers)
+    }
+
+    pub fn set_auth(&self, provider: &str, key: &str) -> Result<(), PiRpcError> {
+        let session_id = format!("__auth__{}", Uuid::new_v4());
+        let request_id = Uuid::new_v4().to_string();
+        let (tx, mut rx) = futures::channel::mpsc::unbounded();
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.insert(session_id.clone(), tx);
+        }
+        let _guard = SessionGuard {
+            sessions: Arc::clone(&self.sessions),
+            session_id: session_id.clone(),
+        };
+
+        let req = serde_json::json!({
+            "type": "set_auth",
+            "sessionId": session_id,
+            "id": request_id,
+            "provider": provider,
+            "key": key,
+        });
+        if let Err(e) = self.send_json(&req) {
+            return Err(e);
+        }
+
+        self.runtime.block_on(async {
+            while let Some(event) = rx.next().await {
+                if let BridgeEvent::Response {
+                    command,
+                    success,
+                    error,
+                    ..
+                } = event
+                {
+                    if command == "set_auth" {
+                        if success {
+                            return Ok(());
+                        }
+                        return Err(PiRpcError::Bridge(
+                            error.unwrap_or_else(|| "set_auth failed".into()),
+                        ));
+                    }
+                }
+            }
+            Err(PiRpcError::WebSocket(
+                "bridge closed before set_auth response".into(),
+            ))
         })
     }
 

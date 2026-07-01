@@ -23,6 +23,7 @@ pub struct AppStore {
     pub config: AppConfig,
     pub thread_windows: HashMap<String, AnyWindowHandle>,
     pub main_window: Option<AnyWindowHandle>,
+    pub pi_settings_window: Option<AnyWindowHandle>,
     pub auth: AuthState,
     pub session: Option<SupabaseSession>,
     pub sync_meta: SyncMeta,

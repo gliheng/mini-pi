@@ -1,13 +1,13 @@
 use gpui::{
     Action, AppContext, BorrowAppContext, ClipboardItem, Context, EventEmitter, InteractiveElement,
-    IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
-    div, prelude::FluentBuilder, px, rgb,
+    IntoElement, ParentElement, Render, ScrollHandle, SharedString, StatefulInteractiveElement,
+    Styled, Window, div, prelude::FluentBuilder, px, rgb,
 };
 
 use crate::auth::state::{self, AuthState};
 use crate::auth::supabase;
 use crate::config::app_config::{DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME, FontSizePreset};
-use crate::core::actions::About;
+use crate::core::actions::{About, OpenPiSettingsWindow};
 use crate::core::app::{AppStore, apply_font_size};
 use crate::remote::RemoteStatus;
 use crate::remote::cloudflared;
@@ -17,6 +17,7 @@ use crate::sync::settings_sync;
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::notification::Notification;
+use gpui_component::scroll::Scrollbar;
 use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
 use gpui_component::switch::Switch;
 use gpui_component::theme::{Theme, ThemeRegistry};
@@ -77,6 +78,7 @@ pub struct UserPanel {
     pub _confirm_password_sub: gpui::Subscription,
     pub _remote_sub: Option<gpui::Subscription>,
     pub _font_size_dropdown_sub: gpui::Subscription,
+    pub scroll_handle: ScrollHandle,
 }
 
 impl SelectItem for FontSizePreset {
@@ -161,6 +163,7 @@ impl UserPanel {
             _confirm_password_sub,
             _remote_sub: remote_sub,
             _font_size_dropdown_sub,
+            scroll_handle: ScrollHandle::new(),
         }
     }
 
@@ -214,6 +217,7 @@ impl Render for UserPanel {
             .id("user-panel-content")
             .flex_1()
             .overflow_y_scroll()
+            .track_scroll(&self.scroll_handle)
             .flex()
             .flex_col()
             .items_center()
@@ -294,6 +298,15 @@ impl Render for UserPanel {
                 .size_full()
                 .relative()
                 .child(content)
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(0.))
+                        .right(px(0.))
+                        .bottom(px(0.))
+                        .w(px(12.))
+                        .child(Scrollbar::vertical(&self.scroll_handle)),
+                )
                 .child(
                     div()
                         .id("auth-dialog-overlay")
@@ -407,6 +420,15 @@ impl Render for UserPanel {
                 .size_full()
                 .relative()
                 .child(content)
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(0.))
+                        .right(px(0.))
+                        .bottom(px(0.))
+                        .w(px(12.))
+                        .child(Scrollbar::vertical(&self.scroll_handle)),
+                )
                 .when(self.cloudflared_dialog.is_some(), |this| {
                     this.child(render_cloudflared_dialog(self, cx))
                 })
@@ -810,7 +832,7 @@ fn render_back_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
 }
 
 fn render_auth_content(
-    panel: &UserPanel,
+    panel: &mut UserPanel,
     auth: &AuthState,
     window: &mut Window,
     cx: &mut Context<UserPanel>,
@@ -941,6 +963,7 @@ fn render_auth_content(
                         )
                         .child(render_appearance_row(window, cx))
                         .child(render_font_size_row(panel, cx))
+                        .child(render_pi_settings_row(cx))
                         .child(render_about_row(cx)),
                 )
                 .child(render_logout_button(cx))
@@ -992,9 +1015,54 @@ fn render_auth_content(
                     )
                     .child(render_appearance_row(window, cx))
                     .child(render_font_size_row(panel, cx))
+                    .child(render_pi_settings_row(cx))
                     .child(render_about_row(cx)),
             ),
     }
+}
+
+fn render_pi_settings_row(cx: &mut Context<UserPanel>) -> impl IntoElement {
+    div()
+        .id("settings-pi-settings")
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_3()
+        .px_4()
+        .py_2()
+        .rounded_lg()
+        .bg(cx.theme().secondary)
+        .cursor_pointer()
+        .hover(|style| style.bg(cx.theme().secondary_hover))
+        .on_click(cx.listener(|_, _, window, cx| {
+            window.dispatch_action(OpenPiSettingsWindow.boxed_clone(), cx);
+        }))
+        .child(
+            div()
+                .size(px(20.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    gpui::svg()
+                        .path("icons/manage.svg")
+                        .size(px(18.))
+                        .text_color(cx.theme().muted_foreground),
+                ),
+        )
+        .child(
+            div()
+                .flex_1()
+                .text_sm()
+                .text_color(cx.theme().foreground)
+                .child("Pi Settings"),
+        )
+        .child(
+            gpui::svg()
+                .path("icons/chevron-right.svg")
+                .size(px(16.))
+                .text_color(cx.theme().muted_foreground),
+        )
 }
 
 fn render_about_row(cx: &mut Context<UserPanel>) -> impl IntoElement {

@@ -1,5 +1,5 @@
 import type { WebSocket } from "ws";
-import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import type { Logger, SessionState, CommandWireInfo, ModelWireInfo } from "./types.js";
@@ -125,6 +125,22 @@ const GetPromptsSchema = Type.Intersect([
   }),
 ]);
 
+const GetProvidersSchema = Type.Intersect([
+  BaseMessageSchema,
+  Type.Object({
+    type: Type.Literal("get_providers"),
+  }),
+]);
+
+const SetAuthSchema = Type.Intersect([
+  BaseMessageSchema,
+  Type.Object({
+    type: Type.Literal("set_auth"),
+    provider: Type.String(),
+    key: Type.String(),
+  }),
+]);
+
 const GetSessionStatsSchema = Type.Intersect([
   BaseMessageSchema,
   Type.Object({
@@ -159,6 +175,7 @@ export interface GlobalCommandContext {
   sessionId: string | undefined;
   msg: InboundMessage;
   modelRegistry: ModelRegistry;
+  authStorage: AuthStorage;
   logger: Logger;
 }
 
@@ -553,6 +570,27 @@ export async function handleGetModel(ctx: GlobalCommandContext, state?: SessionS
         }
       : null,
   });
+}
+
+export async function handleGetProviders(ctx: GlobalCommandContext): Promise<void> {
+  const { ws, msg, modelRegistry } = ctx;
+  const allModels = await modelRegistry.getAll();
+  const providers = [...new Set(allModels.map((m: unknown) => (m as { provider: string }).provider))];
+  const providerList = providers.map((id: string) => ({
+    id,
+    name: modelRegistry.getProviderDisplayName(id),
+    configured: modelRegistry.getProviderAuthStatus(id).configured,
+  }));
+  sendResponse(ws, ctx.sessionId || "bridge", "get_providers", msg.id, true, {
+    providers: providerList,
+  });
+}
+
+export async function handleSetAuth(ctx: GlobalCommandContext): Promise<void> {
+  const { ws, msg, authStorage } = ctx;
+  const parsed = assertShape(msg, SetAuthSchema);
+  authStorage.set(parsed.provider, { type: "api_key", key: parsed.key });
+  sendResponse(ws, ctx.sessionId || "bridge", "set_auth", msg.id, true);
 }
 
 export const sessionCommands = new Map<string, SessionCommandHandler>([

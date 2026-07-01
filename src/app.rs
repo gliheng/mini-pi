@@ -16,8 +16,8 @@ use crate::auth::state::{self, AuthState};
 use crate::config::app_config::{AppConfig, DEFAULT_DARK_THEME, FontSizePreset};
 use crate::config::model_config;
 use crate::core::actions::{
-    About, OpenInstallExtensionWindow, Quit, SelectFontLarge, SelectFontMedium, SelectFontSmall,
-    ShowMainWindow,
+    About, OpenInstallExtensionWindow, OpenPiSettingsWindow, Quit, SelectFontLarge,
+    SelectFontMedium, SelectFontSmall, ShowMainWindow,
 };
 use crate::core::app::AppStore;
 use crate::core::app::apply_font_size;
@@ -30,6 +30,7 @@ use crate::sync::settings_sync;
 use crate::views::about::open_about_window;
 use crate::views::install_extension::open_install_extension_window;
 use crate::views::mini_app::MiniApp;
+use crate::views::pi_settings::open_pi_settings_window;
 use crate::views::skills_panel::SkillsPanel;
 use crate::views::thread_list::ThreadList;
 use crate::views::user_panel::{UserPanel, UserPanelEvent};
@@ -143,6 +144,7 @@ pub fn run() {
                 config: config.clone(),
                 thread_windows: HashMap::new(),
                 main_window: None,
+                pi_settings_window: None,
                 auth: auth.clone(),
                 session: session.clone(),
                 sync_meta,
@@ -187,6 +189,9 @@ pub fn run() {
             });
             cx.on_action(|_: &OpenInstallExtensionWindow, cx: &mut App| {
                 open_install_extension_window(cx);
+            });
+            cx.on_action(|_: &OpenPiSettingsWindow, cx: &mut App| {
+                open_pi_settings_window(cx);
             });
             cx.on_action(|_: &SelectFontSmall, cx: &mut App| {
                 apply_font_size(FontSizePreset::Small, cx);

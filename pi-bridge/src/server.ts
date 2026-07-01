@@ -18,6 +18,8 @@ import { SessionStore } from "./session.js";
 import {
   handleGetModel,
   handleGetModels,
+  handleGetProviders,
+  handleSetAuth,
   sessionCommands,
   type InboundMessage,
 } from "./commands.js";
@@ -41,6 +43,7 @@ export interface BridgeServerDeps {
 export class BridgeServer {
   readonly #config: BridgeConfig;
   readonly #modelRegistry: ModelRegistry;
+  readonly #authStorage: AuthStorage;
   readonly #logger: Logger;
   readonly #store: SessionStore;
   #wss: WebSocketServer | null = null;
@@ -56,6 +59,7 @@ export class BridgeServer {
       authStorage,
       path.join(agentDir, "models.json"),
     );
+    this.#authStorage = authStorage;
     this.#modelRegistry = modelRegistry;
 
     this.#store = new SessionStore({
@@ -126,6 +130,31 @@ export class BridgeServer {
           sessionId,
           msg,
           modelRegistry: this.#modelRegistry,
+          authStorage: this.#authStorage,
+          logger: this.#logger,
+        });
+        return;
+      }
+
+      if (type === "get_providers") {
+        await handleGetProviders({
+          ws,
+          sessionId,
+          msg,
+          modelRegistry: this.#modelRegistry,
+          authStorage: this.#authStorage,
+          logger: this.#logger,
+        });
+        return;
+      }
+
+      if (type === "set_auth") {
+        await handleSetAuth({
+          ws,
+          sessionId,
+          msg,
+          modelRegistry: this.#modelRegistry,
+          authStorage: this.#authStorage,
           logger: this.#logger,
         });
         return;
@@ -139,6 +168,7 @@ export class BridgeServer {
             sessionId,
             msg,
             modelRegistry: this.#modelRegistry,
+            authStorage: this.#authStorage,
             logger: this.#logger,
           },
           state,

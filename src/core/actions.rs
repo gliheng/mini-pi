@@ -15,6 +15,7 @@ actions!(
         ShowMainWindow,
         About,
         OpenInstallExtensionWindow,
+        OpenPiSettingsWindow,
         SelectFontSmall,
         SelectFontMedium,
         SelectFontLarge,

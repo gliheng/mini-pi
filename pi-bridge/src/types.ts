@@ -75,6 +75,12 @@ export interface ModelWireInfo {
   thinkingLevelMap?: Record<string, string>;
 }
 
+export interface ProviderWireInfo {
+  id: string;
+  name: string;
+  configured: boolean;
+}
+
 export interface CommandWireInfo {
   name: string;
   description?: string;
