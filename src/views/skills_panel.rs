@@ -163,6 +163,10 @@ impl Render for SkillsPanel {
                             (
                                 SharedString::from(s.name.clone()),
                                 s.description.clone().map(SharedString::from),
+                                s.raw
+                                    .get("filePath")
+                                    .and_then(|v| v.as_str())
+                                    .map(SharedString::from),
                             )
                         })
                         .collect(),
@@ -177,6 +181,11 @@ impl Render for SkillsPanel {
                             (
                                 SharedString::from(e.name.clone()),
                                 e.description.clone().map(SharedString::from),
+                                e.raw
+                                    .get("resolvedPath")
+                                    .and_then(|v| v.as_str())
+                                    .or_else(|| e.raw.get("path").and_then(|v| v.as_str()))
+                                    .map(SharedString::from),
                             )
                         })
                         .collect(),
@@ -191,6 +200,10 @@ impl Render for SkillsPanel {
                             (
                                 SharedString::from(p.name.clone()),
                                 p.description.clone().map(SharedString::from),
+                                p.raw
+                                    .get("filePath")
+                                    .and_then(|v| v.as_str())
+                                    .map(SharedString::from),
                             )
                         })
                         .collect(),
@@ -219,7 +232,7 @@ impl Render for SkillsPanel {
 
 fn render_section(
     title: &str,
-    items: Vec<(SharedString, Option<SharedString>)>,
+    items: Vec<(SharedString, Option<SharedString>, Option<SharedString>)>,
     right_child: impl IntoElement,
     cx: &mut gpui::Context<SkillsPanel>,
 ) -> impl IntoElement {
@@ -262,7 +275,7 @@ fn render_section(
                 .child(format!("No {} loaded.", title.to_lowercase())),
         );
     } else {
-        for (name, description) in items {
+        for (name, description, path) in items {
             let mut card = div()
                 .id(SharedString::from(format!("resource-item-{}", name)))
                 .flex()
@@ -272,12 +285,37 @@ fn render_section(
                 .py_3()
                 .rounded_lg()
                 .bg(cx.theme().secondary)
+                .hover(|style| style.bg(cx.theme().secondary_hover))
                 .child(
                     div()
-                        .text_sm()
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(cx.theme().foreground)
-                        .child(name.clone()),
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(cx.theme().foreground)
+                                .child(name.clone()),
+                        )
+                        .when_some(path, |this, path| {
+                            this.child(
+                                Button::new(SharedString::from(format!("reveal-{}", name)))
+                                    .with_size(Size::XSmall)
+                                    .ghost()
+                                    .icon(
+                                        Icon::empty()
+                                            .path("icons/folder.svg")
+                                            .size(px(14.))
+                                            .text_color(cx.theme().muted_foreground),
+                                    )
+                                    .on_click(cx.listener(move |_this, _, _window, cx| {
+                                        cx.reveal_path(std::path::Path::new(path.as_ref()));
+                                    })),
+                            )
+                        }),
                 );
 
             if let Some(desc) = description {

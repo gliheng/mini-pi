@@ -365,6 +365,7 @@ function normalizeResourceArray(raw: unknown): unknown[] {
     const obj = raw as Record<string, unknown>;
     if (Array.isArray(obj.skills)) return obj.skills;
     if (Array.isArray(obj.extensions)) return obj.extensions;
+    if (Array.isArray(obj.prompts)) return obj.prompts;
   }
   return [];
 }

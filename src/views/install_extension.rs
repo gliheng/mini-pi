@@ -305,14 +305,23 @@ impl Render for InstallExtensionWindow {
                     card
                 }));
 
-            body = body.child(list).child(
+            body = body.child(
                 div()
-                    .absolute()
-                    .top(px(0.))
-                    .right(px(0.))
-                    .bottom(px(0.))
-                    .w(px(12.))
-                    .child(Scrollbar::vertical(&self.scroll_handle)),
+                    .relative()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .min_h(px(0.))
+                    .child(list)
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(0.))
+                            .right(px(0.))
+                            .bottom(px(0.))
+                            .w(px(12.))
+                            .child(Scrollbar::vertical(&self.scroll_handle)),
+                    ),
             );
         }
 
