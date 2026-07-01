@@ -307,7 +307,7 @@ fn render_section(
                                     .ghost()
                                     .icon(
                                         Icon::empty()
-                                            .path("icons/folder.svg")
+                                            .path("icons/external-link.svg")
                                             .size(px(14.))
                                             .text_color(cx.theme().muted_foreground),
                                     )
