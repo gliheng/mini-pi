@@ -71,7 +71,7 @@ src/views/
   title_bar.rs          # Platform-specific window-level helpers (pin-to-top) and the legacy custom title bar type
   workspace_manager.rs  # Workspace picker content rendered inside a gpui_component::Dialog
   reasoning.rs          # Collapsible thinking/reasoning display using gpui_component::Collapsible
-  pi_agent_import.rs    # First-run import prompt from ~/.pi/agent/
+  onboarding.rs         # First-run onboarding / import prompt from ~/.pi/agent/
 assets/                 # SVG icons loaded at runtime
 docs/                   # Internal reference: GPUI guides, design review, markdown improvement plan, TODO
 scripts/                # Build scripts: macOS/Windows installers and generate_icons.py

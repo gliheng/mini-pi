@@ -360,10 +360,7 @@ impl MiniPiApp {
 
         let _user_panel_subscription =
             cx.subscribe(&user_panel, move |this, _, event: &UserPanelEvent, cx| {
-                this.active_tab_index = 0;
-                cx.update_global(|app: &mut AppStore, _| {
-                    app.user_panel_active = false;
-                });
+                let mut reset_panel = true;
                 match event {
                     UserPanelEvent::AuthStateChanged => {
                         let auth = cx.global::<AppStore>().auth.clone();
@@ -381,6 +378,24 @@ impl MiniPiApp {
                         }
                     }
                     UserPanelEvent::BackPressed => {}
+                    UserPanelEvent::OpenOnboarding => {
+                        reset_panel = false;
+                        let handle = cx.update_global::<AppStore, _>(|app, _| app.main_window);
+                        if let Some(handle) = handle {
+                            let thread_list = this.thread_list.clone();
+                            let _ = cx.update_window(handle, |_, window, cx| {
+                                thread_list.update(cx, |thread_list, cx| {
+                                    thread_list.open_onboarding(window, cx);
+                                });
+                            });
+                        }
+                    }
+                }
+                if reset_panel {
+                    this.active_tab_index = 0;
+                    cx.update_global(|app: &mut AppStore, _| {
+                        app.user_panel_active = false;
+                    });
                 }
                 cx.notify();
             });

@@ -13,11 +13,11 @@ use crate::data::store::{PaginatedThreads, Store, ThreadMeta, WorkspaceMeta};
 use crate::utils::format::format_relative_time;
 use crate::views::chat_app::open_chat_window;
 use crate::views::create_thread_button::{CreateThreadButton, CreateThreadButtonEvent};
-use crate::views::pi_agent_import::{PiAgentImport, PiAgentImportEvent};
+use crate::views::onboarding::OnboardingPanel;
 use crate::views::workspace_filter::{WorkspaceFilterPopover, WorkspaceFilterTag};
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _, Toggle};
 use gpui_component::{
-    ActiveTheme, Icon, IconName, IndexPath, Selectable, Sizable as _, Size, h_flex,
+    ActiveTheme, Icon, IconName, IndexPath, Selectable, Sizable as _, Size, WindowExt as _, h_flex,
     input::{Input, InputEvent, InputState},
     list::{List, ListDelegate, ListEvent, ListState},
     popover::Popover,
@@ -581,17 +581,15 @@ impl ListDelegate for ThreadListDelegate {
 }
 
 pub struct ThreadList {
-    pub import_prompt: gpui::Entity<PiAgentImport>,
+    pub onboarding_panel: gpui::Entity<OnboardingPanel>,
     pub create_thread_button: gpui::Entity<CreateThreadButton>,
     pub focus_handle: FocusHandle,
     list_state: gpui::Entity<ListState<ThreadListDelegate>>,
     pub search_input: gpui::Entity<InputState>,
     pub store: Arc<Store>,
-    pub show_import_prompt: bool,
     pub workspaces: Vec<WorkspaceMeta>,
     pub search_focused: bool,
     pub _global_subscription: gpui::Subscription,
-    pub _import_prompt_subscription: gpui::Subscription,
     pub _create_thread_subscription: gpui::Subscription,
     pub _list_subscription: gpui::Subscription,
     pub _search_focus_subscription: gpui::Subscription,
@@ -643,23 +641,8 @@ impl ThreadList {
             }
         });
 
-        let import_prompt = cx.new(|_| PiAgentImport::new());
+        let onboarding_panel = cx.new(|cx| OnboardingPanel::new(window, cx));
         let create_thread_button = cx.new(|_| CreateThreadButton::new());
-
-        let import_prompt_subscription = cx.subscribe(
-            &import_prompt,
-            move |this, _, event: &PiAgentImportEvent, _cx| {
-                match event {
-                    PiAgentImportEvent::ImportRequested => {
-                        this.show_import_prompt = false;
-                    }
-                    PiAgentImportEvent::SkipRequested => {
-                        this.show_import_prompt = false;
-                    }
-                }
-                _cx.notify();
-            },
-        );
 
         let create_thread_subscription = cx.subscribe(
             &create_thread_button,
@@ -670,27 +653,27 @@ impl ThreadList {
             },
         );
 
-        let is_first = state::is_first_run();
-        let has_pi_settings = import_prompt.read(cx).has_files();
-        let show_import_prompt = is_first && has_pi_settings;
+        let show_onboarding = state::is_first_run();
 
         let mut thread_list = Self {
-            import_prompt,
+            onboarding_panel: onboarding_panel.clone(),
             create_thread_button,
             focus_handle: cx.focus_handle(),
             list_state: list_state.clone(),
             search_input,
             store,
-            show_import_prompt,
             workspaces,
             search_focused: false,
             _global_subscription: global_subscription,
-            _import_prompt_subscription: import_prompt_subscription,
             _create_thread_subscription: create_thread_subscription,
             _list_subscription: list_subscription,
             _search_focus_subscription: search_focus_subscription,
             _search_input_subscription: search_input_subscription,
         };
+
+        if show_onboarding {
+            thread_list.open_onboarding(window, cx);
+        }
 
         thread_list.refresh_threads(cx);
         thread_list
@@ -758,6 +741,28 @@ impl ThreadList {
         );
         cx.update_global::<AppStore, _>(|app_store, _| {
             app_store.thread_windows.insert(thread_id, handle.into());
+        });
+    }
+
+    pub fn open_onboarding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.onboarding_panel.update(cx, |panel, cx| {
+            panel.reset(cx);
+        });
+        let panel = self.onboarding_panel.clone();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let panel_for_content = panel.clone();
+            dialog
+                .title("Onboarding")
+                .overlay(true)
+                .w(px(360.))
+                .overlay_closable(false)
+                .close_button(false)
+                .keyboard(true)
+                .content(move |content, window, cx| {
+                    panel_for_content.update(cx, |panel, cx| {
+                        content.child(panel.render_dialog_content(window, cx))
+                    })
+                })
         });
     }
 }
@@ -884,8 +889,5 @@ impl Render for ThreadList {
                     .border_color(theme.border)
                     .child(self.create_thread_button.clone()),
             )
-            .when(self.show_import_prompt, |el| {
-                el.child(self.import_prompt.clone())
-            })
     }
 }

@@ -9,10 +9,10 @@
 - [x] Properly display model & thinking select
 - [x] Pi settings GUI (api keys, extensions, prompts)
 - [x] Basic support for extension UI protocol
-- [ ] Better on-boarding experience
+- [x] Better on-boarding experience
+- [x] Display session stats in the status bar
 - [ ] Message display optimization, virtualize it
 - [ ] Steering, follow up and message queue
-- [ ] Display session stats in the status bar
 - [ ] Support bearer token settings for tunnel
 - [ ] Auto update and release channel
 - [ ] Pet window
@@ -24,12 +24,11 @@
 - [ ] Thread title can be changed by clicking on it
 
 # Pi-Commander
+- [x] Cannot stop
 - [ ] Refresh workspace, model on settings change
-- [ ] Cannot stop
 
 # Bug
 - [x] Option request blocked for missing bearer token
-- [ ] Cannot be stopped when stuck
-- [ ] Why stuck sometimes
-- [ ] Only one thread can be running at a time
 - [x] Accidentally closed main windows and cannot reopen
+- [ ] Cannot be stopped when stuck and why stuck sometimes
+- [ ] Only one thread can be running at a time

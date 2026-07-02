@@ -29,6 +29,7 @@ use gpui_component::{
 pub enum UserPanelEvent {
     BackPressed,
     AuthStateChanged,
+    OpenOnboarding,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -213,6 +214,16 @@ impl Render for UserPanel {
         let is_logging_in = matches!(auth, AuthState::LoggingIn);
         let error_msg: Option<SharedString> = self.auth_error.clone().map(|s| s.into());
 
+        let header = div()
+            .id("user-panel-header")
+            .w_full()
+            .flex()
+            .flex_row()
+            .items_center()
+            .px_6()
+            .py_4()
+            .child(render_back_button(cx));
+
         let content = div()
             .id("user-panel-content")
             .flex_1()
@@ -224,14 +235,6 @@ impl Render for UserPanel {
             .px_6()
             .py_8()
             .gap_6()
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .child(render_back_button(cx)),
-            )
             .child(
                 gpui::svg()
                     .path("icons/pi.svg")
@@ -297,6 +300,7 @@ impl Render for UserPanel {
                 .flex_col()
                 .size_full()
                 .relative()
+                .child(header)
                 .child(content)
                 .child(
                     div()
@@ -419,6 +423,7 @@ impl Render for UserPanel {
                 .flex_col()
                 .size_full()
                 .relative()
+                .child(header)
                 .child(content)
                 .child(
                     div()
@@ -961,7 +966,8 @@ fn render_auth_content(
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .child("PI SETTINGS"),
                         )
-                        .child(render_pi_settings_row(cx)),
+                        .child(render_pi_settings_row(cx))
+                        .child(render_onboarding_row(cx)),
                 )
                 .child(
                     div()
@@ -1088,6 +1094,50 @@ fn render_pi_settings_row(cx: &mut Context<UserPanel>) -> impl IntoElement {
                 .text_sm()
                 .text_color(cx.theme().foreground)
                 .child("Pi Settings"),
+        )
+        .child(
+            gpui::svg()
+                .path("icons/chevron-right.svg")
+                .size(px(16.))
+                .text_color(cx.theme().muted_foreground),
+        )
+}
+
+fn render_onboarding_row(cx: &mut Context<UserPanel>) -> impl IntoElement {
+    div()
+        .id("settings-onboarding")
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_3()
+        .px_4()
+        .py_2()
+        .rounded_lg()
+        .bg(cx.theme().secondary)
+        .cursor_pointer()
+        .hover(|style| style.bg(cx.theme().secondary_hover))
+        .on_click(cx.listener(|_, _, _, cx| {
+            cx.emit(UserPanelEvent::OpenOnboarding);
+        }))
+        .child(
+            div()
+                .size(px(20.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    gpui::svg()
+                        .path("icons/folder.svg")
+                        .size(px(18.))
+                        .text_color(cx.theme().muted_foreground),
+                ),
+        )
+        .child(
+            div()
+                .flex_1()
+                .text_sm()
+                .text_color(cx.theme().foreground)
+                .child("Onboarding"),
         )
         .child(
             gpui::svg()

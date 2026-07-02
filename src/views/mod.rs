@@ -4,7 +4,7 @@ pub mod chat_window;
 pub mod create_thread_button;
 pub mod install_extension;
 pub mod mini_app;
-pub mod pi_agent_import;
+pub mod onboarding;
 pub mod pi_settings;
 pub mod reasoning;
 pub mod skills_panel;
