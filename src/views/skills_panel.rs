@@ -6,6 +6,7 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::scroll::Scrollbar;
 use gpui_component::{Icon, Sizable as _, Size};
 
+use crate::auth::state::agent_dir;
 use crate::core::actions::OpenInstallExtensionWindow;
 use crate::core::app::AppStore;
 use crate::rpc::pi_rpc::{BridgeExtension, BridgePrompt, BridgeSkill};
@@ -275,9 +276,19 @@ fn render_section(
                 .child(format!("No {} loaded.", title.to_lowercase())),
         );
     } else {
+        let agent_dir_str = agent_dir().to_string_lossy().trim_end_matches('/').to_string();
+
         for (name, description, path) in items {
+            let display_name: SharedString = match &path {
+                Some(p) if p.starts_with(&agent_dir_str) => {
+                    let rel = &p[agent_dir_str.len()..];
+                    SharedString::from(rel.trim_start_matches('/').to_string())
+                }
+                _ => name.clone(),
+            };
+
             let mut card = div()
-                .id(SharedString::from(format!("resource-item-{}", name)))
+                .id(SharedString::from(format!("resource-item-{}", display_name)))
                 .flex()
                 .flex_col()
                 .gap_1()
@@ -295,14 +306,18 @@ fn render_section(
                         .gap_2()
                         .child(
                             div()
+                                .flex_1()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
                                 .text_sm()
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .text_color(cx.theme().foreground)
-                                .child(name.clone()),
+                                .child(display_name.clone()),
                         )
-                        .when_some(path, |this, path| {
+                        .when_some(path.clone(), |this, path| {
                             this.child(
-                                Button::new(SharedString::from(format!("reveal-{}", name)))
+                                Button::new(SharedString::from(format!("reveal-{}", display_name)))
                                     .with_size(Size::XSmall)
                                     .ghost()
                                     .icon(
@@ -328,6 +343,7 @@ fn render_section(
                     );
                 }
             }
+
 
             section = section.child(card);
         }

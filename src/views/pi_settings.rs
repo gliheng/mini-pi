@@ -622,7 +622,6 @@ impl Render for PiSettings {
                 let input = cx.new(|cx| {
                     InputState::new(window, cx)
                         .placeholder("API Key")
-                        .masked(true)
                 });
                 let _sub = cx.observe(&input, |_, _, cx| {
                     cx.notify();
@@ -827,7 +826,7 @@ fn render_api_keys_body(
                         .child(
                             div()
                                 .flex_1()
-                                .child(Input::new(&input).appearance(false).w_full()),
+                                .child(Input::new(&input).w_full().max_w_80()),
                         )
                         .child(
                             Button::new(format!("save-provider-{}", provider_id_for_save))
